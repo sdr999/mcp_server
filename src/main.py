@@ -1,216 +1,92 @@
-# mcp_server.py
-import asyncio
-import importlib
-import os
+"""Secure, plugin-based MCP tool server.
+
+Serves tools over SSE (FastMCP) from a local tools directory. Rebuilt on the
+architecture documented in docs/MCP_SERVER_FEATURES.md and
+docs/MCP_AUTH_GUIDE.md ("the multiple MCP server"), split into single-purpose
+plugin components under ``plugins/`` -- but with no Azure (or any remote file
+share) dependency: tools are always local, hot-reloaded by a filesystem watcher.
+
+Tool authoring contract (see ``tools_sdk``): a module in the tools directory
+may expose tools via a ``register(registrar)`` hook, a ``TOOLS`` export,
+``@tool``-decorated functions, or the legacy "function name == file stem"
+convention.
+
+Security features (see docs/MCP_AUTH_GUIDE.md):
+  * ``MCP_AUTH_TYPE``: none | api_key | bearer_jwt (JWKS-validated OAuth).
+  * Admin API gated by ``MCP_ADMIN_TOKEN`` (disabled entirely when unset).
+  * Constant-time credential comparisons (``hmac.compare_digest``).
+  * Path-traversal-safe ``--config`` resolution (tools dir can't escape ``src/``).
+  * Optional signed-tool manifest enforcement (``MCP_REQUIRE_SIGNED_TOOLS``).
+  * Optional per-call subprocess sandboxing (``MCP_SANDBOX_TOOLS``).
+  * Fault isolation: a broken tool module is logged and skipped, never crashes
+    the server; a slow/hanging import is bounded by ``MCP_TOOL_IMPORT_TIMEOUT_SEC``.
+
+Design notes
+------------
+* All start-up work runs inside ``main()`` -- importing this module has no
+  side effects, so it can be unit-tested.
+* Tool registry mutations happen ONLY on the serving event loop, drained from
+  a thread-safe queue; the filesystem watcher merely enqueues.
+
+CLI
+---
+    python main.py                       # serve, tools dir = src/tools (auto-created)
+    python main.py --config <b64 path>    # serve, tools dir = src/<decoded path>
+    python main.py --validate ./mytools   # CI gate: exit 0 if all modules load
+    python main.py --sign ./mytools       # generate a signed manifest
+"""
+from __future__ import annotations
+
+import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Optional, List
 
-# om fastmcp import FastMCP
-from mcp.server import FastMCP
-from mcp.server.sse import SseServerTransport
-from mcp.types import TextContent, Tool
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-import threading
-import time
-from dotenv import dotenv_values
-from agentic_framework.utils import global_variables
-# load_dotenv()
-# env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', '.env')
-# env = dotenv_values(dotenv_path=env_path)
-# global_variables.env=env
-env = dict(os.environ) 
-global_variables.env=env
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("MCP_logger")
 
-mcp = FastMCP(name="Tool Server",host="0.0.0.0",port=8000)
+SRC_DIR = Path(__file__).resolve().parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-class Server:
-    def __init__(self,mcp:FastMCP):
-        self.mcp = mcp
-        self.load_tools_from_directory()
-        # self.mcp = FastMCP("Tool Server")
-
-    def connect(self):
-        asyncio.run(self.mcp.run(transport="sse"))
-
-    def reload_tools(self, tools_dir: str = "tools"):
-
-        """
-        Reload all tools from the tools directory. This allows dynamic updates
-        without restarting the server.
-
-        Args:
-            tools_dir (str): The directory containing tool modules.
-        """
-        tools_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), tools_dir)
-        tools_path = Path(tools_path)
-        # tools_path = Path(tools_dir)
-        actual_tool_files = [f for f in tools_path.glob("*.py") if f.name != "__init__.py"]
+from plugins import cli as plugin_cli
+from plugins.app import build_app
+from plugins.config import build_context, make_parser, validate_context
 
 
-        for file_path in actual_tool_files:
-            module_name_stem = file_path.stem
-            full_module_name = f"{tools_path.name}.{module_name_stem}"
+def main(argv: Optional[List[str]] = None) -> None:
+    args = make_parser().parse_args(argv)
 
-            # Remove module from sys.modules to force reload
-            if full_module_name in sys.modules:
-                del sys.modules[full_module_name]
+    if args.validate is not None or args.sign is not None:
+        from plugins.config import load_environment, DEFAULT_MANIFEST
 
-            try:
-                module = importlib.import_module(full_module_name)
-                tool_function_name = module_name_stem
+        env = load_environment(SRC_DIR)
+        if args.validate is not None:
+            raise SystemExit(plugin_cli.run_validate(Path(args.validate), SRC_DIR))
+        raise SystemExit(plugin_cli.run_sign(
+            Path(args.sign),
+            env.get("MCP_TOOL_SIGNING_KEY"),
+            env.get("MCP_TOOL_MANIFEST", DEFAULT_MANIFEST),
+        ))
 
-                if hasattr(module, tool_function_name):
-                    tool_function = getattr(module, tool_function_name)
-                    if callable(tool_function):
-                        self.mcp.add_tool(tool_function)
-                    
-            except Exception as e:
-                print(f"Reload tools error: {e}")
+    import uvicorn
 
-    
-    def load_tools_from_directory(self, tools_dir: str = "tools"):
-        """
-        Dynamically load all Python files from the specified tools directory
-        and register their MCP tools.
+    ctx = build_context(argv, base_dir=SRC_DIR)
+    validate_context(ctx)
 
-        Args:
-            tools_dir (str): The name of the directory containing tool modules.
-                             Assumed to be a package (or will be made one).
+    ctx.tools_dir.mkdir(parents=True, exist_ok=True)
+    init_file = ctx.tools_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("# Auto-generated to make this a package\n", encoding="utf-8")
+    package_root = str(ctx.tools_dir.resolve().parent)
+    if package_root not in sys.path:
+        sys.path.insert(0, package_root)
 
-        It assumes that for a tool file, e.g., 'tools/my_tool.py',
-        there is a corresponding function `def my_tool(...):` within that file,
-        which is the tool to be registered.
-        """
+    app, _mcp = build_app(ctx)
+    log.info("Starting MCP tool server on %s:%s (auth=%s, tools_dir=%s)",
+              ctx.host, ctx.port, ctx.auth_type or "none", ctx.tools_dir)
+    uvicorn.run(app, host=ctx.host, port=ctx.port, log_level="info")
 
-        # Resolve tools_path. Path() resolves relative to the Current Working Directory (CWD).
-        # This is standard if your script is run from the project root and 'tools' is a subdir.
-        tools_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), tools_dir)
-        tools_path = Path(tools_path)
-        # tools_path = Path(tools_dir)
-
-        # Ensure the tools directory exists, create if not
-        if not tools_path.is_dir():
-            try:
-                tools_path.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                return  # Stop if directory cannot be created
-
-        # Ensure the tools directory is a package by creating __init__.py if it doesn't exist
-        init_py_path = tools_path / "__init__.py"
-        if not init_py_path.exists():
-            try:
-                init_py_path.touch(exist_ok=True)
-            except OSError as e:
-                print(f"Create __init__.py error: {e}")
-
-        # For imports like `from tools_package_name.module import function`, the
-        # directory *containing* `tools_package_name` must be in sys.path.
-        # `tools_path.resolve().parent` is this containing directory.
-        package_root = str(tools_path.resolve().parent)
-        if package_root not in sys.path:
-            sys.path.insert(0, package_root)
-
-        
-        tool_files_found = list(tools_path.glob("*.py"))
-        
-        # Check if any actual tool files (not __init__.py) are present
-        actual_tool_files = [f for f in tool_files_found if f.name != "__init__.py"]
-
-        if not actual_tool_files:
-            return
-
-        for file_path in actual_tool_files:
-            module_name_stem = file_path.stem  # e.g., "read_file" for "read_file.py"
-            
-            # Construct the full module path for import, e.g., "tools.read_file"
-            # This uses the name of the tools_path directory as the package name.
-            full_module_name = f"{tools_path.name}.{module_name_stem}"
-
-            try:
-                module = importlib.import_module(full_module_name)
-                
-                # As per user's request, assume the tool function has the same name as the module stem
-                tool_function_name = module_name_stem
-                
-                if hasattr(module, tool_function_name):
-                    tool_function = getattr(module, tool_function_name)
-                    if callable(tool_function):
-                        self.mcp.add_tool(tool_function)
-                    
-            except Exception as e:
-                print(f"Load tools from directory error: {e}")
-        tools=asyncio.run(self.mcp.list_tools())
-
-
-@mcp.tool()
-def text_analyzer(text: str) -> str:
-    """
-    Analyze text and provide basic statistics.
-    
-    Args:
-        text: The text to analyze
-    
-    Returns:
-        Analysis results including word count, character count, etc.
-    """
-    try:
-        word_count = len(text.split())
-        char_count = len(text)
-        char_count_no_spaces = len(text.replace(" ", ""))
-        sentence_count = text.count(".") + text.count("!") + text.count("?")
-        
-        analysis = f"""
-Text Analysis Results:
-- Word count: {word_count}
-- Character count: {char_count}
-- Character count (no spaces): {char_count_no_spaces}
-- Estimated sentence count: {sentence_count}
-- Average word length: {char_count_no_spaces / word_count if word_count > 0 else 0:.2f}
-        """.strip()
-        
-        return analysis
-    except Exception as e:
-        return f"Error analyzing text: {str(e)}"
-    
-
-
-class ToolDirectoryWatcher(FileSystemEventHandler):
-    def __init__(self, server: Server, tools_dir: str = "tools"):
-        self.server = server
-        self.tools_dir = tools_dir
-        self._observer = Observer()
-
-    def on_modified(self, event):
-        if event.src_path.endswith(".py"):
-            self.server.reload_tools()
-
-    def on_created(self, event):
-        if event.src_path.endswith(".py"):
-            self.server.reload_tools()
-
-    def on_deleted(self, event):
-        if event.src_path.endswith(".py"):
-            self.server.reload_tools()
-
-    def start(self):
-        tools_path = Path(self.tools_dir).resolve()
-        self._observer.schedule(self, str(tools_path), recursive=False)
-        thread = threading.Thread(target=self._observer.start, daemon=True)
-        thread.start()
-
-
-def main():
-    server = Server(mcp)
-
-    # Start tool watcher
-    watcher = ToolDirectoryWatcher(server)
-    watcher.start()
-
-    server.connect()
-
-main()
 
 if __name__ == "__main__":
     main()

@@ -5,6 +5,12 @@ distributed via an Azure File Share, mirrored locally, and (re)loaded at runtime
 This guide covers the authoring contract, configuration, HTTP endpoints, the admin
 API, signed tools, and the CLI utilities.
 
+> **Looking for `src/main.py`?** It shares this authoring contract, auth model,
+> signed-tool/sandboxing/metrics features, and HTTP surface, but has no Azure
+> (or any remote) tool distribution — tools are always local. It's also split
+> into single-purpose plugin modules under `src/plugins/` instead of one file.
+> See **[MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md)**.
+
 ---
 
 ## 1. Authoring tools
