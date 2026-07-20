@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from plugins import dependency_risk as risk
 from plugins.onboarding import OnboardingManager
 from plugins.tool_loader import ToolLoader
 
@@ -71,6 +72,47 @@ def test_syntax_error_rejected(tmp_path):
     mgr = _manager(tmp_path)
     with pytest.raises(ValueError):
         asyncio.run(mgr.onboard("broken", "def broken(:\n", []))
+
+
+def test_source_registering_no_tool_is_held_pending_not_falsely_onboarded(tmp_path):
+    # Parses fine, no deps, but the function name != module stem and there's no
+    # @tool / TOOLS export -> the loader registers nothing. Onboarding must NOT
+    # report "onboarded" (the pre-fix bug).
+    mgr = _manager(tmp_path)
+    record = asyncio.run(mgr.onboard("mytool", "def something_else():\n    return 1\n", []))
+    assert record["status"] == "pending"
+    assert "failed to load" in record["hold_reason"]
+    # brand-new file that failed to load is rolled back, not left behind
+    assert not (mgr.tools_dir / "mytool.py").exists()
+
+
+def test_import_error_source_is_held_pending_and_rolled_back(tmp_path):
+    mgr = _manager(tmp_path)
+    record = asyncio.run(mgr.onboard("boomtool", "raise RuntimeError('boom')\n", []))
+    assert record["status"] == "pending"
+    assert "failed to load" in record["hold_reason"]
+    assert not (mgr.tools_dir / "boomtool.py").exists()
+
+
+def test_slow_import_is_bounded_and_does_not_hang(tmp_path):
+    # Top-level sleep longer than the import timeout: the off-loop, timeout-bounded
+    # import must give up and hold pending rather than freeze. Whole test < 1s.
+    mgr = _manager(tmp_path, import_timeout=0.5)
+    src = "import time\ntime.sleep(5)\n\ndef slowtool():\n    return 1\n"
+    record = asyncio.run(mgr.onboard("slowtool", src, []))
+    assert record["status"] == "pending"
+    assert "within 0.5s" in record["hold_reason"]
+    assert not (mgr.tools_dir / "slowtool.py").exists()
+
+
+def test_declared_and_inferred_dependency_are_deduped(tmp_path):
+    # `import dotenv` resolves to `python-dotenv`; declaring `python_dotenv`
+    # canonicalizes to the same package -> a single spec, installed once.
+    mgr = _manager(tmp_path, allowlist={"python-dotenv"})
+    src = "import dotenv\n\ndef greet_dep():\n    return 'ok'\n"
+    specs = mgr._build_specs(src, ["python_dotenv==1.0.0"])
+    canon = [risk.canonical_name(risk.spec_name(s)) for s in specs]
+    assert canon.count("python-dotenv") == 1, specs
 
 
 def test_high_risk_dependency_is_held_pending(tmp_path):

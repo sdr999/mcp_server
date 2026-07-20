@@ -30,6 +30,27 @@ def test_denylisted_package_is_high_risk():
     assert r.score == 100
 
 
+def test_denylist_cannot_be_bypassed_by_name_normalization():
+    # PEP 503: evil-pkg == evil_pkg == Evil.Pkg -- all the same distribution.
+    for variant in ["evil_pkg==1.0", "Evil.Pkg==1.0", "evil--pkg==1.0", "EVIL_PKG==1.0"]:
+        r = risk.assess_requirement(variant, denylist={"evil-pkg"}, allowlist=set(), network_check=False)
+        assert r.level == "high", variant
+        assert r.score == 100, variant
+
+
+def test_allowlist_matches_across_normalization():
+    r = risk.assess_requirement("Foo_Bar==1.0", allowlist={"foo-bar"}, denylist=set(), network_check=False)
+    assert r.level == "low"
+    assert r.score == 0
+
+
+def test_canonical_name_collapses_separators():
+    assert risk.canonical_name("Foo_Bar") == "foo-bar"
+    assert risk.canonical_name("foo.bar") == "foo-bar"
+    assert risk.canonical_name("foo--_..bar") == "foo-bar"
+    assert risk.spec_name("Foo_Bar==1.0") == "foo-bar"
+
+
 def test_unpinned_dependency_adds_risk():
     pinned = risk.assess_requirement("somepkg==1.0.0", allowlist=set(), network_check=False)
     unpinned = risk.assess_requirement("somepkg", allowlist=set(), network_check=False)

@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import importlib
 import json
 import logging
 import re
@@ -35,15 +36,16 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from . import dependency_risk as risk
-from .tool_loader import ToolLoader
+from .tool_loader import ToolLoader, prepare_with_timeout
 
 log = logging.getLogger("MCP_logger")
 
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 DEFAULT_INSTALL_TIMEOUT = 120.0
+DEFAULT_IMPORT_TIMEOUT = 30.0
 
 
 async def _pip_install(specs: List[str], timeout: float):
@@ -65,6 +67,10 @@ async def _pip_install(specs: List[str], timeout: float):
         return False, f"pip install exceeded {timeout}s and was killed"
     if proc.returncode != 0:
         return False, err.decode(errors="replace")[:2000]
+    # A freshly created site-packages entry may not be visible to import
+    # machinery that already cached the directory listing. Invalidate the
+    # finder caches so the just-installed distribution is importable in-process.
+    importlib.invalidate_caches()
     return True, ""
 
 
@@ -75,16 +81,25 @@ class OnboardingManager:
     def __init__(self, tools_dir: Path, pending_dir: Path, loader: ToolLoader, *,
                  allowlist=None, denylist=None, network_check: bool = True,
                  network_timeout: float = 3.0, autoinstall: bool = True,
-                 install_timeout: float = DEFAULT_INSTALL_TIMEOUT, enabled: bool = True):
+                 install_timeout: float = DEFAULT_INSTALL_TIMEOUT,
+                 import_timeout: float = DEFAULT_IMPORT_TIMEOUT, enabled: bool = True,
+                 loader_lock: Optional["asyncio.Lock"] = None):
         self.tools_dir = tools_dir
         self.pending_dir = pending_dir
         self.loader = loader
-        self.allowlist = allowlist if allowlist is not None else {n.lower() for n in risk.DEFAULT_ALLOWLIST}
-        self.denylist = denylist if denylist is not None else {n.lower() for n in risk.DEFAULT_DENYLIST}
+        # Serializes tool imports/registry mutations against the reload drain
+        # (and other onboards): both run on the loop but the actual import runs
+        # in an executor thread, so two concurrent imports of a module would
+        # race importlib. A shared lock makes them mutually exclusive. Tests
+        # that construct a manager without a drain get their own private lock.
+        self.loader_lock = loader_lock or asyncio.Lock()
+        self.allowlist = allowlist if allowlist is not None else {risk.canonical_name(n) for n in risk.DEFAULT_ALLOWLIST}
+        self.denylist = denylist if denylist is not None else {risk.canonical_name(n) for n in risk.DEFAULT_DENYLIST}
         self.network_check = network_check
         self.network_timeout = network_timeout
         self.autoinstall = autoinstall
         self.install_timeout = install_timeout
+        self.import_timeout = import_timeout
         self.enabled = enabled
         self.pending_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,12 +147,15 @@ class OnboardingManager:
 
     def _build_specs(self, source: str, requirements: List[str]) -> List[str]:
         explicit = list(requirements or [])
+        # Canonical names so a declared ``python_dotenv`` and an inferred
+        # ``import dotenv`` -> ``python-dotenv`` are recognized as one package
+        # and not installed twice.
         covered = {risk.spec_name(s) for s in explicit}
         for mod in risk.detect_missing_imports(source):
             resolved = risk.resolve_import_name(mod)
-            if resolved.lower() not in covered:
+            if risk.canonical_name(resolved) not in covered:
                 explicit.append(resolved)
-                covered.add(resolved.lower())
+                covered.add(risk.canonical_name(resolved))
         return explicit
 
     # -- onboarding ---------------------------------------------------------
@@ -184,15 +202,55 @@ class OnboardingManager:
             log.error("Tool %r held pending: dependency install failed: %s", name, err)
             return record
 
-        self._write_live(name, source)
+        registered, failure = await self._write_live(name, source)
+        if failure or not registered:
+            # Truthful outcome: the source parsed and its deps installed, but the
+            # module raised on import, was refused (e.g. signed-tools), or exposed
+            # no tool. Report it as pending rather than a false "onboarded".
+            record["status"] = "pending"
+            record["hold_reason"] = f"tool failed to load: {failure or 'source registered no tools'}"
+            record["installed"] = install_specs
+            self._write_pending(name, source, record)
+            log.error("Tool %r held pending: %s", name, record["hold_reason"])
+            return record
+
         record["installed"] = install_specs
-        log.info("Tool %r onboarded (%d dependency install(s))", name, len(install_specs))
+        record["registered_tools"] = registered
+        log.info("Tool %r onboarded (%d dependency install(s), tools: %s)",
+                 name, len(install_specs), registered)
         return record
 
-    def _write_live(self, name: str, source: str) -> None:
+    async def _write_live(self, name: str, source: str) -> Tuple[List[str], Optional[str]]:
+        """Write the tool into the live tools dir and load it, importing OFF the
+        serving loop bounded by ``import_timeout`` (a hostile module's top-level
+        code cannot freeze the server). Returns (registered tool names, failure
+        reason); a brand-new submission that fails to load is rolled back so no
+        broken file lingers."""
         path = self.tools_dir / f"{name}.py"
+        pre_existed = path.exists()
         path.write_text(source, encoding="utf-8")
-        self.loader.load_path(path)
+
+        module_name = self.loader.module_name_for_path(path)
+        if not module_name:
+            return [], "internal error: tool path is not inside the tools directory"
+
+        async with self.loader_lock:  # mutual exclusion with the reload drain
+            self.loader.invalidate(module_name)  # force a real re-import even on overwrite
+            plan = await prepare_with_timeout(self.loader, path, self.import_timeout)
+            if plan is None:
+                outcome = ([], f"import did not complete within {self.import_timeout}s")
+            else:
+                self.loader.commit(plan)  # on-loop, fast
+                outcome = self.loader.module_outcome(module_name)
+
+        registered, failure = outcome
+        if (failure or not registered) and not pre_existed:
+            # Don't leave a broken, newly created file behind. (Overwrite of an
+            # existing tool is left intact -- conflict handling is a later item.)
+            self.loader.unload_path(path)
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+        return registered, failure
 
     async def approve(self, name: str) -> dict:
         """Force-install (if needed) and load a pending submission, overriding
@@ -211,12 +269,22 @@ class OnboardingManager:
             self._write_pending(name, source, pending)
             raise RuntimeError(f"dependency install failed: {err}")
 
-        self._write_live(name, source)
+        registered, failure = await self._write_live(name, source)
+        if failure or not registered:
+            # Deps installed but the tool still won't load: keep it pending with
+            # the real reason rather than clearing it and claiming success.
+            pending["status"] = "pending"
+            pending["hold_reason"] = f"tool failed to load after approval: {failure or 'source registered no tools'}"
+            pending["installed"] = install_specs
+            self._write_pending(name, source, pending)
+            raise RuntimeError(pending["hold_reason"])
+
         self._clear_pending(name)
         pending["status"] = "onboarded"
         pending["installed"] = install_specs
+        pending["registered_tools"] = registered
         pending.pop("hold_reason", None)
-        log.warning("Tool %r approved by admin override and onboarded", name)
+        log.warning("Tool %r approved by admin override and onboarded (tools: %s)", name, registered)
         return pending
 
     def reject(self, name: str) -> bool:

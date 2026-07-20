@@ -240,6 +240,10 @@ class ToolLoader:
             self._tool_info.pop(name, None)
             self._changed = True
         self._mtime.pop(module_name, None)
+        # A module that has been unloaded (deleted / rolled back) is no longer
+        # "failing"; drop any recorded failure so /status stats don't leak it.
+        # commit() re-records a fresh failure right after, if the reload fails.
+        self._failures.pop(module_name, None)
         sys.modules.pop(module_name, None)
 
     def prepare(self, file_path: Path) -> Optional[_LoadPlan]:
@@ -342,6 +346,18 @@ class ToolLoader:
         module_name = self.module_name_for_path(file_path)
         if module_name:
             self.unload_module(module_name)
+
+    def invalidate(self, module_name: str) -> None:
+        """Forget a module's cached mtime so the next ``prepare()`` re-imports
+        it even if the file's mtime looks unchanged. Used before re-loading a
+        file that was just (over)written, so mtime-dedup can't skip it."""
+        self._mtime.pop(module_name, None)
+
+    def module_outcome(self, module_name: str) -> Tuple[List[str], Optional[str]]:
+        """After a load attempt, report (registered tool names, failure reason)
+        for one module. Callers that need a truthful load result -- e.g. tool
+        onboarding -- use this instead of assuming ``load_path`` succeeded."""
+        return list(self._module_tools.get(module_name, [])), self._failures.get(module_name)
 
     def load_all(self) -> None:
         for py in self.tools_dir.glob("*.py"):

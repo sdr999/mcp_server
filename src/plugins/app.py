@@ -25,10 +25,12 @@ from .watcher import ToolDirectoryWatcher
 log = logging.getLogger("MCP_logger")
 
 
-async def _reload_drain(loader: ToolLoader, reload_q: "queue.Queue", mcp, import_timeout: float):
+async def _reload_drain(loader: ToolLoader, reload_q: "queue.Queue", mcp, import_timeout: float,
+                        loader_lock: asyncio.Lock):
     """Apply reload events. Imports run OFF the loop (bounded by import_timeout);
     only the fast registry mutation (commit / unload) runs on-loop. A None item
-    stops the drain."""
+    stops the drain. The shared ``loader_lock`` serializes these imports against
+    tool onboarding so the two never import the same module concurrently."""
     loop = asyncio.get_running_loop()
     while True:
         item = await loop.run_in_executor(None, reload_q.get)
@@ -37,11 +39,12 @@ async def _reload_drain(loader: ToolLoader, reload_q: "queue.Queue", mcp, import
         action, path = item
         try:
             from pathlib import Path
-            if action == "unload":
-                loader.unload_path(Path(path))       # on-loop, fast
-            else:
-                plan = await prepare_with_timeout(loader, Path(path), import_timeout)
-                loader.commit(plan)                  # on-loop, fast
+            async with loader_lock:
+                if action == "unload":
+                    loader.unload_path(Path(path))       # on-loop, fast
+                else:
+                    plan = await prepare_with_timeout(loader, Path(path), import_timeout)
+                    loader.commit(plan)                  # on-loop, fast
             if loader.pop_changed():
                 await notify_tools_changed(mcp)
         except Exception as exc:
@@ -67,13 +70,18 @@ def build_app(ctx):
     reload_q: "queue.Queue" = queue.Queue()
     watcher = ToolDirectoryWatcher(reload_q, ctx.tools_dir)
 
+    # Shared across the reload drain and onboarding so tool imports (which run in
+    # executor threads) never race importlib for the same module.
+    loader_lock = asyncio.Lock()
+
     onboarding = OnboardingManager(
         ctx.tools_dir, ctx.tools_dir.parent / f"{ctx.tools_dir.name}_pending", loader,
         allowlist=risk.load_name_set(ctx.onboard_allowlist_path, risk.DEFAULT_ALLOWLIST),
         denylist=risk.load_name_set(ctx.onboard_denylist_path, risk.DEFAULT_DENYLIST),
         network_check=ctx.onboard_network_check, network_timeout=ctx.onboard_network_timeout,
         autoinstall=ctx.onboard_autoinstall, install_timeout=ctx.onboard_install_timeout,
-        enabled=ctx.onboard_enabled,
+        import_timeout=ctx.import_timeout, enabled=ctx.onboard_enabled,
+        loader_lock=loader_lock,
     )
 
     app = mcp.http_app(transport="sse")
@@ -108,7 +116,7 @@ def build_app(ctx):
             log.info("Initial tool load complete (source=local): %s", loader.stats())
             # Same task continues as the reload drain -- load-then-drain is
             # sequential, so there is no race on the registry.
-            await _reload_drain(loader, reload_q, mcp, ctx.import_timeout)
+            await _reload_drain(loader, reload_q, mcp, ctx.import_timeout, loader_lock)
 
         worker = loop.create_task(_bootstrap())
         watcher.start()

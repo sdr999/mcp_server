@@ -87,6 +87,16 @@ def resolve_import_name(module_name: str) -> str:
     return IMPORT_TO_PACKAGE.get(module_name, module_name)
 
 
+def canonical_name(name: str) -> str:
+    """PEP 503 name normalization: collapse any run of ``-``, ``_`` or ``.``
+    to a single ``-`` and lowercase. ``Foo_Bar``, ``foo-bar`` and ``foo.bar``
+    all map to ``foo-bar`` -- the same distribution as far as PyPI/pip are
+    concerned. All allow/deny/typosquat comparisons go through this so a
+    denylisted ``evil-pkg`` cannot be slipped past as ``evil_pkg``.
+    """
+    return re.sub(r"[-_.]+", "-", (name or "").strip()).lower()
+
+
 @dataclass
 class RiskReport:
     spec: str
@@ -100,11 +110,11 @@ class RiskReport:
 
 
 def spec_name(spec: str) -> str:
-    """Best-effort package-name extraction from a requirement spec, for
-    dedup/lookup purposes. Returns the lowercased raw spec if it doesn't
+    """Best-effort, PEP 503-canonicalized package name from a requirement spec,
+    for dedup/lookup purposes. Returns the canonicalized raw spec if it doesn't
     match the strict spec grammar (callers should treat that as untrusted)."""
     m = _SPEC_RE.match((spec or "").strip())
-    return m.group("name").lower() if m else spec.strip().lower()
+    return canonical_name(m.group("name") if m else spec)
 
 
 def _level_for(score: int) -> str:
@@ -117,13 +127,13 @@ def _level_for(score: int) -> str:
 
 def load_name_set(path: Optional[Path], default: Set[str]) -> Set[str]:
     if not path or not path.exists():
-        return {n.lower() for n in default}
+        return {canonical_name(n) for n in default}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return {str(n).strip().lower() for n in data if str(n).strip()}
+        return {canonical_name(n) for n in data if str(n).strip()}
     except Exception as exc:
         log.error("Could not read %s; falling back to built-in defaults: %s", path, exc)
-        return {n.lower() for n in default}
+        return {canonical_name(n) for n in default}
 
 
 def _pypi_lookup(name: str, timeout: float) -> Optional[dict]:
@@ -149,8 +159,12 @@ def assess_requirement(
 ) -> RiskReport:
     """Score a single pip requirement spec (e.g. ``"requests==2.31.0"``)."""
     spec = (spec or "").strip()
-    allowlist = allowlist if allowlist is not None else {n.lower() for n in DEFAULT_ALLOWLIST}
-    denylist = denylist if denylist is not None else {n.lower() for n in DEFAULT_DENYLIST}
+    raw_allow = allowlist if allowlist is not None else DEFAULT_ALLOWLIST
+    raw_deny = denylist if denylist is not None else DEFAULT_DENYLIST
+    # Canonicalize the membership sets at comparison time so callers may pass
+    # raw names (``evil_pkg``, ``Evil.Pkg``) and still get correct hits.
+    allow = {canonical_name(n) for n in raw_allow}
+    deny = {canonical_name(n) for n in raw_deny}
 
     m = _SPEC_RE.match(spec)
     if not m:
@@ -159,15 +173,15 @@ def assess_requirement(
 
     name = m.group("name")
     version = m.group("version")
-    key = name.lower()
+    key = canonical_name(name)
     reasons: List[str] = []
     score = 0
 
-    if key in allowlist:
+    if key in allow:
         return RiskReport(spec=spec, name=name, version_pin=version, score=0, level="low",
                            reasons=["package is on the trusted allowlist"])
 
-    if key in denylist:
+    if key in deny:
         return RiskReport(spec=spec, name=name, version_pin=version, score=100, level="high",
                            reasons=["package name is on the denylist"])
 
@@ -184,7 +198,8 @@ def assess_requirement(
         score += 25
         reasons.append("dependency is unpinned (no exact ==version)")
 
-    close = difflib.get_close_matches(key, POPULAR_PACKAGES, n=1, cutoff=0.82)
+    popular = {canonical_name(p) for p in POPULAR_PACKAGES}
+    close = difflib.get_close_matches(key, popular, n=1, cutoff=0.82)
     if close and close[0] != key:
         score += 60
         reasons.append(f"name closely resembles popular package {close[0]!r} (possible typosquat)")
