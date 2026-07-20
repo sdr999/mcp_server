@@ -1,0 +1,107 @@
+{
+  "material_mapping" : {
+      "53": "High-Grade Steel Rod",
+      "RMPI005": "Raw Material Polyisoprene",
+      "S-203": "Silicone Sealant S-203",
+      "RM124": "Raw Material Compound RM124",
+      "AVC_RBT_CNTRL_BRD": "AVC Robot Control Board",
+      "R-311": "Resistor Type 311",
+      "40": "Aluminum Sheet Grade 40",
+      "41": "100Cr6 (AISI 52100)"
+    },
+  
+  "RFP_details":{
+      "RFP1001":{
+        "supplierID":"17300007",
+        "material_code" : "53",
+        "material_name" : "High-Grade Steel Rod"
+      },
+      "RFP1002":{
+        "supplierID":"17300007",
+        "material_code" : "40",
+        "material_name" : "Aluminum Sheet Grade 40"
+      },
+      "RFP1003":{
+        "supplierID":"17300007",
+        "material_code" : "R-311",
+        "material_name" : "Resistor Type 311"
+      }
+  },
+
+  "performance_metric" : {
+      "601": {
+        "on_time_delivery": "94%",
+        "quality_rate": "99%",
+        "sustainability_score": "AA",
+        "premium_shipment": "1%",
+        "supply_lead_time": 20
+      },
+      "602": {
+        "on_time_delivery": "97%",
+        "quality_rate": "98%",
+        "sustainability_score": "AAA",
+        "premium_shipment": "1%",
+        "supply_lead_time": 24
+      },
+      "603": {
+        "on_time_delivery": "99%",
+        "quality_rate": "99%",
+        "sustainability_score": "AAA",
+        "premium_shipment": "0%",
+        "supply_lead_time": 18
+      },
+      "604": {
+        "on_time_delivery": "93%",
+        "quality_rate": "97%",
+        "sustainability_score": "AAA",
+        "premium_shipment": "3%",
+        "supply_lead_time": 26
+      }
+  },
+  "risk_anlysis" : {
+      "601": {
+        "SER_rating":"Minimal Risk",
+        "SSI_rating":0
+      },
+      "602": {
+        "SER_rating":"Low Risk",
+        "SSI_rating":1
+      },
+      "603": {
+        "SER_rating":"Minimal Risk",
+        "SSI_rating":0
+      },
+      "604": {
+        "SER_rating":"Minimal Risk",
+        "SSI_rating":2
+      }
+  },
+  "contract" : {
+      "601": {
+        "Discount (Volume /YoY)": "2%",
+        "Quality certification":"ISO 9001",
+        "Material Origin verification":"Yes"
+      },
+      "602": {
+        "Discount (Volume /YoY)": "1.5%",
+        "Quality certification":"ISO 9001",
+        "Material Origin verification":"Yes"
+      },
+      "603": {
+        "Discount (Volume /YoY)": "2%",
+        "Quality certification":"ISO 9001",
+        "Material Origin verification":"Yes"
+      },
+      "604": {
+        "Discount (Volume /YoY)": "1%",
+        "Quality certification":"ISO 9001",
+        "Material Origin verification":"Yes"
+      }
+  },
+  "supplier_mapping" : {
+      "OVAKO": "601",
+      "POSCO": "602",
+      "TATA STEEL": "603",
+      "SWISS STEEL": "604"
+    }
+}
