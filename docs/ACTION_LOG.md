@@ -184,7 +184,7 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 
 ## Phase 4 — Batch 2 hardening (supply-chain + isolation)
 
-**Commit:** `<pending>` — *Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store*
+**Commit:** `5502fc0` — *Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store*
 
 ### Fixes
 
@@ -233,6 +233,6 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 | `feb13ba` | Rebuild `src/main.py` as a secure, plugin-based MCP tool server (no Azure). |
 | `3177bcc` | Add risk-gated tool onboarding endpoint (Azure sync replacement). |
 | `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
-| `<pending>` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
+| `5502fc0` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
