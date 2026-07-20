@@ -1,0 +1,110 @@
+openapi: "3.0.3"
+info:
+  title: MCP Server API
+  version: "0.1.0"
+  description: |
+    OpenAPI schema for the MCP server project. Replace and extend paths,
+    schemas and security definitions to match your implementation.
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /commands:
+    post:
+      summary: Submit a command to the server
+      operationId: submitCommand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+      responses:
+        '201':
+          description: Command accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /commands/{commandId}:
+    get:
+      summary: Get command status/result
+      operationId: getCommand
+      parameters:
+        - name: commandId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+        '404':
+          description: Command not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        uptime:
+          type: number
+          format: double
+          example: 123.45
+    CommandRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          example: start_job
+        payload:
+          type: object
+          additionalProperties: true
+      required:
+        - action
+    CommandResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          example: queued
+        result:
+          type: object
+          additionalProperties: true
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+  securitySchemes: {}
