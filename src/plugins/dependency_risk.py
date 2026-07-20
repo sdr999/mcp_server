@@ -87,6 +87,21 @@ def resolve_import_name(module_name: str) -> str:
     return IMPORT_TO_PACKAGE.get(module_name, module_name)
 
 
+def classify_import(module_name: str) -> Tuple[str, str]:
+    """Map an imported top-level module to (package_name, origin).
+
+    * ``"inferred"`` -- resolved via the known ``IMPORT_TO_PACKAGE`` table, so
+      the distribution name is reliable (``dotenv`` -> ``python-dotenv``).
+    * ``"guessed"`` -- no table entry, so the import name is used verbatim as
+      the package name. This is a *guess*: PyPI dist names and import names
+      often differ, so onboarding treats a guessed, non-allowlisted dependency
+      as something an admin must confirm rather than auto-install.
+    """
+    if module_name in IMPORT_TO_PACKAGE:
+        return IMPORT_TO_PACKAGE[module_name], "inferred"
+    return module_name, "guessed"
+
+
 def canonical_name(name: str) -> str:
     """PEP 503 name normalization: collapse any run of ``-``, ``_`` or ``.``
     to a single ``-`` and lowercase. ``Foo_Bar``, ``foo-bar`` and ``foo.bar``
@@ -107,6 +122,7 @@ class RiskReport:
     reasons: List[str] = field(default_factory=list)
     valid: bool = True
     already_installed: bool = False
+    origin: str = "declared"  # "declared" | "inferred" | "guessed" | "transitive"
 
 
 def spec_name(spec: str) -> str:
@@ -156,8 +172,15 @@ def assess_requirement(
     denylist: Optional[Set[str]] = None,
     network_check: bool = True,
     network_timeout: float = 3.0,
+    origin: str = "declared",
 ) -> RiskReport:
-    """Score a single pip requirement spec (e.g. ``"requests==2.31.0"``)."""
+    """Score a single pip requirement spec (e.g. ``"requests==2.31.0"``).
+
+    ``origin`` records where the requirement came from (declared by the
+    submitter, inferred from a known import mapping, guessed from an import
+    name, or discovered as a transitive dependency). It does not by itself
+    change the score; callers use it to decide policy (e.g. hold a guessed,
+    non-allowlisted dependency for review)."""
     spec = (spec or "").strip()
     raw_allow = allowlist if allowlist is not None else DEFAULT_ALLOWLIST
     raw_deny = denylist if denylist is not None else DEFAULT_DENYLIST
@@ -169,7 +192,7 @@ def assess_requirement(
     m = _SPEC_RE.match(spec)
     if not m:
         return RiskReport(spec=spec, name=spec, version_pin=None, score=100, level="high",
-                           reasons=["malformed or unsafe requirement spec"], valid=False)
+                           reasons=["malformed or unsafe requirement spec"], valid=False, origin=origin)
 
     name = m.group("name")
     version = m.group("version")
@@ -179,11 +202,11 @@ def assess_requirement(
 
     if key in allow:
         return RiskReport(spec=spec, name=name, version_pin=version, score=0, level="low",
-                           reasons=["package is on the trusted allowlist"])
+                           reasons=["package is on the trusted allowlist"], origin=origin)
 
     if key in deny:
         return RiskReport(spec=spec, name=name, version_pin=version, score=100, level="high",
-                           reasons=["package name is on the denylist"])
+                           reasons=["package name is on the denylist"], origin=origin)
 
     already_installed = False
     try:
@@ -237,7 +260,7 @@ def assess_requirement(
 
     score = max(0, score)
     return RiskReport(spec=spec, name=name, version_pin=version, score=score, level=_level_for(score),
-                       reasons=reasons, already_installed=already_installed)
+                       reasons=reasons, already_installed=already_installed, origin=origin)
 
 
 def stdlib_and_installed(module_name: str) -> bool:

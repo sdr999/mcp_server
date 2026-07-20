@@ -62,6 +62,106 @@ def test_no_new_dependencies_onboards_immediately(tmp_path):
     assert not mgr.list_pending()
 
 
+def test_guessed_dependency_name_is_held_pending(tmp_path):
+    # `import someobscurelib` has no known import->distribution mapping, so the
+    # package name is a guess. Not allowlisted -> held for admin confirmation.
+    mgr = _manager(tmp_path)
+    src = "import someobscurelib\n\ndef guesser():\n    return 1\n"
+    record = asyncio.run(mgr.onboard("guesser", src, []))
+    assert record["status"] == "pending"
+    assert "guessed" in record["hold_reason"]
+    assert "guesser" not in mgr.loader.mcp.tools
+
+
+def test_allowlisted_guessed_dependency_is_not_held_for_being_guessed(tmp_path, monkeypatch):
+    # Same guessed import, but allowlisted -> the guessed-name gate does not fire.
+    async def fake_pip_install(specs, timeout):
+        return True, ""
+
+    monkeypatch.setattr("plugins.onboarding._pip_install", fake_pip_install)
+    mgr = _manager(tmp_path, allowlist={"someobscurelib"})
+    src = "def okguess():\n    return 1\n"  # stem==func so it registers a tool
+    # declare the import via source but keep the tool loadable without the dep
+    record = asyncio.run(mgr.onboard("okguess", "import someobscurelib\n" + src, []))
+    # It will fail to load (someobscurelib isn't really importable) -> pending,
+    # but crucially NOT for the "guessed" reason.
+    assert "guessed" not in record.get("hold_reason", "")
+
+
+def test_transitive_dependency_high_risk_holds_pending(tmp_path, monkeypatch):
+    # Direct dep is allowlisted/clean, but its resolved closure contains a
+    # denylisted transitive package -> the whole submission is held.
+    async def fake_closure(specs, timeout):
+        return True, [
+            {"name": "gooddirect", "version": "1.0", "requested": True},
+            {"name": "evil-transitive", "version": "0.1", "requested": False},
+        ]
+
+    async def must_not_install(specs, timeout):
+        pytest.fail("install must not run when a transitive dep is high risk")
+
+    monkeypatch.setattr("plugins.onboarding._pip_resolve_closure", fake_closure)
+    monkeypatch.setattr("plugins.onboarding._pip_install", must_not_install)
+    mgr = _manager(tmp_path, network_check=True, allowlist={"gooddirect"},
+                   denylist={"evil-transitive"})
+    record = asyncio.run(mgr.onboard("closuretool", "def closuretool():\n    return 1\n",
+                                     ["gooddirect==1.0"]))
+    assert record["status"] == "pending"
+    assert "transitive" in record["hold_reason"]
+    assert "evil-transitive" in record["hold_reason"]
+    assert any(r["name"] == "evil-transitive" for r in record["closure_reports"])
+
+
+def test_clean_transitive_closure_proceeds_to_install(tmp_path, monkeypatch):
+    installed = {}
+
+    async def fake_closure(specs, timeout):
+        return True, [
+            {"name": "gooddirect", "version": "1.0", "requested": True},
+            {"name": "benign-transitive", "version": "2.0", "requested": False},
+        ]
+
+    async def fake_install(specs, timeout):
+        installed["specs"] = specs
+        return True, ""
+
+    monkeypatch.setattr("plugins.onboarding._pip_resolve_closure", fake_closure)
+    monkeypatch.setattr("plugins.onboarding._pip_install", fake_install)
+    mgr = _manager(tmp_path, network_check=True,
+                   allowlist={"gooddirect", "benign-transitive"}, denylist=set())
+    record = asyncio.run(mgr.onboard("cleanclosure", "def cleanclosure():\n    return 1\n",
+                                     ["gooddirect==1.0"]))
+    assert record["status"] == "onboarded"
+    assert installed["specs"] == ["gooddirect==1.0"]
+    assert record["closure_reports"]  # closure was assessed
+
+
+def test_unresolvable_closure_holds_pending(tmp_path, monkeypatch):
+    async def failing_closure(specs, timeout):
+        return False, "No matching distribution found for nonexistent==1.0"
+
+    async def must_not_install(specs, timeout):
+        pytest.fail("install must not run when closure resolution failed")
+
+    monkeypatch.setattr("plugins.onboarding._pip_resolve_closure", failing_closure)
+    monkeypatch.setattr("plugins.onboarding._pip_install", must_not_install)
+    mgr = _manager(tmp_path, network_check=True, allowlist={"nonexistent"}, denylist=set())
+    record = asyncio.run(mgr.onboard("badclosure", "def badclosure():\n    return 1\n",
+                                     ["nonexistent==1.0"]))
+    assert record["status"] == "pending"
+    assert "could not resolve dependency closure" in record["hold_reason"]
+
+
+def test_pending_source_is_stored_non_importably(tmp_path):
+    mgr = _manager(tmp_path, denylist={"evilpkg"})
+    asyncio.run(mgr.onboard("held", "import evilpkg\n", ["evilpkg==1.0"]))
+    # stored as held.py.pending (+ held.json), never held.py
+    names = sorted(p.name for p in mgr.pending_dir.iterdir())
+    assert "held.py.pending" in names
+    assert "held.json" in names
+    assert "held.py" not in names
+
+
 def test_invalid_name_rejected(tmp_path):
     mgr = _manager(tmp_path)
     with pytest.raises(ValueError):
@@ -111,7 +211,7 @@ def test_declared_and_inferred_dependency_are_deduped(tmp_path):
     mgr = _manager(tmp_path, allowlist={"python-dotenv"})
     src = "import dotenv\n\ndef greet_dep():\n    return 'ok'\n"
     specs = mgr._build_specs(src, ["python_dotenv==1.0.0"])
-    canon = [risk.canonical_name(risk.spec_name(s)) for s in specs]
+    canon = [risk.canonical_name(risk.spec_name(spec)) for spec, _origin in specs]
     assert canon.count("python-dotenv") == 1, specs
 
 

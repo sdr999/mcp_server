@@ -180,20 +180,45 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 
 - Full plugin suite: **61 tests passing.**
 
+---
+
+## Phase 4 — Batch 2 hardening (supply-chain + isolation)
+
+**Commit:** `<pending>` — *Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store*
+
+### Fixes
+
+| # | Fix | Where |
+|---|-----|-------|
+| 3 | **Transitive-closure assessment**: resolve `pip install --dry-run --report` and risk-assess every transitively-pulled package before installing; a high-risk transitive dep holds the whole submission (network-gated). | `onboarding.py` (`_pip_resolve_closure`) |
+| 6 | **Declared/inferred/guessed origins**: `classify_import()` distinguishes reliable import→dist mappings from guesses; a guessed, non-allowlisted dependency is held for admin confirmation. | `dependency_risk.py`, `onboarding.py` |
+| 10 | **Non-importable pending store**: held submissions are stored as `{name}.py.pending`, so unreviewed code under a sys.path dir can't be imported. | `onboarding.py` |
+| 11 (rest) | **Serialize concurrent pip**: an install lock guards resolve + install so two onboards don't run pip against the same env at once. | `onboarding.py` |
+
+### Files modified
+
+- `src/plugins/dependency_risk.py` — `classify_import()`; `origin` field on `RiskReport` threaded through `assess_requirement`.
+- `src/plugins/onboarding.py` — `_pip_resolve_closure`, closure gating, guessed-dep gate, `_install_lock`, `.py.pending` store, origin-tagged `_build_specs`.
+- `src/tests/test_plugins_onboarding.py` — 6 new tests (closure high-risk/clean/unresolvable, guessed gating, pending-store isolation).
+- `docs/MCP_TOOL_ONBOARDING.md` — flow diagram, origins, closure, concurrency/isolation, updated caveats.
+
+### Verification against real conditions (live server run)
+
+| Check | Result |
+|-------|--------|
+| Transitive gating (#3) | `python-slugify` (clean) held pending because its real transitive `text-unidecode` was denylisted; **nothing installed** |
+| Clean closure (#3) | real `pip --dry-run` resolved the closure, both packages installed, tool loaded |
+| Guessed dep (#6) | `import someobscurelib` held pending with the "declare or allowlist" reason; nothing installed |
+| Pending store (#10) | stored as `heldtool.py.pending`; `import tools_pending.heldtool` fails |
+| Concurrent installs (#11) | two simultaneous onboards each did a real pip install (humanize + inflection); both succeeded, no race in the log |
+
+- Full plugin suite: **67 tests passing** (6 new).
+
 ### Remaining review items (not yet done)
 
-Open for later batches — highest value first:
-
-- **#3** Transitive dependencies bypass risk assessment (assess the full
-  `pip install --dry-run --report` closure).
-- **#12** `api_key` mode with the default `Authorization` header makes
-  `/admin/*` unreachable (exempt admin routes or default to `x-api-key`).
-- #6 import-name vs distribution-name confusion for inferred deps.
-- #7 signed-tools mode vs onboarding semantics.
-- #8 overwrite/conflict handling (`409`).
-- #9 name validation in approve/reject.
-- #10 store pending code non-importably.
-- #11 (rest) serialize concurrent pip installs.
+- **#12** `api_key` mode with the default `Authorization` header makes `/admin/*` unreachable.
+- #7 signed-tools mode vs onboarding semantics; #8 overwrite/conflict (`409`);
+  #9 name validation in approve/reject.
 - #13 request-size limits; #14 PyPI-lookup tests + `urllib.parse.quote`;
   #15 status code for disabled onboarding.
 - #16 onboarding metrics; #17 audit trail; #18 update `.env.example`;
@@ -207,6 +232,7 @@ Open for later batches — highest value first:
 |--------|---------|
 | `feb13ba` | Rebuild `src/main.py` as a secure, plugin-based MCP tool server (no Azure). |
 | `3177bcc` | Add risk-gated tool onboarding endpoint (Azure sync replacement). |
-| `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache. |
+| `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
+| `<pending>` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
 
-All three pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
+Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.

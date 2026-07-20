@@ -6,22 +6,31 @@ Flow
 1. Validate the tool name (safe module-stem only) and that the source at
    least parses (``ast.parse``) -- never executed until the loader imports it.
 2. Detect imports the source needs (stdlib/already-installed ones are
-   ignored) and merge them with any explicitly declared ``requirements``.
-3. Risk-assess every dependency (``dependency_risk.assess_requirement``).
-4. Decide:
-   * Any requirement scores "high", any requirement/spec is malformed, or
-     auto-install is disabled while new installs are needed
+   ignored) and merge them with any explicitly declared ``requirements``,
+   tagging each as declared / inferred (known import->dist mapping) / guessed
+   (import name used verbatim).
+3. Risk-assess every direct dependency (``dependency_risk.assess_requirement``).
+4. Before installing, resolve the full transitive **closure** with
+   ``pip install --dry-run --report`` and risk-assess every *transitive*
+   package too, so a benign top-level package cannot smuggle in a malicious
+   dependency. (Network-gated; skipped when ``network_check`` is off.)
+5. Decide:
+   * Any dependency (direct or transitive) scores "high" or is malformed, a
+     guessed dependency name isn't allowlisted, or auto-install is disabled
+     while new installs are needed
      -> hold as **pending**: nothing is installed, nothing is loaded, and the
         submission + full risk report is written to the pending directory for
         an admin to inspect via ``GET /admin/tools/pending``.
    * Otherwise -> install the (low/medium risk) missing dependencies, write
      the tool into the live tools directory, and hot-load it immediately.
-5. An admin can force either outcome later: ``approve`` installs+loads a
+6. An admin can force either outcome later: ``approve`` installs+loads a
    pending submission regardless of its risk score; ``reject`` discards it.
 
 This module has no hard dependency beyond the stdlib + what ``tool_loader``
 already needs; installs run pip in a subprocess (never a shell), and only
 after every spec has been validated by ``dependency_risk`` regex matching.
+Pending submissions are stored with a ``.py.pending`` suffix so held (possibly
+untrusted) code is not importable via ``sys.path``.
 """
 from __future__ import annotations
 
@@ -74,6 +83,45 @@ async def _pip_install(specs: List[str], timeout: float):
     return True, ""
 
 
+async def _pip_resolve_closure(specs: List[str], timeout: float):
+    """Resolve (but do not install) the full dependency closure of ``specs``
+    via ``pip install --dry-run --report -``. Returns ``(ok, packages | error)``
+    where each package is ``{"name", "version", "requested"}`` (``requested``
+    is True for the specs asked for, False for transitively-pulled deps).
+
+    Same subprocess/no-shell discipline as ``_pip_install``; specs must already
+    have passed the strict grammar."""
+    if not specs:
+        return True, []
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "pip", "install", "--dry-run", "--report", "-",
+        "--no-input", "--disable-pip-version-check", "--quiet", *specs,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        return False, f"dependency resolution exceeded {timeout}s and was killed"
+    if proc.returncode != 0:
+        return False, (err.decode(errors="replace").strip()[:2000] or "pip could not resolve the dependencies")
+    try:
+        report = json.loads(out.decode() or "{}")
+    except ValueError as exc:
+        return False, f"could not parse pip dependency report: {exc}"
+    packages = []
+    for item in report.get("install", []):
+        meta = item.get("metadata", {}) or {}
+        packages.append({
+            "name": meta.get("name", ""),
+            "version": meta.get("version", ""),
+            "requested": bool(item.get("requested")),
+        })
+    return True, packages
+
+
 class OnboardingManager:
     """Owns the pending-submission store and drives the risk-gated onboarding
     flow described in the module docstring."""
@@ -93,6 +141,9 @@ class OnboardingManager:
         # race importlib. A shared lock makes them mutually exclusive. Tests
         # that construct a manager without a drain get their own private lock.
         self.loader_lock = loader_lock or asyncio.Lock()
+        # Serializes pip subprocesses (resolve + install) so two concurrent
+        # onboards don't run pip against the same environment simultaneously.
+        self._install_lock = asyncio.Lock()
         self.allowlist = allowlist if allowlist is not None else {risk.canonical_name(n) for n in risk.DEFAULT_ALLOWLIST}
         self.denylist = denylist if denylist is not None else {risk.canonical_name(n) for n in risk.DEFAULT_DENYLIST}
         self.network_check = network_check
@@ -105,7 +156,9 @@ class OnboardingManager:
 
     # -- pending store --------------------------------------------------
     def _pending_paths(self, name: str):
-        return self.pending_dir / f"{name}.py", self.pending_dir / f"{name}.json"
+        # ``.py.pending`` (not ``.py``) so held, unreviewed code sitting under a
+        # directory that may be on sys.path is not importable as a module.
+        return self.pending_dir / f"{name}.py.pending", self.pending_dir / f"{name}.json"
 
     def list_pending(self) -> List[dict]:
         out = []
@@ -136,27 +189,29 @@ class OnboardingManager:
         meta_path.unlink(missing_ok=True)
 
     # -- risk assessment --------------------------------------------------
-    def _assess_specs(self, specs: List[str]) -> List[risk.RiskReport]:
-        return [
-            risk.assess_requirement(
-                s, allowlist=self.allowlist, denylist=self.denylist,
-                network_check=self.network_check, network_timeout=self.network_timeout,
-            )
-            for s in specs
-        ]
+    def _assess_one(self, spec: str, origin: str) -> risk.RiskReport:
+        return risk.assess_requirement(
+            spec, allowlist=self.allowlist, denylist=self.denylist,
+            network_check=self.network_check, network_timeout=self.network_timeout,
+            origin=origin,
+        )
 
-    def _build_specs(self, source: str, requirements: List[str]) -> List[str]:
-        explicit = list(requirements or [])
-        # Canonical names so a declared ``python_dotenv`` and an inferred
-        # ``import dotenv`` -> ``python-dotenv`` are recognized as one package
-        # and not installed twice.
-        covered = {risk.spec_name(s) for s in explicit}
+    def _assess_specs(self, specs_with_origin: List[Tuple[str, str]]) -> List[risk.RiskReport]:
+        return [self._assess_one(spec, origin) for spec, origin in specs_with_origin]
+
+    def _build_specs(self, source: str, requirements: List[str]) -> List[Tuple[str, str]]:
+        """Return [(spec, origin)] merging declared requirements with imports
+        detected in the source. Canonical names so a declared ``python_dotenv``
+        and an inferred ``import dotenv`` -> ``python-dotenv`` are recognized as
+        one package and not installed twice."""
+        out: List[Tuple[str, str]] = [(s, "declared") for s in (requirements or [])]
+        covered = {risk.spec_name(s) for s in (requirements or [])}
         for mod in risk.detect_missing_imports(source):
-            resolved = risk.resolve_import_name(mod)
-            if risk.canonical_name(resolved) not in covered:
-                explicit.append(resolved)
-                covered.add(risk.canonical_name(resolved))
-        return explicit
+            package, origin = risk.classify_import(mod)
+            if risk.canonical_name(package) not in covered:
+                out.append((package, origin))
+                covered.add(risk.canonical_name(package))
+        return out
 
     # -- onboarding ---------------------------------------------------------
     async def onboard(self, name: str, source: str, requirements: Optional[List[str]] = None) -> dict:
@@ -169,21 +224,31 @@ class OnboardingManager:
         except SyntaxError as exc:
             raise ValueError(f"tool source has a syntax error: {exc}")
 
-        specs = self._build_specs(source, requirements or [])
-        reports = self._assess_specs(specs)
+        specs_with_origin = self._build_specs(source, requirements or [])
+        reports = self._assess_specs(specs_with_origin)
         needs_install = [r for r in reports if not r.already_installed]
+
+        # A "guessed" dependency name (inferred from an import with no known
+        # import->distribution mapping) may not be the real PyPI package;
+        # unless it's allowlisted, require an admin to confirm it.
+        guessed = [r for r in reports
+                   if r.origin == "guessed" and risk.canonical_name(r.name) not in self.allowlist]
 
         hold_reason = None
         if not self.autoinstall and needs_install:
             hold_reason = "auto-install of new dependencies is disabled (MCP_TOOL_AUTOINSTALL_DEPS=false)"
         elif any(not r.valid or r.level == "high" for r in reports):
             hold_reason = "one or more dependencies were assessed as high risk"
+        elif guessed:
+            hold_reason = ("a dependency name was guessed from an import and could not be verified "
+                           f"({', '.join(sorted(r.name for r in guessed))}); "
+                           "declare it explicitly in requirements or add it to the allowlist")
 
         record = {
             "name": name,
             "status": "pending" if hold_reason else "onboarded",
             "requested_at": time.time(),
-            "requirements": specs,
+            "requirements": [spec for spec, _ in specs_with_origin],
             "risk_reports": [asdict(r) for r in reports],
         }
 
@@ -194,7 +259,33 @@ class OnboardingManager:
             return record
 
         install_specs = [r.spec for r in needs_install if r.valid]
-        ok, err = await _pip_install(install_specs, self.install_timeout)
+
+        # Resolve + risk-assess the transitive closure before installing, so a
+        # low-risk top-level package can't pull in a high-risk dependency. Only
+        # when network checks are on (offline resolution isn't meaningful).
+        if self.network_check and install_specs:
+            async with self._install_lock:
+                ok, closure = await _pip_resolve_closure(install_specs, self.install_timeout)
+            if not ok:
+                record["status"] = "pending"
+                record["hold_reason"] = f"could not resolve dependency closure: {closure}"
+                self._write_pending(name, source, record)
+                log.error("Tool %r held pending: %s", name, record["hold_reason"])
+                return record
+            transitive = [self._assess_one(f"{p['name']}=={p['version']}", "transitive")
+                          for p in closure if not p["requested"] and p["name"]]
+            record["closure_reports"] = [asdict(r) for r in transitive]
+            risky = [r for r in transitive if not r.valid or r.level == "high"]
+            if risky:
+                record["status"] = "pending"
+                record["hold_reason"] = ("a transitive dependency was assessed as high risk: "
+                                         + ", ".join(sorted(r.name for r in risky)))
+                self._write_pending(name, source, record)
+                log.warning("Tool %r held pending: %s", name, record["hold_reason"])
+                return record
+
+        async with self._install_lock:
+            ok, err = await _pip_install(install_specs, self.install_timeout)
         if not ok:
             record["status"] = "pending"
             record["hold_reason"] = f"dependency install failed: {err}"
@@ -263,7 +354,9 @@ class OnboardingManager:
 
         install_specs = [r["spec"] for r in pending.get("risk_reports", [])
                           if r.get("valid", True) and not r.get("already_installed")]
-        ok, err = await _pip_install(install_specs, self.install_timeout)
+        # Admin override: install regardless of risk, but still serialize pip.
+        async with self._install_lock:
+            ok, err = await _pip_install(install_specs, self.install_timeout)
         if not ok:
             pending["hold_reason"] = f"admin-approved install failed: {err}"
             self._write_pending(name, source, pending)

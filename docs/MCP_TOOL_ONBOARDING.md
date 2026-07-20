@@ -19,10 +19,14 @@ POST /admin/tools/onboard  { name, source, requirements? }
         │
         ├─ 1. validate name (safe module stem) + source (must parse)
         ├─ 2. detect imports the source needs, merge with declared requirements
-        ├─ 3. risk-assess every dependency
+        │     (each tagged declared / inferred / guessed)
+        ├─ 3. risk-assess every DIRECT dependency
+        ├─ 4. resolve + risk-assess the full TRANSITIVE closure
+        │     (pip --dry-run --report; network-gated)
         │
-        ├─ any dependency is HIGH risk, malformed, or auto-install is
-        │  disabled while a new install is needed
+        ├─ any dependency (direct OR transitive) is HIGH risk or malformed,
+        │  a guessed dependency name isn't allowlisted, the closure can't be
+        │  resolved, or auto-install is disabled while a new install is needed
         │        │
         │        └─► held PENDING — nothing installed, nothing loaded
         │            (202 Accepted; appears in GET /admin/tools/pending)
@@ -31,9 +35,36 @@ POST /admin/tools/onboard  { name, source, requirements? }
                  │
                  ├─ pip install the missing (low/medium risk) dependencies
                  ├─ on install failure -> also falls back to PENDING
+                 ├─ import OFF the serving loop, bounded by the import timeout
                  └─ on success -> tool file is written to the live tools
-                    directory and hot-loaded immediately (201 Created)
+                    directory and hot-loaded immediately (201 Created);
+                    a submission that still fails to load is rolled back and
+                    held PENDING with the real reason (never a false success)
 ```
+
+**Dependency origins.** A requirement is `declared` (listed in
+`requirements`), `inferred` (detected from an import with a known
+import→distribution mapping, e.g. `import dotenv` → `python-dotenv`), or
+`guessed` (detected from an import with no known mapping, so the import name
+is used verbatim as the package name). Because import names and PyPI
+distribution names frequently differ, a **guessed** dependency that isn't
+allowlisted is held pending for an admin to confirm — declare the real
+package name explicitly, or add it to the allowlist.
+
+**Transitive closure.** Direct dependencies aren't the whole story: a benign
+top-level package can pull in anything. Before installing, onboarding runs
+`pip install --dry-run --report` to resolve the complete closure and
+risk-assesses every transitively-pulled package too; a high-risk transitive
+dependency holds the whole submission. This step needs network access and is
+skipped when `MCP_TOOL_RISK_NETWORK_CHECK=false` (offline deployments assess
+only the direct, declared/inferred dependencies).
+
+**Concurrency & isolation.** pip subprocesses (resolution + install) are
+serialized by an install lock, and tool imports are serialized against the
+filesystem-watcher reload via a shared loader lock, so concurrent onboards
+can't corrupt the environment or race `importlib`. Pending submissions are
+stored with a `.py.pending` suffix so held (unreviewed) code isn't importable
+via `sys.path`.
 
 An admin can override either outcome for anything sitting in the pending
 queue:
@@ -118,9 +149,13 @@ curl -s "${ADM[@]}" -X POST $BASE/admin/tools/pending/typo_tool/approve
 
 * It does not sandbox tool **imports** — a submitted module's top-level code
   still runs in-process when it's loaded (same as any file dropped into the
-  tools directory today). Runtime **calls** can still be sandboxed per-tool
-  with `MCP_SANDBOX_TOOLS=true` (see MCP_SERVER_FEATURES.md §7); this is
-  orthogonal and unaffected by onboarding.
+  tools directory today), though the import runs off the serving loop bounded
+  by `MCP_TOOL_IMPORT_TIMEOUT_SEC` so it can't freeze the server. Runtime
+  **calls** can still be sandboxed per-tool with `MCP_SANDBOX_TOOLS=true` (see
+  MCP_SERVER_FEATURES.md §7); this is orthogonal and unaffected by onboarding.
+* The transitive-closure assessment covers package **names** (denylist,
+  typosquat, allowlist, brand-new/unknown), not the contents of a specific
+  release — it is not a malware scanner (see next point).
 * It is not a malware scanner. The heuristics catch unpinned dependencies,
   obvious typosquats, brand-new/unknown packages, and denylisted names — not
   a compromised release of an otherwise-legitimate, well-established package.
