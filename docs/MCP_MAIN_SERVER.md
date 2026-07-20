@@ -22,6 +22,8 @@ tested, and changed in isolation:
 | `plugins/security.py` | `FastMCP` + JWT verifier construction, API-key middleware, admin-token guard. |
 | `plugins/routes.py` | `/healthz`, `/readyz`, `/status`, `/tools`, `/metrics`, `/admin/*`. |
 | `plugins/cli.py` | `--validate` / `--sign` CLI utilities. |
+| `plugins/dependency_risk.py` | Heuristic risk-scoring for a tool's pip dependencies (stdlib-only). |
+| `plugins/onboarding.py` | The risk-gated onboard/approve/reject flow — see [MCP_TOOL_ONBOARDING.md](MCP_TOOL_ONBOARDING.md). |
 | `plugins/app.py` | Wires everything into one ASGI app + lifespan (initial load, then drain reload events). |
 
 ## What's different from `multiple_mcp_main.py`
@@ -33,6 +35,11 @@ tested, and changed in isolation:
 * `POST /admin/resync` always returns `409` (kept for API-shape parity —
   there's nothing to resync since there's no remote source; the filesystem
   watcher already covers local edits).
+* **Tool onboarding replaces the remote sync.** In place of dropping a file
+  onto an Azure File Share, submit the tool (and its pip dependencies) to
+  `POST /admin/tools/onboard`. Dependencies are risk-scored; low/medium risk
+  auto-installs and hot-loads, high risk is held pending for an admin to
+  approve or reject. See [MCP_TOOL_ONBOARDING.md](MCP_TOOL_ONBOARDING.md).
 * Tool discovery/registration/signing/metrics/sandboxing/auth behave
   identically to `multiple_mcp_main.py` — see
   [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) §1 (authoring), §4 (signed
@@ -40,6 +47,20 @@ tested, and changed in isolation:
   [MCP_AUTH_GUIDE.md](MCP_AUTH_GUIDE.md) for the full auth setup (still
   applies verbatim — same `MCP_AUTH_TYPE`, same admin token, same endpoint
   matrix).
+
+## HTTP endpoints unique to `main.py`
+
+In addition to the shared surface (`/healthz`, `/readyz`, `/status`,
+`/tools`, `/metrics`, `/admin/resync`, `/admin/reload/{name}`,
+`/admin/tool/{name}/disable`, `/admin/tool/{name}/enable` — all documented
+in [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) §3):
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/admin/tools/onboard` | admin token | Submit `{name, source, requirements?}`; risk-assesses dependencies and either onboards (`201`) or holds pending (`202`). |
+| GET | `/admin/tools/pending` | admin token | List submissions held pending, with their full risk report. |
+| POST | `/admin/tools/pending/{name}/approve` | admin token | Force-install + load a pending submission, overriding its risk score. |
+| POST | `/admin/tools/pending/{name}/reject` | admin token | Discard a pending submission. |
 
 ## CLI
 
@@ -77,5 +98,7 @@ MCP_TOOL_SIGNING_KEY=secret python main.py --sign ./mytools
 ## Tests
 
 ```bash
-pytest src/tests/test_plugins_config.py src/tests/test_plugins_tool_loader.py src/tests/test_main_server.py
+pytest src/tests/test_plugins_config.py src/tests/test_plugins_dependency_risk.py \
+       src/tests/test_plugins_onboarding.py src/tests/test_plugins_tool_loader.py \
+       src/tests/test_main_server.py
 ```

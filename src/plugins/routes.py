@@ -112,6 +112,67 @@ async def _admin_enable(request):
     return JSONResponse({"status": "enabled", "tool": name, "reloaded": bool(module)})
 
 
+# -- tool onboarding: the replacement for the removed Azure sync path -------
+async def _admin_tools_onboard(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+
+    name = body.get("name")
+    source = body.get("source")
+    requirements = body.get("requirements") or []
+    if not isinstance(name, str) or not isinstance(source, str) or not isinstance(requirements, list):
+        return JSONResponse(
+            {"error": "expected {\"name\": str, \"source\": str, \"requirements\"?: [str, ...]}"},
+            status_code=400,
+        )
+
+    try:
+        record = await st.onboarding.onboard(name, source, requirements)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    if record["status"] == "pending":
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(record, status_code=202)
+    await notify_tools_changed(st.mcp)
+    return JSONResponse(record, status_code=201)
+
+
+async def _admin_tools_pending_list(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    return JSONResponse({"pending": request.app.state.onboarding.list_pending()})
+
+
+async def _admin_tools_pending_approve(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    name = request.path_params["name"]
+    try:
+        record = await st.onboarding.approve(name)
+    except KeyError:
+        return JSONResponse({"error": f"no pending tool named {name!r}"}, status_code=404)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    await notify_tools_changed(st.mcp)
+    return JSONResponse(record)
+
+
+async def _admin_tools_pending_reject(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    name = request.path_params["name"]
+    if not request.app.state.onboarding.reject(name):
+        return JSONResponse({"error": f"no pending tool named {name!r}"}, status_code=404)
+    return JSONResponse({"status": "rejected", "tool": name})
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
@@ -123,4 +184,8 @@ def feature_routes() -> List[Route]:
         Route("/admin/reload/{name}", _admin_reload, methods=["POST"]),
         Route("/admin/tool/{name}/disable", _admin_disable, methods=["POST"]),
         Route("/admin/tool/{name}/enable", _admin_enable, methods=["POST"]),
+        Route("/admin/tools/onboard", _admin_tools_onboard, methods=["POST"]),
+        Route("/admin/tools/pending", _admin_tools_pending_list, methods=["GET"]),
+        Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),
+        Route("/admin/tools/pending/{name}/reject", _admin_tools_pending_reject, methods=["POST"]),
     ]

@@ -50,6 +50,13 @@ class AppContext:
     require_signed: bool
     manifest_name: str
     signing_key: Optional[str]
+    onboard_enabled: bool = True
+    onboard_autoinstall: bool = True
+    onboard_network_check: bool = True
+    onboard_network_timeout: float = 3.0
+    onboard_install_timeout: float = 120.0
+    onboard_allowlist_path: Optional[Path] = None
+    onboard_denylist_path: Optional[Path] = None
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -150,6 +157,13 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         require_signed=env.get("MCP_REQUIRE_SIGNED_TOOLS", "false").lower() == "true",
         manifest_name=env.get("MCP_TOOL_MANIFEST", DEFAULT_MANIFEST),
         signing_key=env.get("MCP_TOOL_SIGNING_KEY") or None,
+        onboard_enabled=env.get("MCP_TOOL_ONBOARD_ENABLED", "true").lower() == "true",
+        onboard_autoinstall=env.get("MCP_TOOL_AUTOINSTALL_DEPS", "true").lower() == "true",
+        onboard_network_check=env.get("MCP_TOOL_RISK_NETWORK_CHECK", "true").lower() == "true",
+        onboard_network_timeout=float(env.get("MCP_TOOL_RISK_NETWORK_TIMEOUT_SEC", "3")),
+        onboard_install_timeout=float(env.get("MCP_TOOL_INSTALL_TIMEOUT_SEC", "120")),
+        onboard_allowlist_path=(base_dir / p if (p := env.get("MCP_TOOL_DEPENDENCY_ALLOWLIST")) else None),
+        onboard_denylist_path=(base_dir / p if (p := env.get("MCP_TOOL_DEPENDENCY_DENYLIST")) else None),
     )
 
 

@@ -13,7 +13,9 @@ import logging
 import queue
 import threading
 
+from . import dependency_risk as risk
 from .notifications import notify_tools_changed
+from .onboarding import OnboardingManager
 from .routes import feature_routes, register_metrics
 from .security import ApiKeyMiddleware, build_mcp
 from .signing import ToolVerifier
@@ -65,6 +67,15 @@ def build_app(ctx):
     reload_q: "queue.Queue" = queue.Queue()
     watcher = ToolDirectoryWatcher(reload_q, ctx.tools_dir)
 
+    onboarding = OnboardingManager(
+        ctx.tools_dir, ctx.tools_dir.parent / f"{ctx.tools_dir.name}_pending", loader,
+        allowlist=risk.load_name_set(ctx.onboard_allowlist_path, risk.DEFAULT_ALLOWLIST),
+        denylist=risk.load_name_set(ctx.onboard_denylist_path, risk.DEFAULT_DENYLIST),
+        network_check=ctx.onboard_network_check, network_timeout=ctx.onboard_network_timeout,
+        autoinstall=ctx.onboard_autoinstall, install_timeout=ctx.onboard_install_timeout,
+        enabled=ctx.onboard_enabled,
+    )
+
     app = mcp.http_app(transport="sse")
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value)
@@ -77,6 +88,7 @@ def build_app(ctx):
     app.state.auth_type = ctx.auth_type or "none"
     app.state.admin_token = ctx.admin_token
     app.state.jwt_verifier = jwt_verifier
+    app.state.onboarding = onboarding
     register_metrics(loader, app)
 
     original_lifespan = app.router.lifespan_context

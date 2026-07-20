@@ -4,3 +4,7 @@ __pycache__/
 src/config/.env
 *.egg-info/
 .pytest_cache/
+
+# Runtime-generated tool onboarding state (see docs/MCP_TOOL_ONBOARDING.md)
+src/tools_pending/
+src/tools/tools.manifest.json

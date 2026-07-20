@@ -18,7 +18,13 @@ _uid = itertools.count()
 SRC = str(Path(__file__).resolve().parent.parent)
 
 
-def _make_ctx(tools_dir, auth_type="none", jwks_url="", admin_token="secret"):
+def _make_ctx(tools_dir, auth_type="none", jwks_url="", admin_token="secret", **onboard_overrides):
+    onboard = dict(
+        onboard_enabled=True, onboard_autoinstall=True, onboard_network_check=False,
+        onboard_network_timeout=3.0, onboard_install_timeout=30.0,
+        onboard_allowlist_path=None, onboard_denylist_path=None,
+    )
+    onboard.update(onboard_overrides)
     return AppContext(
         base_dir=Path(SRC), tools_dir=tools_dir, env={},
         auth_type=auth_type, api_key_header="authorization", api_key_value="", jwks_url=jwks_url,
@@ -26,6 +32,7 @@ def _make_ctx(tools_dir, auth_type="none", jwks_url="", admin_token="secret"):
         import_timeout=30, metrics_enabled=True, sandbox=False,
         sandbox_timeout=30, sandbox_mem_mb=0, sandbox_cpu_sec=0, admin_token=admin_token,
         require_signed=False, manifest_name="tools.manifest.json", signing_key=None,
+        **onboard,
     )
 
 
@@ -96,6 +103,77 @@ def test_api_key_protects_everything_but_health(tmp_path):
         assert client.get("/healthz").status_code == 200
         assert client.get("/status").status_code == 401
         assert client.get("/status", headers={"x-api-key": "secret123"}).status_code == 200
+
+
+def _wait_ready(client):
+    for _ in range(50):
+        if client.get("/readyz").status_code == 200:
+            return
+        time.sleep(0.1)
+
+
+ADMIN = {"Authorization": "Bearer secret"}
+
+
+def test_onboard_low_risk_tool_loads_immediately(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        body = {"name": "greeter", "source": "def greeter(name: str) -> str:\n    return f'hi {name}'\n"}
+        r = client.post("/admin/tools/onboard", json=body, headers=ADMIN)
+        assert r.status_code == 201
+        assert r.json()["status"] == "onboarded"
+        assert "greeter" in [t["name"] for t in client.get("/tools").json()["tools"]]
+        assert client.get("/admin/tools/pending", headers=ADMIN).json()["pending"] == []
+
+
+def test_onboard_requires_admin_token(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/admin/tools/onboard", json={"name": "x", "source": "def x(): pass"})
+        assert r.status_code == 401
+
+
+def test_onboard_rejects_bad_name_and_syntax_error(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/admin/tools/onboard", json={"name": "../evil", "source": "x = 1"}, headers=ADMIN)
+        assert r.status_code == 400
+        r = client.post("/admin/tools/onboard", json={"name": "bad", "source": "def bad(:\n"}, headers=ADMIN)
+        assert r.status_code == 400
+
+
+def test_onboard_high_risk_dependency_is_held_pending_then_can_be_approved(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path), onboard_denylist_path=None)
+    app, mcp = build_app(ctx)
+    # Force a denylist hit deterministically via the app's own onboarding manager.
+    with TestClient(app) as client:
+        _wait_ready(client)
+        client.app.state.onboarding.denylist.add("evilpkg")
+
+        body = {"name": "risky", "source": "def risky():\n    return 'ok'\n", "requirements": ["evilpkg==1.0"]}
+        r = client.post("/admin/tools/onboard", json=body, headers=ADMIN)
+        assert r.status_code == 202
+        assert r.json()["status"] == "pending"
+        assert "risky" not in [t["name"] for t in client.get("/tools").json()["tools"]]
+
+        pending = client.get("/admin/tools/pending", headers=ADMIN).json()["pending"]
+        assert [p["name"] for p in pending] == ["risky"]
+
+        r = client.post("/admin/tools/pending/risky/reject", headers=ADMIN)
+        assert r.status_code == 200
+        assert client.get("/admin/tools/pending", headers=ADMIN).json()["pending"] == []
+
+
+def test_onboard_pending_approve_unknown_is_404(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/admin/tools/pending/nope/approve", headers=ADMIN).status_code == 404
+        assert client.post("/admin/tools/pending/nope/reject", headers=ADMIN).status_code == 404
 
 
 def test_bearer_jwt_protects_read_routes(tmp_path):

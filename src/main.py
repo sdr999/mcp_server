@@ -11,6 +11,13 @@ may expose tools via a ``register(registrar)`` hook, a ``TOOLS`` export,
 ``@tool``-decorated functions, or the legacy "function name == file stem"
 convention.
 
+Tool onboarding (see docs/MCP_TOOL_ONBOARDING.md) replaces the removed Azure
+sync as the way new tools arrive: ``POST /admin/tools/onboard`` accepts a
+tool's source plus its pip dependencies, risk-assesses each dependency with
+no hard dependency of its own (stdlib heuristics + a best-effort PyPI check),
+and either installs + hot-loads it or holds it pending for an admin to
+approve/reject via ``/admin/tools/pending``.
+
 Security features (see docs/MCP_AUTH_GUIDE.md):
   * ``MCP_AUTH_TYPE``: none | api_key | bearer_jwt (JWKS-validated OAuth).
   * Admin API gated by ``MCP_ADMIN_TOKEN`` (disabled entirely when unset).
