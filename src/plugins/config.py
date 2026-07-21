@@ -59,6 +59,8 @@ class AppContext:
     onboard_denylist_path: Optional[Path] = None
     onboard_only_binary: bool = False
     onboard_audit_log: Optional[Path] = None
+    onboard_require_explicit: bool = True
+    onboard_max_tools: int = 0
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -168,6 +170,8 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         onboard_denylist_path=(base_dir / p if (p := env.get("MCP_TOOL_DEPENDENCY_DENYLIST")) else None),
         onboard_only_binary=env.get("MCP_TOOL_INSTALL_ONLY_BINARY", "false").lower() == "true",
         onboard_audit_log=(base_dir / (env.get("MCP_TOOL_AUDIT_LOG") or "logs/onboarding_audit.log")),
+        onboard_require_explicit=env.get("MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT", "true").lower() == "true",
+        onboard_max_tools=int(env.get("MCP_TOOL_ONBOARD_MAX_TOOLS", "0")),
     )
 
 

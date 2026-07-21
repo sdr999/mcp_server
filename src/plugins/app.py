@@ -82,6 +82,7 @@ def build_app(ctx):
         autoinstall=ctx.onboard_autoinstall, install_timeout=ctx.onboard_install_timeout,
         import_timeout=ctx.import_timeout, enabled=ctx.onboard_enabled,
         only_binary=ctx.onboard_only_binary, audit_log_path=ctx.onboard_audit_log,
+        require_explicit=ctx.onboard_require_explicit, max_tools=ctx.onboard_max_tools,
         loader_lock=loader_lock,
     )
 

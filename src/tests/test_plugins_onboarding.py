@@ -51,7 +51,12 @@ def _manager(tmp_path, **kwargs):
     return OnboardingManager(tools_dir, pending_dir, loader, **kwargs)
 
 
-SAFE_SOURCE = "def greet(name: str) -> str:\n    return f'hi {name}'\n"
+SAFE_SOURCE = "from tools_sdk import tool\n\n@tool()\ndef greet(name: str) -> str:\n    return f'hi {name}'\n"
+
+
+def _tool_src(name: str, extra: str = "") -> str:
+    """An explicitly-declared tool (the contract onboarding now requires)."""
+    return f"from tools_sdk import tool\n{extra}\n@tool()\ndef {name}():\n    return 1\n"
 
 
 def test_no_new_dependencies_onboards_immediately(tmp_path):
@@ -129,7 +134,7 @@ def test_clean_transitive_closure_proceeds_to_install(tmp_path, monkeypatch):
     monkeypatch.setattr("plugins.onboarding._pip_install", fake_install)
     mgr = _manager(tmp_path, network_check=True,
                    allowlist={"gooddirect", "benign-transitive"}, denylist=set())
-    record = asyncio.run(mgr.onboard("cleanclosure", "def cleanclosure():\n    return 1\n",
+    record = asyncio.run(mgr.onboard("cleanclosure", _tool_src("cleanclosure"),
                                      ["gooddirect==1.0"]))
     assert record["status"] == "onboarded"
     assert installed["specs"] == ["gooddirect==1.0"]
@@ -251,7 +256,7 @@ def test_low_risk_dependency_auto_installs_and_loads(tmp_path, monkeypatch):
     # harmlesspkg is declared but not imported at module level, since the fake
     # install doesn't actually make it importable -- this test is about the
     # install-then-load wiring, not a real package install.
-    src = "def good_tool():\n    return 'ok'\n"
+    src = _tool_src("good_tool")
     record = asyncio.run(mgr.onboard("good_tool", src, ["harmlesspkg==1.0"]))
     assert record["status"] == "onboarded"
     assert installed["specs"] == ["harmlesspkg==1.0"]
@@ -265,7 +270,7 @@ def test_failed_install_falls_back_to_pending(tmp_path, monkeypatch):
 
     monkeypatch.setattr("plugins.onboarding._pip_install", failing_pip_install)
     mgr = _manager(tmp_path, allowlist={"harmlesspkg"})
-    src = "import harmlesspkg\n\ndef uses_dep():\n    return 'ok'\n"
+    src = _tool_src("good_tool", extra="import harmlesspkg")
     record = asyncio.run(mgr.onboard("flaky_tool", src, ["harmlesspkg==1.0"]))
     assert record["status"] == "pending"
     assert "install failed" in record["hold_reason"]
@@ -281,7 +286,7 @@ def test_approve_forces_install_and_load(tmp_path, monkeypatch):
     # install doesn't need to actually provide an importable module for the
     # subsequent load to succeed -- this test is about the approve/override
     # mechanics, not a real package install.
-    src = "def risky_tool():\n    return 'ok'\n"
+    src = _tool_src("risky_tool")
     record = asyncio.run(mgr.onboard("risky_tool", src, ["evilpkg==1.0"]))
     assert record["status"] == "pending"
 
@@ -331,15 +336,15 @@ def test_pending_name_conflicts_without_overwrite(tmp_path):
 
 def test_overwrite_replaces_existing_tool(tmp_path):
     mgr = _manager(tmp_path)
-    asyncio.run(mgr.onboard("dup3", "def dup3():\n    return 1\n", []))
-    rec = asyncio.run(mgr.onboard("dup3", "def dup3():\n    return 2\n", [], overwrite=True))
+    asyncio.run(mgr.onboard("dup3", _tool_src("dup3"), []))
+    rec = asyncio.run(mgr.onboard("dup3", _tool_src("dup3", extra="# v2"), [], overwrite=True))
     assert rec["status"] == "onboarded"
-    assert "return 2" in (mgr.tools_dir / "dup3.py").read_text()
+    assert "# v2" in (mgr.tools_dir / "dup3.py").read_text()
 
 
 def test_failed_overwrite_restores_previous_working_version(tmp_path):
     mgr = _manager(tmp_path)
-    good = "def restorable():\n    return 1\n"
+    good = _tool_src("restorable")
     asyncio.run(mgr.onboard("restorable", good, []))
     assert "restorable" in mgr.loader.mcp.tools
     # Overwrite with a source that registers no tool -> load fails.
@@ -413,3 +418,76 @@ def test_only_binary_args_builder():
     from plugins.onboarding import _only_binary_args
     assert _only_binary_args(True) == ["--only-binary", ":all:"]
     assert _only_binary_args(False) == []
+
+
+# ---- Exposure policy + tool manifest (Phases 1-3) --------------------------
+THREE_FN_SRC = (
+    "from tools_sdk import tool\n\n"
+    "def _celsius_to_f(c):\n    return c * 9 / 5 + 32\n\n"
+    "def _fetch_raw(city):\n    return {'c': 21}\n\n"
+    "@tool(name='current_weather', description='Weather for a city')\n"
+    "def get_weather(city: str) -> str:\n"
+    "    return f\"{city}: {_celsius_to_f(_fetch_raw(city)['c'])}F\"\n"
+)
+
+
+def test_three_functions_only_the_declared_tool_is_exposed(tmp_path):
+    # The scenario: 1 @tool + 2 helpers. Only the tool is registered; the
+    # manifest names the exposed tool and lists the helpers as not_exposed.
+    mgr = _manager(tmp_path)
+    rec = asyncio.run(mgr.onboard("weather", THREE_FN_SRC, []))
+    assert rec["status"] == "onboarded"
+    assert rec["registered_tools"] == ["current_weather"]
+    m = rec["tool_manifest"]
+    assert m["mechanism"] == "decorator"
+    assert [t["name"] for t in m["tools"]] == ["current_weather"]
+    not_exposed = {e["function"] for e in m["not_exposed"]}
+    assert not_exposed == {"_celsius_to_f", "_fetch_raw"}
+    # the exposed tool carries a param schema in the manifest
+    assert "city" in str(m["tools"][0]["parameters"])
+
+
+def test_legacy_stem_convention_is_rejected_under_strict_policy(tmp_path):
+    mgr = _manager(tmp_path)  # require_explicit defaults to True
+    rec = asyncio.run(mgr.onboard("legacytool", "def legacytool():\n    return 1\n", []))
+    assert rec["status"] == "pending"
+    assert "legacy filename-match" in rec["hold_reason"]
+    assert "legacytool" not in mgr.loader.mcp.tools
+
+
+def test_legacy_allowed_when_policy_relaxed(tmp_path):
+    mgr = _manager(tmp_path, require_explicit=False)
+    rec = asyncio.run(mgr.onboard("legacytool", "def legacytool():\n    return 1\n", []))
+    assert rec["status"] == "onboarded"
+    assert rec["tool_manifest"]["mechanism"] == "legacy"
+
+
+def test_no_tool_exposed_gives_actionable_reason_and_lists_functions(tmp_path):
+    mgr = _manager(tmp_path)
+    src = "def helper_a(x):\n    return x\n\ndef do_thing(y):\n    return y\n"
+    rec = asyncio.run(mgr.onboard("notool", src, []))
+    assert rec["status"] == "pending"
+    assert "no function is exposed as a tool" in rec["hold_reason"]
+    assert "helper_a" in rec["hold_reason"] and "do_thing" in rec["hold_reason"]
+
+
+def test_max_tools_per_file_enforced(tmp_path):
+    mgr = _manager(tmp_path, max_tools=1)
+    src = ("from tools_sdk import tool\n\n"
+           "@tool()\ndef a():\n    return 1\n\n"
+           "@tool()\ndef b():\n    return 2\n")
+    rec = asyncio.run(mgr.onboard("multi", src, []))
+    assert rec["status"] == "pending"
+    assert "exceeding the limit" in rec["hold_reason"]
+
+
+def test_tools_export_shadowing_decorated_emits_warning(tmp_path):
+    mgr = _manager(tmp_path)
+    src = ("from tools_sdk import tool\n\n"
+           "@tool()\ndef exposed():\n    return 1\n\n"
+           "@tool()\ndef shadowed():\n    return 2\n\n"
+           "TOOLS = [exposed]\n")
+    rec = asyncio.run(mgr.onboard("shadowtool", src, []))
+    assert rec["status"] == "onboarded"
+    assert rec["tool_manifest"]["mechanism"] == "TOOLS"
+    assert any("shadowed" in w for w in rec["tool_manifest"]["warnings"])

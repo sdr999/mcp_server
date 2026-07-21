@@ -120,7 +120,7 @@ def test_onboard_low_risk_tool_loads_immediately(tmp_path):
     app, _mcp = build_app(ctx)
     with TestClient(app) as client:
         _wait_ready(client)
-        body = {"name": "greeter", "source": "def greeter(name: str) -> str:\n    return f'hi {name}'\n"}
+        body = {"name": "greeter", "source": "from tools_sdk import tool\n@tool()\ndef greeter(name: str) -> str:\n    return f'hi {name}'\n"}
         r = client.post("/admin/tools/onboard", json=body, headers=ADMIN)
         assert r.status_code == 201
         assert r.json()["status"] == "onboarded"
@@ -223,10 +223,10 @@ def test_onboard_duplicate_conflict_then_overwrite(tmp_path):
     app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
     with TestClient(app) as client:
         _wait_ready(client)
-        body = {"name": "dup", "source": "def dup():\n    return 1\n"}
+        body = {"name": "dup", "source": "from tools_sdk import tool\n@tool()\ndef dup():\n    return 1\n"}
         assert client.post("/admin/tools/onboard", json=body, headers=ADMIN).status_code == 201
         assert client.post("/admin/tools/onboard", json=body, headers=ADMIN).status_code == 409
-        body2 = {"name": "dup", "source": "def dup():\n    return 2\n", "overwrite": True}
+        body2 = {"name": "dup", "source": "from tools_sdk import tool\n@tool()\ndef dup():\n    return 2\n", "overwrite": True}
         assert client.post("/admin/tools/onboard", json=body2, headers=ADMIN).status_code == 201
 
 
@@ -275,3 +275,28 @@ def test_api_key_mode_admin_reachable_with_admin_token(tmp_path):
         assert r.status_code == 409           # reached the handler (local mode)
         # wrong admin token still rejected by admin_denied
         assert client.post("/admin/resync", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_onboard_response_includes_tool_manifest(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        src = ("from tools_sdk import tool\n\n"
+               "def _helper(x):\n    return x\n\n"
+               "@tool()\ndef w(city: str) -> str:\n    return _helper(city)\n")
+        r = client.post("/admin/tools/onboard", json={"name": "wtool", "source": src}, headers=ADMIN)
+        assert r.status_code == 201
+        m = r.json()["tool_manifest"]
+        assert [t["name"] for t in m["tools"]] == ["w"]
+        assert [e["function"] for e in m["not_exposed"]] == ["_helper"]
+
+
+def test_onboard_legacy_source_held_under_strict_default(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/admin/tools/onboard",
+                        json={"name": "legacyhttp", "source": "def legacyhttp():\n    return 1\n"},
+                        headers=ADMIN)
+        assert r.status_code == 202
+        assert "legacy filename-match" in r.json()["hold_reason"]

@@ -19,7 +19,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -56,6 +56,22 @@ class _CollectingRegistrar:
 
 
 @dataclass
+class ResolutionReport:
+    """An explainable account of how a module's functions became (or did not
+    become) tools -- so onboarding can preview the exposed surface, apply
+    exposure policy, and give authors actionable feedback.
+
+    ``mechanism`` is the winning authoring mechanism (``register`` | ``TOOLS`` |
+    ``decorator`` | ``legacy``) or ``None`` when nothing resolved.
+    """
+    mechanism: Optional[str] = None
+    functions_seen: List[str] = field(default_factory=list)   # module-level defs
+    selected: List[str] = field(default_factory=list)         # tool names exposed
+    excluded: List[Tuple[str, str]] = field(default_factory=list)  # (fn_name, reason)
+    warnings: List[str] = field(default_factory=list)
+
+
+@dataclass
 class _LoadPlan:
     """Result of importing/resolving a tool file OFF the event loop. Applying it
     (``commit``) is a fast, on-loop registry mutation."""
@@ -63,6 +79,7 @@ class _LoadPlan:
     mtime: Optional[float]
     resolved: List[Tuple[str, "FunctionTool"]]
     failure: Optional[str] = None  # "deleted" | "unsigned: ..." | "import error: ..." etc.
+    resolution: Optional[ResolutionReport] = None
 
 
 async def _run_sandboxed(runner: str, module_name: str, qualname: str, args: dict,
@@ -183,10 +200,32 @@ class ToolLoader:
         )
         return name, tool_obj
 
+    @staticmethod
+    def _functions_defined_in(module, module_name: str) -> List[str]:
+        """Top-level functions DEFINED in this module (not imported), in source
+        order. Includes ``_``-prefixed helpers so the report can show them as
+        'seen but not exposed'."""
+        seen = []
+        for key, val in vars(module).items():
+            if key.startswith("__"):
+                continue
+            if inspect.isfunction(val) and getattr(val, "__module__", None) == module.__name__:
+                seen.append(key)
+        return seen
+
     def _resolve_tools(self, module, module_name: str) -> List[Tuple[str, FunctionTool]]:
-        """Return (name, tool) pairs using the first matching mechanism.
-        A single malformed tool is logged and skipped, never aborting the module."""
+        """Back-compat shim: return only the (name, tool) pairs."""
+        results, _report = self._resolve_with_report(module, module_name)
+        return results
+
+    def _resolve_with_report(self, module, module_name: str
+                             ) -> Tuple[List[Tuple[str, FunctionTool]], ResolutionReport]:
+        """Return ((name, tool) pairs, ResolutionReport) using the first matching
+        mechanism. A single malformed tool is logged and skipped, never aborting
+        the module. The report explains what was exposed and what was not, for
+        onboarding preview / policy / author feedback."""
         results: List[Tuple[str, FunctionTool]] = []
+        report = ResolutionReport(functions_seen=self._functions_defined_in(module, module_name))
 
         def _safe_add(obj, explicit_name):
             try:
@@ -194,6 +233,15 @@ class ToolLoader:
             except Exception as exc:
                 ident = explicit_name or getattr(obj, "__name__", repr(obj))
                 log.error("Skipping invalid tool %r in %s: %s", ident, module_name, exc)
+
+        def _finish(mechanism, exposed_fns, exclusion_reason):
+            # ``exposed_fns`` is the set of source FUNCTION names that became
+            # tools (not the tool names, which @tool(name=...) may rename).
+            report.mechanism = mechanism
+            report.selected = [n for n, _ in results]
+            report.excluded = [(fn, exclusion_reason) for fn in report.functions_seen
+                               if fn not in exposed_fns]
+            return results, report
 
         register = getattr(module, "register", None)
         if callable(register):
@@ -203,32 +251,46 @@ class ToolLoader:
             except Exception as exc:
                 log.error("register() raised in %s: %s", module_name, exc)
             if registrar.collected:
-                return registrar.collected
+                results.extend(registrar.collected)
+                # register() decides exposure opaquely; don't attribute helpers.
+                return _finish("register", set(report.functions_seen), "")
 
         exported = getattr(module, "TOOLS", None)
         if exported:
             items = exported.items() if isinstance(exported, dict) else [(None, o) for o in exported]
+            exposed = set()
             for explicit_name, obj in items:
                 if callable(obj) or isinstance(obj, FunctionTool):
                     _safe_add(obj, explicit_name)
+                    if (fname := getattr(obj, "__name__", None)):
+                        exposed.add(fname)
                 else:
                     log.error("TOOLS entry %r in %s is not callable; skipped", explicit_name, module_name)
             if results:
-                return results
+                # Warn if @tool-decorated functions exist but are shadowed by TOOLS.
+                shadowed = [k for k, v in vars(module).items()
+                            if callable(v) and hasattr(v, TOOL_MARKER) and k not in exposed]
+                if shadowed:
+                    report.warnings.append(
+                        f"@tool-decorated function(s) {shadowed} are ignored because TOOLS is defined")
+                return _finish("TOOLS", exposed, "not listed in TOOLS")
 
-        decorated = [v for v in vars(module).values() if callable(v) and hasattr(v, TOOL_MARKER)]
+        decorated = [(k, v) for k, v in vars(module).items()
+                     if callable(v) and hasattr(v, TOOL_MARKER)]
         if decorated:
-            for fn in decorated:
+            for _fname, fn in decorated:
                 _safe_add(fn, None)
             if results:
-                return results
+                return _finish("decorator", {k for k, _ in decorated}, "not decorated with @tool")
 
         stem = module_name.split(".")[-1]
         fn = getattr(module, stem, None)
         if callable(fn):
             _safe_add(fn, stem)
+            if results:
+                return _finish("legacy", {stem}, "name does not match the file stem")
 
-        return results
+        return _finish(None, set(), "not exposed by any authoring mechanism")
 
     # -- (un)register -------------------------------------------------------
     def unload_module(self, module_name: str) -> None:
@@ -272,7 +334,8 @@ class ToolLoader:
             except Exception as exc:
                 return _LoadPlan(module_name, mtime, [], failure=f"import error: {exc}")
 
-            return _LoadPlan(module_name, mtime, self._resolve_tools(module, module_name))
+            resolved, report = self._resolve_with_report(module, module_name)
+            return _LoadPlan(module_name, mtime, resolved, resolution=report)
         except Exception as exc:  # prepare must never raise into the drain
             log.error("prepare() failed for %s: %s", file_path, exc)
             return None

@@ -148,12 +148,18 @@ class OnboardingManager:
                  install_timeout: float = DEFAULT_INSTALL_TIMEOUT,
                  import_timeout: float = DEFAULT_IMPORT_TIMEOUT, enabled: bool = True,
                  only_binary: bool = False, audit_log_path: Optional[Path] = None,
+                 require_explicit: bool = True, max_tools: int = 0,
                  loader_lock: Optional["asyncio.Lock"] = None):
         self.tools_dir = tools_dir
         self.pending_dir = pending_dir
         self.loader = loader
         self.only_binary = only_binary
         self.audit_log_path = audit_log_path
+        # Exposure policy for onboarded files: require explicit tool opt-in
+        # (@tool / TOOLS / register) -- the legacy filename-match fallback is
+        # not accepted over the wire. max_tools bounds the surface (0 = no cap).
+        self.require_explicit = require_explicit
+        self.max_tools = max_tools
         # Serializes tool imports/registry mutations against the reload drain
         # (and other onboards): both run on the loop but the actual import runs
         # in an executor thread, so two concurrent imports of a module would
@@ -355,16 +361,16 @@ class OnboardingManager:
             record["installed"] = []
             return self._hold(name, source, record, f"dependency install failed: {err}")
 
-        registered, failure = await self._write_live(name, source)
+        registered, failure, manifest = await self._write_live(name, source)
+        record["tool_manifest"] = manifest       # preview of the exposed surface
+        record["installed"] = install_specs
         if failure or not registered:
             # Truthful outcome: the source parsed and its deps installed, but the
-            # module raised on import, was refused, or exposed no tool. Report it
-            # as pending rather than a false "onboarded".
-            record["installed"] = install_specs
+            # module raised on import, exposed no tool, or violated the exposure
+            # policy. Report it as pending rather than a false "onboarded".
             return self._hold(name, source, record,
                               f"tool failed to load: {failure or 'source registered no tools'}")
 
-        record["installed"] = install_specs
         record["registered_tools"] = registered
         METRICS.inc("mcp_tool_onboards_total", result="onboarded")
         self._audit("onboard", name, "onboarded", f"tools={registered}")
@@ -372,42 +378,93 @@ class OnboardingManager:
                  name, len(install_specs), registered)
         return record
 
-    async def _write_live(self, name: str, source: str) -> Tuple[List[str], Optional[str]]:
+    @staticmethod
+    def _tool_params(tool) -> dict:
+        schema = getattr(tool, "parameters", None)
+        return schema if isinstance(schema, dict) else {}
+
+    def _build_manifest(self, plan) -> dict:
+        """A preview of the tool surface a file exposes: which functions became
+        tools (and how), and which module functions were NOT exposed. Lets an
+        admin review exactly what they're approving and gives authors feedback."""
+        rep = getattr(plan, "resolution", None)
+        if rep is None:
+            return {"mechanism": None, "tools": [], "not_exposed": [], "warnings": []}
+        tools = [{
+            "name": tname,
+            "description": getattr(tool, "description", None),
+            "mechanism": rep.mechanism,
+            "parameters": self._tool_params(tool),
+        } for tname, tool in plan.resolved]
+        return {
+            "mechanism": rep.mechanism,
+            "tools": tools,
+            "not_exposed": [{"function": fn, "reason": reason} for fn, reason in rep.excluded],
+            "warnings": list(rep.warnings),
+        }
+
+    def _exposure_violation(self, plan) -> Optional[str]:
+        """Apply the onboarding exposure policy to a resolved plan. Returns a
+        human-actionable reason to hold pending, or None if it passes."""
+        rep = getattr(plan, "resolution", None)
+        if not plan.resolved:
+            seen = ", ".join(rep.functions_seen) if rep and rep.functions_seen else "(none)"
+            return ("no function is exposed as a tool -- mark your entry point with @tool(...), "
+                    f"export TOOLS=[...], or define register(mcp). Functions found: {seen}")
+        if self.require_explicit and rep is not None and rep.mechanism == "legacy":
+            exposed = plan.resolved[0][0]
+            return (f"tool {exposed!r} is exposed only by the legacy filename-match convention; "
+                    "onboarded tools must opt in explicitly with @tool(...), TOOLS=[...], or register(mcp)")
+        if self.max_tools and len(plan.resolved) > self.max_tools:
+            return f"file exposes {len(plan.resolved)} tools, exceeding the limit of {self.max_tools}"
+        return None
+
+    async def _write_live(self, name: str, source: str) -> Tuple[List[str], Optional[str], dict]:
         """Write the tool into the live tools dir and load it, importing OFF the
         serving loop bounded by ``import_timeout`` (a hostile module's top-level
-        code cannot freeze the server). Returns (registered tool names, failure
-        reason). A brand-new submission that fails to load is rolled back; an
-        overwrite that fails to load is restored to its previous version so a
-        working tool is never clobbered by a bad update."""
+        code cannot freeze the server). Returns (registered names, failure
+        reason, tool manifest). A brand-new submission that fails to load or
+        violates the exposure policy is rolled back; an overwrite that fails is
+        restored to its previous version so a working tool is never clobbered."""
         path = self.tools_dir / f"{name}.py"
         old_content = path.read_text(encoding="utf-8") if path.exists() else None
         module_name = self.loader.module_name_for_path(path)
         if not module_name:
-            return [], "internal error: tool path is not inside the tools directory"
+            return [], "internal error: tool path is not inside the tools directory", {}
 
         async with self.loader_lock:  # mutual exclusion with the reload drain
             path.write_text(source, encoding="utf-8")
-            registered, failure = await self._load_locked(module_name, path)
+            registered, failure, manifest = await self._load_locked(module_name, path, enforce_policy=True)
             if failure or not registered:
                 if old_content is not None:
-                    # Restore & reload the previously-working version.
+                    # Restore & reload the previously-working version (no policy).
                     path.write_text(old_content, encoding="utf-8")
-                    await self._load_locked(module_name, path)
+                    await self._load_locked(module_name, path, enforce_policy=False)
                 else:
                     self.loader.unload_path(path)
                     with contextlib.suppress(FileNotFoundError):
                         path.unlink()
-        return registered, failure
+        return registered, failure, manifest
 
-    async def _load_locked(self, module_name: str, path: Path) -> Tuple[List[str], Optional[str]]:
-        """Import (off-loop, timeout-bounded) + register one tool file. MUST be
-        called with ``self.loader_lock`` held."""
+    async def _load_locked(self, module_name: str, path: Path, *, enforce_policy: bool
+                           ) -> Tuple[List[str], Optional[str], dict]:
+        """Import (off-loop, timeout-bounded), apply the exposure policy, then
+        register. MUST be called with ``self.loader_lock`` held. A policy
+        violation is returned as a failure WITHOUT committing to the registry."""
         self.loader.invalidate(module_name)  # force a real re-import even on overwrite
         plan = await prepare_with_timeout(self.loader, path, self.import_timeout)
         if plan is None:
-            return [], f"import did not complete within {self.import_timeout}s"
-        self.loader.commit(plan)  # on-loop, fast
-        return self.loader.module_outcome(module_name)
+            return [], f"import did not complete within {self.import_timeout}s", {}
+        manifest = self._build_manifest(plan)
+        if plan.failure:                       # import error / unsigned / deleted
+            return [], plan.failure, manifest
+        if enforce_policy:
+            violation = self._exposure_violation(plan)
+            if violation:
+                return [], violation, manifest  # do not register
+        self.loader.commit(plan)               # on-loop, fast
+        registered, failure = self.loader.module_outcome(module_name)
+        return registered, failure, manifest
 
     async def approve(self, name: str) -> dict:
         """Force-install (if needed) and load a pending submission, overriding
@@ -428,10 +485,12 @@ class OnboardingManager:
             self._write_pending(name, source, pending)
             raise RuntimeError(f"dependency install failed: {err}")
 
-        registered, failure = await self._write_live(name, source)
+        registered, failure, manifest = await self._write_live(name, source)
+        pending["tool_manifest"] = manifest
         if failure or not registered:
-            # Deps installed but the tool still won't load: keep it pending with
-            # the real reason rather than clearing it and claiming success.
+            # Deps installed but the tool still won't load (or violates the
+            # exposure policy): keep it pending with the real reason. The admin
+            # override covers risk, not structural exposure -- fix the source.
             pending["status"] = "pending"
             pending["hold_reason"] = f"tool failed to load after approval: {failure or 'source registered no tools'}"
             pending["installed"] = install_specs

@@ -90,6 +90,39 @@ unless `overwrite: true` is set. An overwrite that fails to load **restores the
 previous working version** — a bad update never clobbers a running tool. The
 source is capped at 1 MiB and `requirements` at 50 entries (`413` / `400`).
 
+### What gets exposed as a tool (exposure policy & manifest)
+
+A submitted file may contain any number of functions; only the ones **declared
+as tools** are registered — the rest stay as ordinary module functions the tool
+can call. Which functions count is decided by the authoring contract (see
+`MCP_SERVER_FEATURES.md` §1): `@tool(...)`, `TOOLS = [...]`, `register(mcp)`,
+or the legacy "function name == file stem" fallback.
+
+For onboarded (over-the-wire) code the legacy fallback is **rejected by
+default** (`MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT=true`): a function shouldn't
+become a callable tool by filename coincidence. Onboarded files must opt in
+explicitly with `@tool` / `TOOLS` / `register`. (The trusted local tools
+directory still accepts the legacy convention.)
+
+Every onboard/pending record includes a **`tool_manifest`** — a preview of the
+exposed surface, so both the policy and a human reviewer can see exactly what a
+file exposes before it goes live:
+
+```jsonc
+"tool_manifest": {
+  "mechanism": "decorator",
+  "tools": [ { "name": "current_weather", "description": "...",
+              "mechanism": "decorator", "parameters": { /* JSON schema */ } } ],
+  "not_exposed": [ { "function": "_celsius_to_f", "reason": "not decorated with @tool" },
+                   { "function": "_fetch_raw",    "reason": "not decorated with @tool" } ],
+  "warnings": []
+}
+```
+
+A file that exposes **no** tool is held pending with an actionable reason that
+lists the functions it found (rather than a generic "no valid tools"), and
+`MCP_TOOL_ONBOARD_MAX_TOOLS` bounds how many tools one file may expose.
+
 ### Signed-tools mode
 
 When `MCP_REQUIRE_SIGNED_TOOLS=true` the loader only accepts files listed in a
@@ -146,6 +179,8 @@ shell).
 | `MCP_TOOL_DEPENDENCY_DENYLIST` | — | Path (relative to `src/`) to a JSON array of extra denylisted package names. |
 | `MCP_TOOL_INSTALL_ONLY_BINARY` | `false` | `true` ⇒ pass `--only-binary :all:` to pip so it never runs a package's `setup.py` during install/resolution. |
 | `MCP_TOOL_AUDIT_LOG` | `logs/onboarding_audit.log` | Path (relative to `src/`) for the append-only onboarding audit log. |
+| `MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT` | `true` | Require onboarded files to declare tools with `@tool`/`TOOLS`/`register`; reject the legacy filename-match fallback. |
+| `MCP_TOOL_ONBOARD_MAX_TOOLS` | `0` | Max tools one onboarded file may expose (`0` = no limit). |
 
 ## Example
 

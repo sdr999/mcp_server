@@ -270,6 +270,45 @@ Implemented every remaining item from the review in one pass.
 
 ---
 
+## Phase 6 — Tool exposure policy & manifest (explicit opt-in)
+
+Prompted by the question "if a file has 3 functions (1 tool + 2 helpers),
+what gets onboarded?". The answer exposed a deeper design weakness: tool
+resolution for onboarded files was implicit, unreviewable, and over-exposed
+via the legacy filename-match fallback. Solved as a small architecture change.
+
+**Commit:** `<pending>` — *Tool exposure policy + manifest: explicit opt-in for onboarded tools*
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| Explainable resolver | `ToolLoader._resolve_with_report()` returns a `ResolutionReport` (winning mechanism, functions seen, selected, per-exclusion reasons, warnings) alongside the resolved tools. Registration behavior unchanged; the report rides on `_LoadPlan.resolution`. |
+| Tool manifest (preview) | Onboarding builds a `tool_manifest` from the plan — `{mechanism, tools:[{name,description,parameters}], not_exposed:[{function,reason}], warnings}` — and attaches it to every onboard/pending record and the pending-detail endpoint. Reviewers see exactly what a file exposes vs. keeps private. |
+| Exposure policy | For onboarded files, `MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT=true` (default) rejects the legacy filename-match fallback — tools must opt in with `@tool`/`TOOLS`/`register`. `MCP_TOOL_ONBOARD_MAX_TOOLS` bounds the surface. Policy is enforced at the onboarding boundary (pre-commit); the shared loader and the trusted local dir keep legacy support. |
+| Actionable feedback | A file exposing no tool is held pending with a message listing the functions it found and how to declare one, instead of a generic "no valid tools". |
+
+### Files modified
+
+- `src/plugins/tool_loader.py` — `ResolutionReport`, `_resolve_with_report`, `_functions_defined_in`, `resolution` on `_LoadPlan`.
+- `src/plugins/onboarding.py` — `_build_manifest`, `_exposure_violation`, policy-gated `_write_live`/`_load_locked` (commit only after policy passes), `require_explicit`/`max_tools`, manifest in records.
+- `src/plugins/config.py`, `src/plugins/app.py` — two new knobs threaded through.
+- `docs/MCP_TOOL_ONBOARDING.md`, `src/config/.env.example` — exposure policy + manifest docs.
+- Tests: 9 new (manifest content incl. the 3-function scenario, legacy rejection, relaxed-policy legacy, no-tool actionable message, max-tools, TOOLS-shadowing warning, HTTP manifest surfacing). Existing legacy-source tests migrated to explicit `@tool`.
+
+### Verification against real conditions (live server)
+
+| Check | Result |
+|-------|--------|
+| 3-function file (1 `@tool` + 2 helpers) | onboarded; manifest exposed `current_weather` (with `city` param schema), `not_exposed` listed both helpers; catalog showed only the one tool |
+| Legacy filename-match under strict default | held pending with the "opt in explicitly" reason |
+| File exposing no tool | held pending listing `helper_a, helper_b, do_weather` + how to declare one |
+| Pending detail | returns both source and `tool_manifest` for review |
+
+- Full plugin suite: **98 tests passing** (9 new).
+
+---
+
 ## Commit summary
 
 | Commit | Summary |
@@ -279,5 +318,6 @@ Implemented every remaining item from the review in one pass.
 | `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
 | `5502fc0` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
 | `c3271f0` | Batch 3+4: signed-mode reject, conflicts/overwrite, limits, api-key admin fix, metrics, audit, only-binary. |
+| `<pending>` | Tool exposure policy + manifest: explicit opt-in for onboarded tools. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
