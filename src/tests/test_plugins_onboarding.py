@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from plugins import dependency_risk as risk
-from plugins.onboarding import OnboardingManager
+from plugins.onboarding import OnboardingConflict, OnboardingManager
 from plugins.tool_loader import ToolLoader
 
 _uid = itertools.count()
@@ -75,7 +75,7 @@ def test_guessed_dependency_name_is_held_pending(tmp_path):
 
 def test_allowlisted_guessed_dependency_is_not_held_for_being_guessed(tmp_path, monkeypatch):
     # Same guessed import, but allowlisted -> the guessed-name gate does not fire.
-    async def fake_pip_install(specs, timeout):
+    async def fake_pip_install(specs, timeout, only_binary=False):
         return True, ""
 
     monkeypatch.setattr("plugins.onboarding._pip_install", fake_pip_install)
@@ -91,13 +91,13 @@ def test_allowlisted_guessed_dependency_is_not_held_for_being_guessed(tmp_path, 
 def test_transitive_dependency_high_risk_holds_pending(tmp_path, monkeypatch):
     # Direct dep is allowlisted/clean, but its resolved closure contains a
     # denylisted transitive package -> the whole submission is held.
-    async def fake_closure(specs, timeout):
+    async def fake_closure(specs, timeout, only_binary=False):
         return True, [
             {"name": "gooddirect", "version": "1.0", "requested": True},
             {"name": "evil-transitive", "version": "0.1", "requested": False},
         ]
 
-    async def must_not_install(specs, timeout):
+    async def must_not_install(specs, timeout, only_binary=False):
         pytest.fail("install must not run when a transitive dep is high risk")
 
     monkeypatch.setattr("plugins.onboarding._pip_resolve_closure", fake_closure)
@@ -115,13 +115,13 @@ def test_transitive_dependency_high_risk_holds_pending(tmp_path, monkeypatch):
 def test_clean_transitive_closure_proceeds_to_install(tmp_path, monkeypatch):
     installed = {}
 
-    async def fake_closure(specs, timeout):
+    async def fake_closure(specs, timeout, only_binary=False):
         return True, [
             {"name": "gooddirect", "version": "1.0", "requested": True},
             {"name": "benign-transitive", "version": "2.0", "requested": False},
         ]
 
-    async def fake_install(specs, timeout):
+    async def fake_install(specs, timeout, only_binary=False):
         installed["specs"] = specs
         return True, ""
 
@@ -137,10 +137,10 @@ def test_clean_transitive_closure_proceeds_to_install(tmp_path, monkeypatch):
 
 
 def test_unresolvable_closure_holds_pending(tmp_path, monkeypatch):
-    async def failing_closure(specs, timeout):
+    async def failing_closure(specs, timeout, only_binary=False):
         return False, "No matching distribution found for nonexistent==1.0"
 
-    async def must_not_install(specs, timeout):
+    async def must_not_install(specs, timeout, only_binary=False):
         pytest.fail("install must not run when closure resolution failed")
 
     monkeypatch.setattr("plugins.onboarding._pip_resolve_closure", failing_closure)
@@ -230,7 +230,7 @@ def test_high_risk_dependency_is_held_pending(tmp_path):
 def test_autoinstall_disabled_holds_pending_even_for_low_risk(tmp_path, monkeypatch):
     mgr = _manager(tmp_path, autoinstall=False, allowlist={"harmlesspkg"})
 
-    async def must_not_run(specs, timeout):
+    async def must_not_run(specs, timeout, only_binary=False):
         pytest.fail("must not attempt install when autoinstall is disabled")
 
     monkeypatch.setattr("plugins.onboarding._pip_install", must_not_run)
@@ -242,7 +242,7 @@ def test_autoinstall_disabled_holds_pending_even_for_low_risk(tmp_path, monkeypa
 def test_low_risk_dependency_auto_installs_and_loads(tmp_path, monkeypatch):
     installed = {}
 
-    async def fake_pip_install(specs, timeout):
+    async def fake_pip_install(specs, timeout, only_binary=False):
         installed["specs"] = specs
         return True, ""
 
@@ -260,7 +260,7 @@ def test_low_risk_dependency_auto_installs_and_loads(tmp_path, monkeypatch):
 
 
 def test_failed_install_falls_back_to_pending(tmp_path, monkeypatch):
-    async def failing_pip_install(specs, timeout):
+    async def failing_pip_install(specs, timeout, only_binary=False):
         return False, "network unreachable"
 
     monkeypatch.setattr("plugins.onboarding._pip_install", failing_pip_install)
@@ -272,7 +272,7 @@ def test_failed_install_falls_back_to_pending(tmp_path, monkeypatch):
 
 
 def test_approve_forces_install_and_load(tmp_path, monkeypatch):
-    async def fake_pip_install(specs, timeout):
+    async def fake_pip_install(specs, timeout, only_binary=False):
         return True, ""
 
     monkeypatch.setattr("plugins.onboarding._pip_install", fake_pip_install)
@@ -311,3 +311,105 @@ def test_onboarding_disabled_flag(tmp_path):
     mgr = _manager(tmp_path, enabled=False)
     with pytest.raises(ValueError):
         asyncio.run(mgr.onboard("anything", SAFE_SOURCE, []))
+
+
+# ---- Batch 3/4: conflict, overwrite, signed mode, name validation ----------
+def test_duplicate_name_conflicts_without_overwrite(tmp_path):
+    mgr = _manager(tmp_path)
+    asyncio.run(mgr.onboard("dup", "def dup():\n    return 1\n", []))
+    with pytest.raises(OnboardingConflict):
+        asyncio.run(mgr.onboard("dup", "def dup():\n    return 2\n", []))
+
+
+def test_pending_name_conflicts_without_overwrite(tmp_path):
+    mgr = _manager(tmp_path, denylist={"evilpkg"})
+    asyncio.run(mgr.onboard("dup2", "import evilpkg\n", ["evilpkg==1.0"]))
+    assert mgr.get_pending("dup2") is not None
+    with pytest.raises(OnboardingConflict):
+        asyncio.run(mgr.onboard("dup2", "def dup2():\n    return 1\n", []))
+
+
+def test_overwrite_replaces_existing_tool(tmp_path):
+    mgr = _manager(tmp_path)
+    asyncio.run(mgr.onboard("dup3", "def dup3():\n    return 1\n", []))
+    rec = asyncio.run(mgr.onboard("dup3", "def dup3():\n    return 2\n", [], overwrite=True))
+    assert rec["status"] == "onboarded"
+    assert "return 2" in (mgr.tools_dir / "dup3.py").read_text()
+
+
+def test_failed_overwrite_restores_previous_working_version(tmp_path):
+    mgr = _manager(tmp_path)
+    good = "def restorable():\n    return 1\n"
+    asyncio.run(mgr.onboard("restorable", good, []))
+    assert "restorable" in mgr.loader.mcp.tools
+    # Overwrite with a source that registers no tool -> load fails.
+    rec = asyncio.run(mgr.onboard("restorable", "def not_matching():\n    return 1\n", [], overwrite=True))
+    assert rec["status"] == "pending"
+    # The previously-working version is restored on disk and in the registry.
+    assert (mgr.tools_dir / "restorable.py").read_text() == good
+    assert "restorable" in mgr.loader.mcp.tools
+
+
+def test_signed_tools_mode_rejects_onboarding(tmp_path):
+    mgr = _manager(tmp_path)
+
+    class _Verifier:
+        require = True
+
+    mgr.loader.verifier = _Verifier()
+    with pytest.raises(ValueError):
+        asyncio.run(mgr.onboard("nope", "def nope():\n    return 1\n", []))
+
+
+def test_approve_and_reject_reject_invalid_names(tmp_path):
+    mgr = _manager(tmp_path)
+    with pytest.raises(KeyError):
+        asyncio.run(mgr.approve("../evil"))
+    assert mgr.reject("../evil") is False
+
+
+def test_pending_detail_includes_source(tmp_path):
+    mgr = _manager(tmp_path, denylist={"evilpkg"})
+    asyncio.run(mgr.onboard("detailed", "import evilpkg\n# marker\n", ["evilpkg==1.0"]))
+    detail = mgr.get_pending_detail("detailed")
+    assert detail is not None
+    assert "# marker" in detail["source"]
+    assert mgr.get_pending_detail("missing") is None
+
+
+def test_pending_count_tracks_queue(tmp_path):
+    mgr = _manager(tmp_path, denylist={"evilpkg"})
+    assert mgr.pending_count() == 0
+    asyncio.run(mgr.onboard("p1", "import evilpkg\n", ["evilpkg==1.0"]))
+    assert mgr.pending_count() == 1
+
+
+def test_audit_log_records_actions(tmp_path):
+    audit = tmp_path / "audit.log"
+    mgr = _manager(tmp_path, denylist={"evilpkg"}, audit_log_path=audit)
+    asyncio.run(mgr.onboard("audited", "import evilpkg\n", ["evilpkg==1.0"]))
+    mgr.reject("audited")
+    lines = [l for l in audit.read_text().splitlines() if l.strip()]
+    actions = [__import__("json").loads(l) for l in lines]
+    assert [a["action"] for a in actions] == ["onboard", "reject"]
+    assert actions[0]["result"] == "pending"
+    assert actions[1]["result"] == "rejected"
+
+
+def test_only_binary_flag_is_passed_to_pip(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_install(specs, timeout, only_binary=False):
+        seen["only_binary"] = only_binary
+        return True, ""
+
+    monkeypatch.setattr("plugins.onboarding._pip_install", fake_install)
+    mgr = _manager(tmp_path, allowlist={"harmlesspkg"}, only_binary=True)
+    asyncio.run(mgr.onboard("obtool", "def obtool():\n    return 1\n", ["harmlesspkg==1.0"]))
+    assert seen["only_binary"] is True
+
+
+def test_only_binary_args_builder():
+    from plugins.onboarding import _only_binary_args
+    assert _only_binary_args(True) == ["--only-binary", ":all:"]
+    assert _only_binary_args(False) == []

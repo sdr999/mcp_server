@@ -16,6 +16,7 @@ from starlette.routing import Route
 
 from metrics import METRICS
 from .notifications import notify_tools_changed
+from .onboarding import MAX_REQUIREMENTS, MAX_SOURCE_BYTES, OnboardingConflict
 from .security import HEALTH_PATH, READY_PATH, admin_denied, read_guard
 
 log = logging.getLogger("MCP_logger")
@@ -66,6 +67,10 @@ def register_metrics(loader, app) -> None:
     METRICS.gauge("mcp_tools_loaded", lambda: loader.stats()["total_tools"], "Currently registered tools")
     METRICS.gauge("mcp_modules_failed", lambda: loader.stats()["failed_modules"], "Modules currently failing to load")
     METRICS.gauge("mcp_tools_disabled", lambda: loader.stats()["disabled_tools"], "Disabled tools")
+    onboarding = getattr(app.state, "onboarding", None)
+    if onboarding is not None:
+        METRICS.declare("mcp_tool_onboards_total", "Onboarding actions by result (onboarded/pending/approved/rejected)")
+        METRICS.gauge("mcp_tools_pending", onboarding.pending_count, "Submissions currently held pending review")
 
 
 async def _admin_resync(request):
@@ -117,6 +122,15 @@ async def _admin_tools_onboard(request):
     if (denied := admin_denied(request)) is not None:
         return denied
     st = request.app.state
+    if not st.onboarding.enabled:
+        return JSONResponse({"error": "tool onboarding is disabled (MCP_TOOL_ONBOARD_ENABLED=false)"},
+                            status_code=503)
+
+    # Guard against an oversized body before buffering the whole thing.
+    clen = request.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > MAX_SOURCE_BYTES + 65536:
+        return JSONResponse({"error": "request body too large"}, status_code=413)
+
     try:
         body = await request.json()
     except Exception:
@@ -125,28 +139,42 @@ async def _admin_tools_onboard(request):
     name = body.get("name")
     source = body.get("source")
     requirements = body.get("requirements") or []
+    overwrite = bool(body.get("overwrite", False))
     if not isinstance(name, str) or not isinstance(source, str) or not isinstance(requirements, list):
         return JSONResponse(
-            {"error": "expected {\"name\": str, \"source\": str, \"requirements\"?: [str, ...]}"},
+            {"error": "expected {\"name\": str, \"source\": str, \"requirements\"?: [str, ...], \"overwrite\"?: bool}"},
             status_code=400,
         )
+    if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
+        return JSONResponse({"error": f"source exceeds the {MAX_SOURCE_BYTES}-byte limit"}, status_code=413)
+    if len(requirements) > MAX_REQUIREMENTS:
+        return JSONResponse({"error": f"too many requirements (max {MAX_REQUIREMENTS})"}, status_code=400)
 
     try:
-        record = await st.onboarding.onboard(name, source, requirements)
+        record = await st.onboarding.onboard(name, source, requirements, overwrite=overwrite)
+    except OnboardingConflict as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
-    if record["status"] == "pending":
-        await notify_tools_changed(st.mcp)
-        return JSONResponse(record, status_code=202)
     await notify_tools_changed(st.mcp)
-    return JSONResponse(record, status_code=201)
+    return JSONResponse(record, status_code=202 if record["status"] == "pending" else 201)
 
 
 async def _admin_tools_pending_list(request):
     if (denied := admin_denied(request)) is not None:
         return denied
     return JSONResponse({"pending": request.app.state.onboarding.list_pending()})
+
+
+async def _admin_tools_pending_detail(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    name = request.path_params["name"]
+    detail = request.app.state.onboarding.get_pending_detail(name)
+    if detail is None:
+        return JSONResponse({"error": f"no pending tool named {name!r}"}, status_code=404)
+    return JSONResponse(detail)
 
 
 async def _admin_tools_pending_approve(request):
@@ -186,6 +214,7 @@ def feature_routes() -> List[Route]:
         Route("/admin/tool/{name}/enable", _admin_enable, methods=["POST"]),
         Route("/admin/tools/onboard", _admin_tools_onboard, methods=["POST"]),
         Route("/admin/tools/pending", _admin_tools_pending_list, methods=["GET"]),
+        Route("/admin/tools/pending/{name}", _admin_tools_pending_detail, methods=["GET"]),
         Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),
         Route("/admin/tools/pending/{name}/reject", _admin_tools_pending_reject, methods=["POST"]),
     ]

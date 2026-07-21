@@ -52,7 +52,13 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         self._exempt = set(exempt)
 
     async def dispatch(self, request, call_next):
-        if request.url.path in self._exempt:
+        path = request.url.path
+        # Admin routes carry their own independent MCP_ADMIN_TOKEN (a Bearer
+        # token). They are exempt from the API-key check so the admin token and
+        # the api key don't collide on the Authorization header (the default
+        # api-key header), which would otherwise make /admin/* unreachable in
+        # api_key mode. admin_denied() still gates every admin route.
+        if path in self._exempt or path.startswith("/admin/"):
             return await call_next(request)
         provided = request.headers.get(self._header, "")
         if not hmac.compare_digest(provided, self._value):

@@ -93,3 +93,69 @@ def test_network_lookup_failure_is_conservative_not_fatal(monkeypatch):
     r = risk.assess_requirement("somepkg==1.0.0", allowlist=set(), network_check=True)
     assert any("could not verify" in reason for reason in r.reasons)
     assert r.level in ("low", "medium", "high")  # never raises
+
+
+# ---- PyPI network branch (#14): mock urlopen, no real network ----------------
+import json as _json
+import urllib.error
+
+
+class _FakeResp:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _patch_urlopen(monkeypatch, fn):
+    monkeypatch.setattr(risk.urllib.request, "urlopen", fn)
+
+
+def test_pypi_lookup_found_old_package_scores_low(monkeypatch):
+    payload = {"releases": {"1.0": [{"upload_time_iso_8601": "2015-01-01T00:00:00Z"}],
+                            "1.1": [{"upload_time_iso_8601": "2016-01-01T00:00:00Z"}],
+                            "1.2": [{"upload_time_iso_8601": "2017-01-01T00:00:00Z"}]}}
+    _patch_urlopen(monkeypatch, lambda url, timeout=None: _FakeResp(200, _json.dumps(payload).encode()))
+    r = risk.assess_requirement("somepkg==1.2", allowlist=set(), denylist=set(), network_check=True)
+    assert r.level == "low"
+    assert not any("could not verify" in reason for reason in r.reasons)
+
+
+def test_pypi_lookup_not_found_scores_high(monkeypatch):
+    _patch_urlopen(monkeypatch, lambda url, timeout=None: _FakeResp(200, _json.dumps({"releases": {}}).encode()))
+    r = risk.assess_requirement("ghostpkg==1.0", allowlist=set(), denylist=set(), network_check=True)
+    assert r.level == "high"
+    assert any("not found on PyPI" in reason for reason in r.reasons)
+
+
+def test_pypi_lookup_brand_new_package_flagged(monkeypatch):
+    import datetime
+    recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).isoformat()
+    payload = {"releases": {"0.1": [{"upload_time_iso_8601": recent}],
+                            "0.2": [{"upload_time_iso_8601": recent}],
+                            "0.3": [{"upload_time_iso_8601": recent}]}}
+    _patch_urlopen(monkeypatch, lambda url, timeout=None: _FakeResp(200, _json.dumps(payload).encode()))
+    r = risk.assess_requirement("freshpkg==0.3", allowlist=set(), denylist=set(), network_check=True)
+    assert any("first published only" in reason for reason in r.reasons)
+
+
+def test_pypi_lookup_http_error_is_conservative(monkeypatch):
+    def _boom(url, timeout=None):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+    _patch_urlopen(monkeypatch, _boom)
+    r = risk.assess_requirement("somepkg==1.0", allowlist=set(), denylist=set(), network_check=True)
+    assert any("could not verify" in reason for reason in r.reasons)
+
+
+def test_pypi_lookup_malformed_json_is_conservative(monkeypatch):
+    _patch_urlopen(monkeypatch, lambda url, timeout=None: _FakeResp(200, b"not json{{{"))
+    r = risk.assess_requirement("somepkg==1.0", allowlist=set(), denylist=set(), network_check=True)
+    assert any("could not verify" in reason for reason in r.reasons)

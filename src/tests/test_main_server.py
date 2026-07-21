@@ -187,3 +187,91 @@ def test_bearer_jwt_protects_read_routes(tmp_path):
         assert client.get("/tools").status_code == 401
         assert client.get("/metrics").status_code == 401
         assert client.get("/status", headers={"Authorization": "Bearer bad"}).status_code == 401
+
+
+# ---- Batch 3/4 HTTP surface -----------------------------------------------
+def test_onboard_disabled_returns_503(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path), onboard_enabled=False)
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/admin/tools/onboard", json={"name": "x", "source": "def x(): pass"}, headers=ADMIN)
+        assert r.status_code == 503
+
+
+def test_onboard_oversized_source_rejected(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        big = "x = '" + ("a" * (1024 * 1024 + 10)) + "'\n"
+        r = client.post("/admin/tools/onboard", json={"name": "big", "source": big}, headers=ADMIN)
+        assert r.status_code == 413
+
+
+def test_onboard_too_many_requirements_rejected(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        reqs = [f"pkg{i}==1.0" for i in range(51)]
+        r = client.post("/admin/tools/onboard",
+                        json={"name": "many", "source": "def many(): pass", "requirements": reqs},
+                        headers=ADMIN)
+        assert r.status_code == 400
+
+
+def test_onboard_duplicate_conflict_then_overwrite(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        body = {"name": "dup", "source": "def dup():\n    return 1\n"}
+        assert client.post("/admin/tools/onboard", json=body, headers=ADMIN).status_code == 201
+        assert client.post("/admin/tools/onboard", json=body, headers=ADMIN).status_code == 409
+        body2 = {"name": "dup", "source": "def dup():\n    return 2\n", "overwrite": True}
+        assert client.post("/admin/tools/onboard", json=body2, headers=ADMIN).status_code == 201
+
+
+def test_pending_detail_endpoint(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        client.app.state.onboarding.denylist.add("evilpkg")
+        body = {"name": "risky", "source": "# secret marker\ndef risky():\n    return 1\n",
+                "requirements": ["evilpkg==1.0"]}
+        assert client.post("/admin/tools/onboard", json=body, headers=ADMIN).status_code == 202
+        r = client.get("/admin/tools/pending/risky", headers=ADMIN)
+        assert r.status_code == 200
+        assert "# secret marker" in r.json()["source"]
+        assert client.get("/admin/tools/pending/nope", headers=ADMIN).status_code == 404
+
+
+def test_onboarding_metrics_exposed(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        client.post("/admin/tools/onboard",
+                    json={"name": "metric_tool", "source": "def metric_tool():\n    return 1\n"},
+                    headers=ADMIN)
+        body = client.get("/metrics").text
+        assert "mcp_tool_onboards_total" in body
+        assert "mcp_tools_pending" in body
+
+
+def test_api_key_mode_admin_reachable_with_admin_token(tmp_path):
+    # Regression for #12: in api_key mode the admin routes must be reachable
+    # with just the admin Bearer token (no api key), not blocked by the
+    # api-key middleware colliding on the Authorization header.
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.auth_type = "api_key"
+    ctx.api_key_header = "authorization"
+    ctx.api_key_value = "apikey-secret"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        # non-admin route still requires the api key
+        assert client.get("/status").status_code == 401
+        # admin route reachable with the admin token alone
+        r = client.post("/admin/resync", headers={"Authorization": "Bearer secret"})
+        assert r.status_code == 409           # reached the handler (local mode)
+        # wrong admin token still rejected by admin_denied
+        assert client.post("/admin/resync", headers={"Authorization": "Bearer wrong"}).status_code == 401

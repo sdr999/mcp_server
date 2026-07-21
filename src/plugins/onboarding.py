@@ -47,6 +47,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from metrics import METRICS
 from . import dependency_risk as risk
 from .tool_loader import ToolLoader, prepare_with_timeout
 
@@ -55,16 +56,30 @@ log = logging.getLogger("MCP_logger")
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 DEFAULT_INSTALL_TIMEOUT = 120.0
 DEFAULT_IMPORT_TIMEOUT = 30.0
+MAX_SOURCE_BYTES = 1 * 1024 * 1024   # 1 MiB
+MAX_REQUIREMENTS = 50
 
 
-async def _pip_install(specs: List[str], timeout: float):
+class OnboardingConflict(Exception):
+    """Raised when onboarding a name that already exists (live or pending)
+    without ``overwrite=True``. The route maps this to HTTP 409."""
+
+
+def _only_binary_args(only_binary: bool) -> List[str]:
+    # --only-binary :all: forbids source distributions, so pip never runs a
+    # package's setup.py (arbitrary code) during install/resolution.
+    return ["--only-binary", ":all:"] if only_binary else []
+
+
+async def _pip_install(specs: List[str], timeout: float, only_binary: bool = False):
     """Install already-validated specs in a subprocess. Never invoked with a
     spec that hasn't passed dependency_risk's strict regex."""
     if not specs:
         return True, ""
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "pip", "install",
-        "--no-input", "--disable-pip-version-check", "--quiet", *specs,
+        "--no-input", "--disable-pip-version-check", "--quiet",
+        *_only_binary_args(only_binary), *specs,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -83,7 +98,7 @@ async def _pip_install(specs: List[str], timeout: float):
     return True, ""
 
 
-async def _pip_resolve_closure(specs: List[str], timeout: float):
+async def _pip_resolve_closure(specs: List[str], timeout: float, only_binary: bool = False):
     """Resolve (but do not install) the full dependency closure of ``specs``
     via ``pip install --dry-run --report -``. Returns ``(ok, packages | error)``
     where each package is ``{"name", "version", "requested"}`` (``requested``
@@ -95,7 +110,8 @@ async def _pip_resolve_closure(specs: List[str], timeout: float):
         return True, []
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "pip", "install", "--dry-run", "--report", "-",
-        "--no-input", "--disable-pip-version-check", "--quiet", *specs,
+        "--no-input", "--disable-pip-version-check", "--quiet",
+        *_only_binary_args(only_binary), *specs,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -131,10 +147,13 @@ class OnboardingManager:
                  network_timeout: float = 3.0, autoinstall: bool = True,
                  install_timeout: float = DEFAULT_INSTALL_TIMEOUT,
                  import_timeout: float = DEFAULT_IMPORT_TIMEOUT, enabled: bool = True,
+                 only_binary: bool = False, audit_log_path: Optional[Path] = None,
                  loader_lock: Optional["asyncio.Lock"] = None):
         self.tools_dir = tools_dir
         self.pending_dir = pending_dir
         self.loader = loader
+        self.only_binary = only_binary
+        self.audit_log_path = audit_log_path
         # Serializes tool imports/registry mutations against the reload drain
         # (and other onboards): both run on the loop but the actual import runs
         # in an executor thread, so two concurrent imports of a module would
@@ -154,11 +173,31 @@ class OnboardingManager:
         self.enabled = enabled
         self.pending_dir.mkdir(parents=True, exist_ok=True)
 
+    # -- audit trail ----------------------------------------------------
+    def _audit(self, action: str, name: str, result: str, detail: str = "") -> None:
+        """Append one JSON line to the audit log for an onboarding action.
+        Best-effort: a write failure never breaks onboarding. Note: the server
+        has a single shared admin token, so there is no per-actor identity to
+        record here -- the audit answers "what happened", not "who did it"."""
+        if not self.audit_log_path:
+            return
+        entry = {"ts": time.time(), "action": action, "name": name,
+                 "result": result, "detail": detail}
+        try:
+            self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.audit_log_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+        except Exception as exc:
+            log.error("Could not write onboarding audit entry: %s", exc)
+
     # -- pending store --------------------------------------------------
     def _pending_paths(self, name: str):
         # ``.py.pending`` (not ``.py``) so held, unreviewed code sitting under a
         # directory that may be on sys.path is not importable as a module.
         return self.pending_dir / f"{name}.py.pending", self.pending_dir / f"{name}.json"
+
+    def pending_count(self) -> int:
+        return sum(1 for _ in self.pending_dir.glob("*.json"))
 
     def list_pending(self) -> List[dict]:
         out = []
@@ -170,6 +209,8 @@ class OnboardingManager:
         return out
 
     def get_pending(self, name: str) -> Optional[dict]:
+        if not _NAME_RE.match(name or ""):
+            return None
         _src, meta_path = self._pending_paths(name)
         if not meta_path.exists():
             return None
@@ -177,6 +218,17 @@ class OnboardingManager:
             return json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             return None
+
+    def get_pending_detail(self, name: str) -> Optional[dict]:
+        """Full pending record including the held source, for admin review."""
+        record = self.get_pending(name)
+        if record is None:
+            return None
+        src_path, _meta = self._pending_paths(name)
+        source = ""
+        with contextlib.suppress(Exception):
+            source = src_path.read_text(encoding="utf-8")
+        return {**record, "source": source}
 
     def _write_pending(self, name: str, source: str, record: dict) -> None:
         src_path, meta_path = self._pending_paths(name)
@@ -214,15 +266,40 @@ class OnboardingManager:
         return out
 
     # -- onboarding ---------------------------------------------------------
-    async def onboard(self, name: str, source: str, requirements: Optional[List[str]] = None) -> dict:
+    def _hold(self, name: str, source: str, record: dict, reason: str) -> dict:
+        """Persist a submission as pending with ``reason`` and record it."""
+        record["status"] = "pending"
+        record["hold_reason"] = reason
+        self._write_pending(name, source, record)
+        METRICS.inc("mcp_tool_onboards_total", result="pending")
+        self._audit("onboard", name, "pending", reason)
+        log.warning("Tool %r held pending: %s", name, reason)
+        return record
+
+    async def onboard(self, name: str, source: str, requirements: Optional[List[str]] = None,
+                       *, overwrite: bool = False) -> dict:
         if not self.enabled:
             raise ValueError("tool onboarding is disabled (MCP_TOOL_ONBOARD_ENABLED=false)")
+        if self.loader.verifier is not None and getattr(self.loader.verifier, "require", False):
+            # Signed-tools mode only loads files listed in a trusted manifest;
+            # an onboarded file wouldn't be, so it could never load. Reject up
+            # front instead of silently holding everything pending.
+            raise ValueError("tool onboarding is unavailable while signed tools are required "
+                             "(MCP_REQUIRE_SIGNED_TOOLS=true); publish via the signed manifest instead")
         if not _NAME_RE.match(name or ""):
             raise ValueError("invalid tool name: must match ^[A-Za-z_][A-Za-z0-9_]{0,63}$")
         try:
             ast.parse(source)
         except SyntaxError as exc:
             raise ValueError(f"tool source has a syntax error: {exc}")
+
+        if not overwrite:
+            if (self.tools_dir / f"{name}.py").exists():
+                raise OnboardingConflict(f"a live tool named {name!r} already exists; "
+                                         "pass overwrite=true to replace it")
+            if self.get_pending(name) is not None:
+                raise OnboardingConflict(f"a pending submission named {name!r} already exists; "
+                                         "pass overwrite=true to replace it")
 
         specs_with_origin = self._build_specs(source, requirements or [])
         reports = self._assess_specs(specs_with_origin)
@@ -234,29 +311,24 @@ class OnboardingManager:
         guessed = [r for r in reports
                    if r.origin == "guessed" and risk.canonical_name(r.name) not in self.allowlist]
 
-        hold_reason = None
-        if not self.autoinstall and needs_install:
-            hold_reason = "auto-install of new dependencies is disabled (MCP_TOOL_AUTOINSTALL_DEPS=false)"
-        elif any(not r.valid or r.level == "high" for r in reports):
-            hold_reason = "one or more dependencies were assessed as high risk"
-        elif guessed:
-            hold_reason = ("a dependency name was guessed from an import and could not be verified "
-                           f"({', '.join(sorted(r.name for r in guessed))}); "
-                           "declare it explicitly in requirements or add it to the allowlist")
-
         record = {
             "name": name,
-            "status": "pending" if hold_reason else "onboarded",
+            "status": "onboarded",
             "requested_at": time.time(),
             "requirements": [spec for spec, _ in specs_with_origin],
             "risk_reports": [asdict(r) for r in reports],
         }
 
-        if hold_reason:
-            record["hold_reason"] = hold_reason
-            self._write_pending(name, source, record)
-            log.warning("Tool %r held pending: %s", name, hold_reason)
-            return record
+        if not self.autoinstall and needs_install:
+            return self._hold(name, source, record,
+                              "auto-install of new dependencies is disabled (MCP_TOOL_AUTOINSTALL_DEPS=false)")
+        if any(not r.valid or r.level == "high" for r in reports):
+            return self._hold(name, source, record, "one or more dependencies were assessed as high risk")
+        if guessed:
+            return self._hold(name, source, record,
+                              "a dependency name was guessed from an import and could not be verified "
+                              f"({', '.join(sorted(r.name for r in guessed))}); "
+                              "declare it explicitly in requirements or add it to the allowlist")
 
         install_specs = [r.spec for r in needs_install if r.valid]
 
@@ -265,48 +337,37 @@ class OnboardingManager:
         # when network checks are on (offline resolution isn't meaningful).
         if self.network_check and install_specs:
             async with self._install_lock:
-                ok, closure = await _pip_resolve_closure(install_specs, self.install_timeout)
+                ok, closure = await _pip_resolve_closure(install_specs, self.install_timeout, self.only_binary)
             if not ok:
-                record["status"] = "pending"
-                record["hold_reason"] = f"could not resolve dependency closure: {closure}"
-                self._write_pending(name, source, record)
-                log.error("Tool %r held pending: %s", name, record["hold_reason"])
-                return record
+                return self._hold(name, source, record, f"could not resolve dependency closure: {closure}")
             transitive = [self._assess_one(f"{p['name']}=={p['version']}", "transitive")
                           for p in closure if not p["requested"] and p["name"]]
             record["closure_reports"] = [asdict(r) for r in transitive]
             risky = [r for r in transitive if not r.valid or r.level == "high"]
             if risky:
-                record["status"] = "pending"
-                record["hold_reason"] = ("a transitive dependency was assessed as high risk: "
-                                         + ", ".join(sorted(r.name for r in risky)))
-                self._write_pending(name, source, record)
-                log.warning("Tool %r held pending: %s", name, record["hold_reason"])
-                return record
+                return self._hold(name, source, record,
+                                  "a transitive dependency was assessed as high risk: "
+                                  + ", ".join(sorted(r.name for r in risky)))
 
         async with self._install_lock:
-            ok, err = await _pip_install(install_specs, self.install_timeout)
+            ok, err = await _pip_install(install_specs, self.install_timeout, self.only_binary)
         if not ok:
-            record["status"] = "pending"
-            record["hold_reason"] = f"dependency install failed: {err}"
-            self._write_pending(name, source, record)
-            log.error("Tool %r held pending: dependency install failed: %s", name, err)
-            return record
+            record["installed"] = []
+            return self._hold(name, source, record, f"dependency install failed: {err}")
 
         registered, failure = await self._write_live(name, source)
         if failure or not registered:
             # Truthful outcome: the source parsed and its deps installed, but the
-            # module raised on import, was refused (e.g. signed-tools), or exposed
-            # no tool. Report it as pending rather than a false "onboarded".
-            record["status"] = "pending"
-            record["hold_reason"] = f"tool failed to load: {failure or 'source registered no tools'}"
+            # module raised on import, was refused, or exposed no tool. Report it
+            # as pending rather than a false "onboarded".
             record["installed"] = install_specs
-            self._write_pending(name, source, record)
-            log.error("Tool %r held pending: %s", name, record["hold_reason"])
-            return record
+            return self._hold(name, source, record,
+                              f"tool failed to load: {failure or 'source registered no tools'}")
 
         record["installed"] = install_specs
         record["registered_tools"] = registered
+        METRICS.inc("mcp_tool_onboards_total", result="onboarded")
+        self._audit("onboard", name, "onboarded", f"tools={registered}")
         log.info("Tool %r onboarded (%d dependency install(s), tools: %s)",
                  name, len(install_specs), registered)
         return record
@@ -315,33 +376,38 @@ class OnboardingManager:
         """Write the tool into the live tools dir and load it, importing OFF the
         serving loop bounded by ``import_timeout`` (a hostile module's top-level
         code cannot freeze the server). Returns (registered tool names, failure
-        reason); a brand-new submission that fails to load is rolled back so no
-        broken file lingers."""
+        reason). A brand-new submission that fails to load is rolled back; an
+        overwrite that fails to load is restored to its previous version so a
+        working tool is never clobbered by a bad update."""
         path = self.tools_dir / f"{name}.py"
-        pre_existed = path.exists()
-        path.write_text(source, encoding="utf-8")
-
+        old_content = path.read_text(encoding="utf-8") if path.exists() else None
         module_name = self.loader.module_name_for_path(path)
         if not module_name:
             return [], "internal error: tool path is not inside the tools directory"
 
         async with self.loader_lock:  # mutual exclusion with the reload drain
-            self.loader.invalidate(module_name)  # force a real re-import even on overwrite
-            plan = await prepare_with_timeout(self.loader, path, self.import_timeout)
-            if plan is None:
-                outcome = ([], f"import did not complete within {self.import_timeout}s")
-            else:
-                self.loader.commit(plan)  # on-loop, fast
-                outcome = self.loader.module_outcome(module_name)
-
-        registered, failure = outcome
-        if (failure or not registered) and not pre_existed:
-            # Don't leave a broken, newly created file behind. (Overwrite of an
-            # existing tool is left intact -- conflict handling is a later item.)
-            self.loader.unload_path(path)
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
+            path.write_text(source, encoding="utf-8")
+            registered, failure = await self._load_locked(module_name, path)
+            if failure or not registered:
+                if old_content is not None:
+                    # Restore & reload the previously-working version.
+                    path.write_text(old_content, encoding="utf-8")
+                    await self._load_locked(module_name, path)
+                else:
+                    self.loader.unload_path(path)
+                    with contextlib.suppress(FileNotFoundError):
+                        path.unlink()
         return registered, failure
+
+    async def _load_locked(self, module_name: str, path: Path) -> Tuple[List[str], Optional[str]]:
+        """Import (off-loop, timeout-bounded) + register one tool file. MUST be
+        called with ``self.loader_lock`` held."""
+        self.loader.invalidate(module_name)  # force a real re-import even on overwrite
+        plan = await prepare_with_timeout(self.loader, path, self.import_timeout)
+        if plan is None:
+            return [], f"import did not complete within {self.import_timeout}s"
+        self.loader.commit(plan)  # on-loop, fast
+        return self.loader.module_outcome(module_name)
 
     async def approve(self, name: str) -> dict:
         """Force-install (if needed) and load a pending submission, overriding
@@ -356,7 +422,7 @@ class OnboardingManager:
                           if r.get("valid", True) and not r.get("already_installed")]
         # Admin override: install regardless of risk, but still serialize pip.
         async with self._install_lock:
-            ok, err = await _pip_install(install_specs, self.install_timeout)
+            ok, err = await _pip_install(install_specs, self.install_timeout, self.only_binary)
         if not ok:
             pending["hold_reason"] = f"admin-approved install failed: {err}"
             self._write_pending(name, source, pending)
@@ -377,6 +443,8 @@ class OnboardingManager:
         pending["installed"] = install_specs
         pending["registered_tools"] = registered
         pending.pop("hold_reason", None)
+        METRICS.inc("mcp_tool_onboards_total", result="approved")
+        self._audit("approve", name, "onboarded", f"tools={registered}")
         log.warning("Tool %r approved by admin override and onboarded (tools: %s)", name, registered)
         return pending
 
@@ -384,5 +452,7 @@ class OnboardingManager:
         if self.get_pending(name) is None:
             return False
         self._clear_pending(name)
+        METRICS.inc("mcp_tool_onboards_total", result="rejected")
+        self._audit("reject", name, "rejected")
         log.info("Pending tool %r rejected and discarded", name)
         return True

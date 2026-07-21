@@ -214,15 +214,59 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 
 - Full plugin suite: **67 tests passing** (6 new).
 
-### Remaining review items (not yet done)
+---
 
-- **#12** `api_key` mode with the default `Authorization` header makes `/admin/*` unreachable.
-- #7 signed-tools mode vs onboarding semantics; #8 overwrite/conflict (`409`);
-  #9 name validation in approve/reject.
-- #13 request-size limits; #14 PyPI-lookup tests + `urllib.parse.quote`;
-  #15 status code for disabled onboarding.
-- #16 onboarding metrics; #17 audit trail; #18 update `.env.example`;
-  #19 pending-detail endpoint; #20 install hardening knobs.
+## Phase 5 — Batch 3 + 4 hardening (finish all remaining review items)
+
+**Commit:** `<pending>` — *Batch 3+4: finish onboarding hardening (auth, conflicts, limits, metrics, audit)*
+
+Implemented every remaining item from the review in one pass.
+
+### Fixes
+
+| # | Fix | Where |
+|---|-----|-------|
+| 7 | **Signed-tools mode rejects onboarding up front** (`400`) instead of silently holding everything pending. | `onboarding.py` |
+| 8 | **Overwrite/conflict**: duplicate name → `409` unless `overwrite:true`; a failed overwrite **restores the previous working version**. | `onboarding.py`, `routes.py` |
+| 9 | **Name validation** in `approve`/`reject` (via `get_pending`). | `onboarding.py` |
+| 12 | **`/admin/*` exempt from the api-key middleware** — admin routes carry their own token, fixing the `Authorization`-header collision that made them unreachable in `api_key` mode. | `security.py` |
+| 13 | **Request-size limits**: source ≤ 1 MiB (`413`), ≤ 50 requirements (`400`), Content-Length pre-check. | `routes.py`, `onboarding.py` |
+| 14 | `urllib.parse.quote` (fragile `urllib.request.quote` removed) + **mocked PyPI-lookup tests**. | `dependency_risk.py` |
+| 15 | **Disabled onboarding → `503`** (was a generic `400`). | `routes.py` |
+| 16 | **Metrics**: `mcp_tool_onboards_total{result}` counter + `mcp_tools_pending` gauge. | `onboarding.py`, `routes.py` |
+| 17 | **Audit trail**: append-only JSON-lines log per onboard/approve/reject (`MCP_TOOL_AUDIT_LOG`). | `onboarding.py`, `config.py` |
+| 18 | **`.env.example`** documents all `MCP_TOOL_*` onboarding/risk/install/audit knobs. | `config/.env.example` |
+| 19 | **`GET /admin/tools/pending/{name}`** detail endpoint (includes held source). | `routes.py`, `onboarding.py` |
+| 20 | **Install hardening**: `MCP_TOOL_INSTALL_ONLY_BINARY` → `pip --only-binary :all:` (no `setup.py` execution). | `onboarding.py`, `config.py` |
+
+### Files modified
+
+- `src/plugins/onboarding.py` — `OnboardingConflict`, overwrite + restore-on-failure, signed-mode reject, `_hold`/metrics/audit, `pending_count`/`get_pending_detail`, `only_binary` threading, name validation.
+- `src/plugins/routes.py` — onboard route (503/413/400/409, overwrite), pending-detail route, onboarding metric registration.
+- `src/plugins/security.py` — exempt `/admin/*` from api-key middleware.
+- `src/plugins/dependency_risk.py` — `urllib.parse.quote`.
+- `src/plugins/config.py` — `onboard_only_binary`, `onboard_audit_log`.
+- `src/config/.env.example` — new onboarding section.
+- `docs/MCP_TOOL_ONBOARDING.md` — detail endpoint, conflicts/limits, signed-mode, metrics/audit, config table.
+- Tests: 20 new across `test_plugins_onboarding.py`, `test_plugins_dependency_risk.py`, `test_main_server.py`.
+
+### Verification against real conditions (live server runs)
+
+| Check | Result |
+|-------|--------|
+| Conflict/overwrite (#8) | duplicate → `409`; `overwrite:true` → `201` |
+| Size limit (#13) | 1 MiB+ source → `413` |
+| Pending detail (#19) | `GET /admin/tools/pending/{name}` returned the held source |
+| Metrics (#16) | `/metrics` showed `mcp_tool_onboards_total{onboarded,pending,rejected}` + `mcp_tools_pending` gauge |
+| Audit (#17) | `logs/onboarding_audit.log` recorded each onboard/reject as JSON lines |
+| Disabled (#15) | onboard → `503` |
+| Signed mode (#7) | onboard → `400` with clear message |
+| api_key admin (#12) | `/status` needs api key (401→200); `/admin/resync` reachable with admin token (`409`), wrong token `401` |
+| only-binary (#20) | wheel install of `inflection` succeeded with `--only-binary :all:` |
+
+- Full plugin suite: **90 tests passing** (23 new).
+
+### Review status: all items #1–#20 complete.
 
 ---
 
@@ -234,5 +278,6 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 | `3177bcc` | Add risk-gated tool onboarding endpoint (Azure sync replacement). |
 | `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
 | `5502fc0` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
+| `<pending>` | Batch 3+4: signed-mode reject, conflicts/overwrite, limits, api-key admin fix, metrics, audit, only-binary. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.

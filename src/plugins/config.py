@@ -57,6 +57,8 @@ class AppContext:
     onboard_install_timeout: float = 120.0
     onboard_allowlist_path: Optional[Path] = None
     onboard_denylist_path: Optional[Path] = None
+    onboard_only_binary: bool = False
+    onboard_audit_log: Optional[Path] = None
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -164,6 +166,8 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         onboard_install_timeout=float(env.get("MCP_TOOL_INSTALL_TIMEOUT_SEC", "120")),
         onboard_allowlist_path=(base_dir / p if (p := env.get("MCP_TOOL_DEPENDENCY_ALLOWLIST")) else None),
         onboard_denylist_path=(base_dir / p if (p := env.get("MCP_TOOL_DEPENDENCY_DENYLIST")) else None),
+        onboard_only_binary=env.get("MCP_TOOL_INSTALL_ONLY_BINARY", "false").lower() == "true",
+        onboard_audit_log=(base_dir / (env.get("MCP_TOOL_AUDIT_LOG") or "logs/onboarding_audit.log")),
     )
 
 

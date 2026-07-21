@@ -69,14 +69,42 @@ via `sys.path`.
 An admin can override either outcome for anything sitting in the pending
 queue:
 
+* `GET  /admin/tools/pending/{name}` — full pending record **including the
+  held source**, so an admin can review exactly what they're approving.
 * `POST /admin/tools/pending/{name}/approve` — force-installs (if needed) and
   loads the submission regardless of its risk score.
 * `POST /admin/tools/pending/{name}/reject` — discards the submission.
 
-All four routes require `MCP_ADMIN_TOKEN` like the rest of `/admin/*`
-(disabled with `503` if unset). A separate kill switch,
-`MCP_TOOL_ONBOARD_ENABLED=false`, turns off onboarding entirely (rejects
-with a `400`) while leaving reload/disable/enable untouched.
+All routes require `MCP_ADMIN_TOKEN` like the rest of `/admin/*` (disabled with
+`503` if unset). In `api_key` mode the `/admin/*` routes are exempt from the
+api-key middleware — they carry their own independent admin Bearer token, which
+would otherwise collide with the api key on the `Authorization` header. A
+separate kill switch, `MCP_TOOL_ONBOARD_ENABLED=false`, turns onboarding off
+entirely (`503`) while leaving reload/disable/enable untouched.
+
+### Request shape, conflicts, and limits
+
+`onboard` accepts `{name, source, requirements?, overwrite?}`. Onboarding a
+name that already exists as a live tool or a pending submission returns **409**
+unless `overwrite: true` is set. An overwrite that fails to load **restores the
+previous working version** — a bad update never clobbers a running tool. The
+source is capped at 1 MiB and `requirements` at 50 entries (`413` / `400`).
+
+### Signed-tools mode
+
+When `MCP_REQUIRE_SIGNED_TOOLS=true` the loader only accepts files listed in a
+trusted manifest, so an onboarded file could never load. Onboarding therefore
+rejects up front with a clear `400` rather than silently holding everything
+pending — publish through the signed manifest instead.
+
+### Metrics & audit
+
+`/metrics` exposes `mcp_tool_onboards_total{result=...}` (onboarded / pending /
+approved / rejected) and a `mcp_tools_pending` gauge. Every onboard / approve /
+reject also appends a JSON line to `MCP_TOOL_AUDIT_LOG`
+(`logs/onboarding_audit.log` by default): `{ts, action, name, result, detail}`.
+The server uses a single shared admin token, so the audit records *what*
+happened, not *who* did it — per-admin identity would need per-admin tokens.
 
 ## Risk scoring (`plugins/dependency_risk.py`)
 
@@ -116,6 +144,8 @@ shell).
 | `MCP_TOOL_INSTALL_TIMEOUT_SEC` | `120` | Timeout for the `pip install` subprocess. |
 | `MCP_TOOL_DEPENDENCY_ALLOWLIST` | — | Path (relative to `src/`) to a JSON array of extra trusted package names. |
 | `MCP_TOOL_DEPENDENCY_DENYLIST` | — | Path (relative to `src/`) to a JSON array of extra denylisted package names. |
+| `MCP_TOOL_INSTALL_ONLY_BINARY` | `false` | `true` ⇒ pass `--only-binary :all:` to pip so it never runs a package's `setup.py` during install/resolution. |
+| `MCP_TOOL_AUDIT_LOG` | `logs/onboarding_audit.log` | Path (relative to `src/`) for the append-only onboarding audit log. |
 
 ## Example
 

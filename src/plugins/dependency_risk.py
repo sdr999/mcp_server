@@ -32,6 +32,7 @@ import logging
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -155,7 +156,7 @@ def load_name_set(path: Optional[Path], default: Set[str]) -> Set[str]:
 def _pypi_lookup(name: str, timeout: float) -> Optional[dict]:
     """Best-effort metadata fetch. Returns None on ANY failure (network down,
     404, malformed JSON, timeout, ...) -- callers treat None conservatively."""
-    url = f"https://pypi.org/pypi/{urllib.request.quote(name)}/json"
+    url = f"https://pypi.org/pypi/{urllib.parse.quote(name, safe='')}/json"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 - fixed https host
             if resp.status != 200:
