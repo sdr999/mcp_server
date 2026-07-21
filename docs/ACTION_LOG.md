@@ -277,7 +277,7 @@ what gets onboarded?". The answer exposed a deeper design weakness: tool
 resolution for onboarded files was implicit, unreviewable, and over-exposed
 via the legacy filename-match fallback. Solved as a small architecture change.
 
-**Commit:** `<pending>` — *Tool exposure policy + manifest: explicit opt-in for onboarded tools*
+**Commit:** `5e255bf` — *Tool exposure policy + manifest: explicit opt-in for onboarded tools*
 
 ### Changes
 
@@ -318,6 +318,6 @@ via the legacy filename-match fallback. Solved as a small architecture change.
 | `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
 | `5502fc0` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
 | `c3271f0` | Batch 3+4: signed-mode reject, conflicts/overwrite, limits, api-key admin fix, metrics, audit, only-binary. |
-| `<pending>` | Tool exposure policy + manifest: explicit opt-in for onboarded tools. |
+| `5e255bf` | Tool exposure policy + manifest: explicit opt-in for onboarded tools. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
