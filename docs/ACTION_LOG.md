@@ -218,7 +218,7 @@ Environment restored afterward (test tool files removed, `inflection` uninstalle
 
 ## Phase 5 — Batch 3 + 4 hardening (finish all remaining review items)
 
-**Commit:** `<pending>` — *Batch 3+4: finish onboarding hardening (auth, conflicts, limits, metrics, audit)*
+**Commit:** `c3271f0` — *Batch 3+4: finish onboarding hardening (auth, conflicts, limits, metrics, audit)*
 
 Implemented every remaining item from the review in one pass.
 
@@ -278,6 +278,6 @@ Implemented every remaining item from the review in one pass.
 | `3177bcc` | Add risk-gated tool onboarding endpoint (Azure sync replacement). |
 | `0d7d000` | Harden tool onboarding: normalization, truthful load, timeout, install cache (Batch 1). |
 | `5502fc0` | Batch 2: transitive-closure risk, guessed-dep gating, isolated pending store. |
-| `<pending>` | Batch 3+4: signed-mode reject, conflicts/overwrite, limits, api-key admin fix, metrics, audit, only-binary. |
+| `c3271f0` | Batch 3+4: signed-mode reject, conflicts/overwrite, limits, api-key admin fix, metrics, audit, only-binary. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
