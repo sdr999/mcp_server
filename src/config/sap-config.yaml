@@ -1,0 +1,39 @@
+filter_attributes:
+  - ProductTypeName
+  - ValidityEndDate 
+  - PurchaseContract
+  - MaterialType
+  - PurchasingDocumentTypeName
+  - PlantName
+  - ContractNetPriceAmount
+  - OrderQuantityUnit
+  - Material
+  - CompanyCode
+  - TargetAmount
+  - OrderPriceUnit
+  - MaterialType_fc
+  - Supplier
+  - NetPriceQuantity
+  - DocumentCurrency
+  - TargetQuantity
+  - PurgDocPriceDate
+  - OrderPriceUnit_fc
+  - PurgDocOrderAcknNumber_fc
+  - OrderQuantityUnit_fc
+  - Subcontractor
+  - ContractNetPriceAmount_fc
+
+purchase_order_fields:
+  - PurchaseOrder
+  - CreationDate
+  - Supplier
+  - DocumentCurrency
+  - PurchaseOrderDate
+  - IncotermsClassification
+
+purchase_order_item_fields:
+  - PurchaseOrder
+  - Material
+  - NetPriceAmount
+  - OrderQuantity
+  - PurchaseContract

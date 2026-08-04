@@ -1,2 +1,8 @@
 fastapi>=0.95
 uvicorn[standard]>=0.22
+
+# --- MCP tool server (src/main.py + src/plugins/*) ---
+fastmcp>=3.4
+watchdog>=3.0
+python-dotenv>=1.0
+starlette>=0.35
