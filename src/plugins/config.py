@@ -10,7 +10,8 @@ from __future__ import annotations
 import argparse
 import base64
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -61,6 +62,15 @@ class AppContext:
     onboard_audit_log: Optional[Path] = None
     onboard_require_explicit: bool = True
     onboard_max_tools: int = 0
+    # Per-route auth policies: "none" | "mcp" | "admin"
+    read_auth: str = "mcp"          # /status, /tools
+    metrics_auth: str = "mcp"       # /metrics
+    tool_call_auth: str = "mcp"     # POST /tools/{name}/call
+    upstream_auth: str = "mcp"      # /mcp/upstreams* (list + call)
+    # Federation: remote MCP servers this server can list/call tools on
+    upstreams: dict = field(default_factory=dict)   # name -> {"url", "token"}
+    upstream_timeout: float = 30.0
+    upstream_allow_runtime: bool = True             # admin add/remove at runtime
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -119,6 +129,39 @@ def decode_config_path(raw: str, base_dir: Path) -> Tuple[str, Path]:
     return decoded, local
 
 
+_VALID_POLICIES = ("none", "mcp", "admin")
+
+
+def _policy(env: dict, key: str, default: str = "mcp") -> str:
+    val = (env.get(key) or default).lower()
+    if val not in _VALID_POLICIES:
+        raise RuntimeError(f"{key} must be one of {_VALID_POLICIES}, got {val!r}")
+    return val
+
+
+def _load_upstreams(env: dict, base_dir: Path) -> dict:
+    """Parse configured remote MCP servers from MCP_UPSTREAMS (inline JSON) or
+    MCP_UPSTREAMS_FILE (a JSON file). Normalizes to {name: {"url", "token"}}."""
+    raw = None
+    if env.get("MCP_UPSTREAMS"):
+        raw = env["MCP_UPSTREAMS"]
+    elif env.get("MCP_UPSTREAMS_FILE"):
+        p = base_dir / env["MCP_UPSTREAMS_FILE"]
+        raw = p.read_text(encoding="utf-8") if p.exists() else None
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    out = {}
+    for name, spec in (data or {}).items():
+        if isinstance(spec, str):
+            spec = {"url": spec}
+        url = spec.get("url")
+        if not url:
+            raise RuntimeError(f"upstream {name!r} is missing a 'url'")
+        out[str(name)] = {"url": url, "token": spec.get("token") or None}
+    return out
+
+
 def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = None) -> AppContext:
     """Parse args + environment into a context for server mode. No I/O beyond
     reading ``config/.env`` (if present)."""
@@ -172,6 +215,13 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         onboard_audit_log=(base_dir / (env.get("MCP_TOOL_AUDIT_LOG") or "logs/onboarding_audit.log")),
         onboard_require_explicit=env.get("MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT", "true").lower() == "true",
         onboard_max_tools=int(env.get("MCP_TOOL_ONBOARD_MAX_TOOLS", "0")),
+        read_auth=_policy(env, "MCP_READ_AUTH"),
+        metrics_auth=_policy(env, "MCP_METRICS_AUTH"),
+        tool_call_auth=_policy(env, "MCP_TOOL_CALL_AUTH"),
+        upstream_auth=_policy(env, "MCP_UPSTREAM_AUTH"),
+        upstreams=_load_upstreams(env, base_dir),
+        upstream_timeout=float(env.get("MCP_UPSTREAM_TIMEOUT_SEC", "30")),
+        upstream_allow_runtime=env.get("MCP_UPSTREAM_ALLOW_RUNTIME", "true").lower() == "true",
     )
 
 

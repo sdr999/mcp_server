@@ -34,7 +34,8 @@ src/
     ├── routes.py           # HTTP endpoints + metrics registration(doc 05)
     ├── dependency_risk.py  # pip-dependency risk scoring          (doc 06)
     ├── onboarding.py       # risk-gated tool onboarding           (doc 07)
-    └── cli.py              # --validate / --sign                  (doc 08)
+    ├── cli.py              # --validate / --sign                  (doc 08)
+    └── upstreams.py        # federation to remote MCP servers     (doc 09)
 ```
 
 ## The documents
@@ -49,6 +50,7 @@ src/
 | 06 | [Dependency Risk](06-dependency-risk.md) | `dependency_risk.py`: scoring heuristics, PyPI lookup, canonicalization |
 | 07 | [Tool Onboarding](07-tool-onboarding.md) | `onboarding.py`: the full flow, exposure policy, manifest, conflicts, audit |
 | 08 | [CLI & Sandbox](08-cli-and-sandbox.md) | `cli.py`, `tool_runner.py`: validate/sign, subprocess sandbox |
+| 09 | [Federation](09-federation.md) | `upstreams.py`: list/call tools on remote MCP servers |
 
 ## The one mental model to hold
 

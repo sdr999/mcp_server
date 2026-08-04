@@ -356,3 +356,75 @@ def test_tool_call_requires_mcp_credential_in_api_key_mode(tmp_path):
         r = client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}},
                         headers={"x-api-key": "secret123"})
         assert r.status_code == 200
+
+
+# ---- federation: remote MCP servers ----------------------------------------
+def _inject_upstream(client):
+    from fastmcp import FastMCP
+    up = FastMCP(name="up")
+
+    @up.tool
+    def greet(who: str) -> str:
+        return f"hi {who}"
+
+    client.app.state.upstreams._servers["demo"] = {"target": up}
+
+
+def test_upstream_list_tools_and_call(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        _inject_upstream(client)
+        assert "demo" in [u["name"] for u in client.get("/mcp/upstreams").json()["upstreams"]]
+        r = client.get("/mcp/upstreams/demo/tools")
+        assert r.status_code == 200
+        assert "greet" in [t["name"] for t in r.json()["tools"]]
+        r = client.post("/mcp/upstreams/demo/tools/greet/call", json={"arguments": {"who": "x"}})
+        assert r.status_code == 200
+        assert r.json()["structured_content"] == {"result": "hi x"}
+        assert client.get("/mcp/upstreams/nope/tools").status_code == 404
+
+
+def test_admin_upstream_add_and_remove(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/admin/mcp/upstreams", json={"name": "u1", "url": "http://h/sse"}).status_code == 401
+        r = client.post("/admin/mcp/upstreams", json={"name": "u1", "url": "http://h/sse"}, headers=ADMIN)
+        assert r.status_code == 201
+        assert "u1" in [u["name"] for u in client.get("/mcp/upstreams").json()["upstreams"]]
+        assert client.post("/admin/mcp/upstreams/u1/remove", headers=ADMIN).status_code == 200
+        assert client.post("/admin/mcp/upstreams/nope/remove", headers=ADMIN).status_code == 404
+
+
+# ---- configurable per-route auth -------------------------------------------
+def test_metrics_auth_none_is_open_even_in_api_key_mode(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.auth_type = "api_key"; ctx.api_key_header = "x-api-key"; ctx.api_key_value = "k"
+    ctx.metrics_auth = "none"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.get("/metrics").status_code == 200      # opened by policy
+        assert client.get("/status").status_code == 401        # still needs the key
+
+
+def test_tool_call_auth_admin_requires_admin_token(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))          # auth_type none
+    ctx.tool_call_auth = "admin"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}}).status_code == 401
+        r = client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}}, headers=ADMIN)
+        assert r.status_code == 200
+
+
+def test_read_auth_none_opens_status_in_api_key_mode(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.auth_type = "api_key"; ctx.api_key_header = "x-api-key"; ctx.api_key_value = "k"
+    ctx.read_auth = "none"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.get("/status").status_code == 200        # opened by policy

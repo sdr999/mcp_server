@@ -67,6 +67,14 @@ in [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) §3):
 | GET | `/admin/tools/pending/{name}` | admin token | One pending submission, including its held source and tool manifest. |
 | POST | `/admin/tools/pending/{name}/approve` | admin token | Force-install + load a pending submission, overriding its risk score. |
 | POST | `/admin/tools/pending/{name}/reject` | admin token | Discard a pending submission. |
+| GET | `/mcp/upstreams` | `MCP_UPSTREAM_AUTH` | List configured remote MCP servers. |
+| GET | `/mcp/upstreams/{server}/tools` | `MCP_UPSTREAM_AUTH` | List a remote server's tools (federation, see [dev/09](dev/09-federation.md)). |
+| POST | `/mcp/upstreams/{server}/tools/{name}/call` | `MCP_UPSTREAM_AUTH` | Execute a tool on a remote MCP server. |
+| POST | `/admin/mcp/upstreams` | admin token | Add a remote MCP server at runtime `{name, url, token?}`. |
+| POST | `/admin/mcp/upstreams/{server}/remove` | admin token | Remove a remote MCP server. |
+
+The auth column shows the default policy; each `MCP_*_AUTH` var (`none`/`mcp`/`admin`)
+makes it configurable — see [dev/02](dev/02-security-auth.md).
 
 **Executing a tool:**
 

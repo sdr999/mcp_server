@@ -43,49 +43,67 @@ def build_mcp(ctx) -> Tuple[FastMCP, Optional[JWTVerifier]]:
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """Constant-time API-key check. Exempts liveness/readiness paths for probes."""
+    """Constant-time API-key check for the **MCP protocol endpoints** only
+    (``/sse``, ``/messages``). FastMCP auths those itself in ``bearer_jwt`` mode
+    but not in ``api_key`` mode, so this fills that gap. Every other route
+    (health, admin, and the custom read/exec/upstream routes) enforces its own
+    configurable policy via :func:`enforce`, so the middleware does not touch
+    them — that's what makes per-route auth configurable."""
 
     def __init__(self, app, header: str, value: str, exempt=EXEMPT_PATHS):
         super().__init__(app)
         self._header = header.lower()
         self._value = value
-        self._exempt = set(exempt)
 
     async def dispatch(self, request, call_next):
         path = request.url.path
-        # Admin routes carry their own independent MCP_ADMIN_TOKEN (a Bearer
-        # token). They are exempt from the API-key check so the admin token and
-        # the api key don't collide on the Authorization header (the default
-        # api-key header), which would otherwise make /admin/* unreachable in
-        # api_key mode. admin_denied() still gates every admin route.
-        if path in self._exempt or path.startswith("/admin/"):
-            return await call_next(request)
-        provided = request.headers.get(self._header, "")
-        if not hmac.compare_digest(provided, self._value):
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        if path.startswith("/sse") or path.startswith("/messages"):
+            provided = request.headers.get(self._header, "")
+            if not hmac.compare_digest(provided, self._value):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
 
-async def read_guard(request):
-    """Enforce the MCP credential on the custom read routes.
-
-    - api_key mode: already enforced by ApiKeyMiddleware (returns None here).
-    - bearer_jwt mode: validate the Bearer JWT with the same verifier used for
-      /sse, closing the gap where these routes would otherwise be unauthenticated.
-    - none mode: open.
-    Returns a 401 JSONResponse when denied, else None.
-    """
+def _api_key_ok(request) -> bool:
     st = request.app.state
-    if getattr(st, "auth_type", "none") != "bearer_jwt":
-        return None
-    verifier = getattr(st, "jwt_verifier", None)
+    provided = request.headers.get(getattr(st, "api_key_header", "authorization"), "")
+    return hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
+
+
+async def _jwt_ok(request) -> bool:
+    verifier = getattr(request.app.state, "jwt_verifier", None)
     if verifier is None:
-        return None
+        return False                          # bearer_jwt configured but no verifier → fail closed
     authz = request.headers.get("authorization", "")
     token = authz[7:] if authz.lower().startswith("bearer ") else ""
-    if not token or (await verifier.verify_token(token)) is None:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return None
+    return bool(token) and (await verifier.verify_token(token)) is not None
+
+
+async def enforce(request, policy: str):
+    """Apply a per-route auth policy. Returns a 401/503 JSONResponse when denied,
+    else None.
+
+    - ``"none"``  → open.
+    - ``"admin"`` → requires ``MCP_ADMIN_TOKEN`` (same gate as ``/admin/*``).
+    - ``"mcp"``   → requires the MCP credential for the active ``MCP_AUTH_TYPE``:
+      nothing in ``none`` mode, the api key in ``api_key`` mode, a valid JWT in
+      ``bearer_jwt`` mode.
+    """
+    if policy == "none":
+        return None
+    if policy == "admin":
+        return admin_denied(request)
+    mode = getattr(request.app.state, "auth_type", "none")
+    if mode == "api_key":
+        return None if _api_key_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if mode == "bearer_jwt":
+        return None if await _jwt_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return None                               # none mode: open
+
+
+async def read_guard(request):
+    """Back-compat alias for ``enforce(request, "mcp")``."""
+    return await enforce(request, "mcp")
 
 
 def admin_denied(request):

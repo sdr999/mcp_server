@@ -17,7 +17,8 @@ from starlette.routing import Route
 from metrics import METRICS
 from .notifications import notify_tools_changed
 from .onboarding import MAX_REQUIREMENTS, MAX_SOURCE_BYTES, OnboardingConflict
-from .security import HEALTH_PATH, READY_PATH, admin_denied, read_guard
+from .security import HEALTH_PATH, READY_PATH, admin_denied, enforce
+from .upstreams import UpstreamError
 
 log = logging.getLogger("MCP_logger")
 
@@ -32,9 +33,9 @@ async def _readyz(request):
 
 
 async def _status(request):
-    if (denied := await read_guard(request)) is not None:
-        return denied
     st = request.app.state
+    if (denied := await enforce(request, st.read_auth)) is not None:
+        return denied
     return JSONResponse({
         "ready": bool(getattr(st, "ready", False)),
         "auth": st.auth_type,
@@ -44,13 +45,14 @@ async def _status(request):
 
 
 async def _tools_catalog(request):
-    if (denied := await read_guard(request)) is not None:
+    st = request.app.state
+    if (denied := await enforce(request, st.read_auth)) is not None:
         return denied
-    return JSONResponse({"tools": request.app.state.loader.catalog()})
+    return JSONResponse({"tools": st.loader.catalog()})
 
 
 async def _metrics(request):
-    if (denied := await read_guard(request)) is not None:
+    if (denied := await enforce(request, request.app.state.metrics_auth)) is not None:
         return denied
     return PlainTextResponse(METRICS.render(), media_type="text/plain; version=0.0.4")
 
@@ -81,7 +83,7 @@ async def _tool_call(request):
     equivalent of an MCP ``tools/call``. Gated by the same MCP credential as
     ``/tools`` and ``/sse`` (it exposes no capability an MCP client lacks), and
     it runs through the same metrics/sandbox wrapper."""
-    if (denied := await read_guard(request)) is not None:
+    if (denied := await enforce(request, request.app.state.tool_call_auth)) is not None:
         return denied
     name = request.path_params["name"]
     tool = request.app.state.loader.get_tool(name)
@@ -254,6 +256,80 @@ async def _admin_tools_pending_reject(request):
     return JSONResponse({"status": "rejected", "tool": name})
 
 
+# -- federation: list / call tools on remote MCP servers ---------------------
+async def _upstreams_list(request):
+    st = request.app.state
+    if (denied := await enforce(request, st.upstream_auth)) is not None:
+        return denied
+    return JSONResponse({"upstreams": st.upstreams.list()})
+
+
+async def _upstream_tools(request):
+    st = request.app.state
+    if (denied := await enforce(request, st.upstream_auth)) is not None:
+        return denied
+    server = request.path_params["server"]
+    try:
+        tools = await st.upstreams.list_tools(server)
+    except KeyError:
+        return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
+    except UpstreamError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"upstream": server, "tools": tools})
+
+
+async def _upstream_tool_call(request):
+    st = request.app.state
+    if (denied := await enforce(request, st.upstream_auth)) is not None:
+        return denied
+    server = request.path_params["server"]
+    name = request.path_params["name"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    arguments = body.get("arguments", {}) if isinstance(body, dict) else {}
+    if not isinstance(arguments, dict):
+        return JSONResponse({"error": '"arguments" must be a JSON object'}, status_code=400)
+    try:
+        result = await st.upstreams.call_tool(server, name, arguments)
+    except KeyError:
+        return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
+    except UpstreamError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse(result)
+
+
+async def _admin_upstream_add(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    if not st.upstreams.allow_runtime:
+        return JSONResponse({"error": "runtime upstream changes are disabled (MCP_UPSTREAM_ALLOW_RUNTIME=false)"},
+                            status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+    name, url = body.get("name"), body.get("url")
+    if not isinstance(name, str) or not isinstance(url, str) or not name or not url:
+        return JSONResponse({"error": 'expected {"name": str, "url": str, "token"?: str}'}, status_code=400)
+    st.upstreams.add(name, url, body.get("token"))
+    return JSONResponse({"status": "added", "upstream": name}, status_code=201)
+
+
+async def _admin_upstream_remove(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    if not st.upstreams.allow_runtime:
+        return JSONResponse({"error": "runtime upstream changes are disabled"}, status_code=403)
+    server = request.path_params["server"]
+    if not st.upstreams.remove(server):
+        return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
+    return JSONResponse({"status": "removed", "upstream": server})
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
@@ -271,4 +347,10 @@ def feature_routes() -> List[Route]:
         Route("/admin/tools/pending/{name}", _admin_tools_pending_detail, methods=["GET"]),
         Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),
         Route("/admin/tools/pending/{name}/reject", _admin_tools_pending_reject, methods=["POST"]),
+        # Federation: remote MCP servers
+        Route("/mcp/upstreams", _upstreams_list, methods=["GET"]),
+        Route("/mcp/upstreams/{server}/tools", _upstream_tools, methods=["GET"]),
+        Route("/mcp/upstreams/{server}/tools/{name}/call", _upstream_tool_call, methods=["POST"]),
+        Route("/admin/mcp/upstreams", _admin_upstream_add, methods=["POST"]),
+        Route("/admin/mcp/upstreams/{server}/remove", _admin_upstream_remove, methods=["POST"]),
     ]

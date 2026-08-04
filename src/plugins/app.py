@@ -20,6 +20,7 @@ from .routes import feature_routes, register_metrics
 from .security import ApiKeyMiddleware, build_mcp
 from .signing import ToolVerifier
 from .tool_loader import ToolLoader, initial_load, prepare_with_timeout
+from .upstreams import UpstreamRegistry
 from .watcher import ToolDirectoryWatcher
 
 log = logging.getLogger("MCP_logger")
@@ -99,6 +100,16 @@ def build_app(ctx):
     app.state.admin_token = ctx.admin_token
     app.state.jwt_verifier = jwt_verifier
     app.state.onboarding = onboarding
+    # Credentials + per-route auth policies (read by security.enforce)
+    app.state.api_key_header = ctx.api_key_header
+    app.state.api_key_value = ctx.api_key_value
+    app.state.read_auth = ctx.read_auth
+    app.state.metrics_auth = ctx.metrics_auth
+    app.state.tool_call_auth = ctx.tool_call_auth
+    app.state.upstream_auth = ctx.upstream_auth
+    # Federation registry
+    app.state.upstreams = UpstreamRegistry(
+        ctx.upstreams, timeout=ctx.upstream_timeout, allow_runtime=ctx.upstream_allow_runtime)
     register_metrics(loader, app)
 
     original_lifespan = app.router.lifespan_context
