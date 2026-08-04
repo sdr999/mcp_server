@@ -139,3 +139,16 @@ def test_sandbox_timeout_raises(tmp_path):
     loader.load_all()
     with pytest.raises(RuntimeError):
         asyncio.run(_call(loader, "slow", secs=5))
+
+
+# ---- direct execution: get_tool lifecycle ----------------------------------
+def test_get_tool_returns_registered_and_none_after_unload(tmp_path):
+    d, _ = _dir(tmp_path)
+    (d / "adder.py").write_text("def adder(x: int, y: int) -> int:\n    return x + y\n")
+    loader = ToolLoader(FakeMCP(), d, src_dir=SRC)
+    loader.load_all()
+    assert loader.get_tool("adder") is not None
+    assert loader.get_tool("nope") is None
+    # disable removes it from the callable registry
+    loader.disable("adder")
+    assert loader.get_tool("adder") is None

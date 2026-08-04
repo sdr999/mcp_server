@@ -34,6 +34,7 @@ def feature_routes() -> List[Route]:
 | `GET /readyz` | open | readiness — `200` only after initial load, else `503` |
 | `GET /status` | MCP cred | `{ready, auth, source:"local", stats}` |
 | `GET /tools` | MCP cred | tool catalog `[{name, module, description, tags}]` |
+| `POST /tools/{name}/call` | MCP cred | execute a tool — the HTTP equivalent of an MCP `tools/call` |
 | `GET /metrics` | MCP cred | Prometheus text |
 | `POST /admin/resync` | admin | no-op `409` (no remote source; watcher covers edits) |
 | `POST /admin/reload/{name}` | admin | reload the module owning a tool |
@@ -55,6 +56,51 @@ async def _readyz(request):
 
 `app.state.ready` is flipped to `True` by the lifespan's `_bootstrap` after the
 initial load (doc 04).
+
+## Executing a tool over HTTP
+
+`POST /tools/{name}/call` runs a registered tool directly — the plain-HTTP
+equivalent of an MCP `tools/call`, gated by the **same** MCP credential (it
+exposes nothing an SSE client can't already do) and routed through the same
+metrics/sandbox wrapper. The loader hands back the registered `FunctionTool`
+(`get_tool`, doc 03) and we invoke `tool.run(arguments)`, which validates
+arguments against the tool's schema and returns a structured result.
+
+```python
+async def _tool_call(request):
+    if (denied := await read_guard(request)) is not None:
+        return denied
+    name = request.path_params["name"]
+    tool = request.app.state.loader.get_tool(name)
+    if tool is None:
+        return JSONResponse({"error": f"unknown or disabled tool {name!r}"}, status_code=404)
+    arguments = (await request.json() or {}).get("arguments", {})   # simplified
+    try:
+        result = await tool.run(arguments)
+    except _ToolValidationError as exc:
+        return JSONResponse({"tool": name, "error": f"invalid arguments: {exc}"}, status_code=400)
+    except Exception as exc:                          # tool raised → in-band error, 200
+        return JSONResponse({"tool": name, "is_error": True, "error": f"{type(exc).__name__}: {exc}", "content": []})
+    return JSONResponse(_serialize_tool_result(name, result))
+```
+
+Request/response:
+
+```console
+$ curl -X POST localhost:8000/tools/adder/call -d '{"arguments": {"x": 7, "y": 5}}'
+{ "tool": "adder", "is_error": false,
+  "structured_content": {"result": 12},
+  "content": [{"type": "text", "text": "12"}] }
+```
+
+Status mapping:
+
+| Situation | Result |
+|-----------|--------|
+| Success | `200` — `structured_content` + `content` blocks |
+| Unknown / disabled tool | `404` |
+| `arguments` not an object / schema validation fails | `400` |
+| Tool raised at runtime | `200` with `is_error: true` (MCP treats tool failures as in-band error results, not transport errors) |
 
 ## Read routes are guarded, admin routes are gated
 

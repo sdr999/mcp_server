@@ -61,10 +61,28 @@ in [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) §3):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
+| POST | `/tools/{name}/call` | MCP credential | Execute a registered tool with `{"arguments": {...}}` — the HTTP equivalent of an MCP `tools/call`. Returns `{tool, is_error, structured_content, content}`. |
 | POST | `/admin/tools/onboard` | admin token | Submit `{name, source, requirements?}`; risk-assesses dependencies and either onboards (`201`) or holds pending (`202`). |
 | GET | `/admin/tools/pending` | admin token | List submissions held pending, with their full risk report. |
+| GET | `/admin/tools/pending/{name}` | admin token | One pending submission, including its held source and tool manifest. |
 | POST | `/admin/tools/pending/{name}/approve` | admin token | Force-install + load a pending submission, overriding its risk score. |
 | POST | `/admin/tools/pending/{name}/reject` | admin token | Discard a pending submission. |
+
+**Executing a tool:**
+
+```bash
+curl -X POST http://localhost:8000/tools/text_analyzer/call \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"text": "hello world."}}'
+# {"tool":"text_analyzer","is_error":false,"structured_content":{"result":"..."},"content":[...]}
+```
+
+`/tools/{name}/call` carries the **MCP credential** (same as `/tools` and
+`/sse`) because it exposes no capability an MCP client doesn't already have; it
+runs through the same metrics/sandbox wrapper as a protocol `tools/call`. A
+`404` means unknown/disabled, `400` means bad arguments, and a tool that raises
+comes back `200` with `is_error: true` (MCP treats tool failures as in-band
+results).
 
 ## CLI
 

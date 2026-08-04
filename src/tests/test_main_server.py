@@ -300,3 +300,59 @@ def test_onboard_legacy_source_held_under_strict_default(tmp_path):
                         headers=ADMIN)
         assert r.status_code == 202
         assert "legacy filename-match" in r.json()["hold_reason"]
+
+
+# ---- direct tool execution: POST /tools/{name}/call ------------------------
+def test_tool_call_executes_and_returns_result(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/tools/echo/call", json={"arguments": {"msg": "hello"}})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tool"] == "echo"
+        assert body["is_error"] is False
+        assert body["structured_content"] == {"result": "hello"}
+
+
+def test_tool_call_unknown_tool_is_404(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/tools/nope/call", json={"arguments": {}}).status_code == 404
+
+
+def test_tool_call_bad_arguments_is_400(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        # echo requires msg: str; wrong type fails schema validation
+        r = client.post("/tools/echo/call", json={"arguments": {"msg": {"not": "a string"}}})
+        assert r.status_code == 400
+
+
+def test_tool_call_tool_raises_is_reported_in_band(tmp_path):
+    d = _tools_dir(tmp_path)
+    (d / "boom.py").write_text("def boom(x: int) -> int:\n    raise RuntimeError('kaboom')\n")
+    app, _mcp = build_app(_make_ctx(d))
+    with TestClient(app) as client:
+        _wait_ready(client)
+        r = client.post("/tools/boom/call", json={"arguments": {"x": 1}})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["is_error"] is True
+        assert "kaboom" in body["error"]
+
+
+def test_tool_call_requires_mcp_credential_in_api_key_mode(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.auth_type = "api_key"
+    ctx.api_key_header = "x-api-key"
+    ctx.api_key_value = "secret123"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}}).status_code == 401
+        r = client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}},
+                        headers={"x-api-key": "secret123"})
+        assert r.status_code == 200

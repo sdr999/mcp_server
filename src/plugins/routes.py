@@ -55,6 +55,59 @@ async def _metrics(request):
     return PlainTextResponse(METRICS.render(), media_type="text/plain; version=0.0.4")
 
 
+# fastmcp raises its own ValidationError for bad tool arguments; import lazily so
+# a fastmcp version without it degrades gracefully (bad args → generic 400).
+try:
+    from fastmcp.exceptions import ValidationError as _ToolValidationError
+except Exception:  # pragma: no cover
+    _ToolValidationError = None
+
+
+def _serialize_tool_result(name: str, result) -> dict:
+    """Turn a FastMCP ToolResult into a JSON envelope mirroring an MCP tools/call
+    result: the structured value plus the content blocks."""
+    content = [{"type": getattr(c, "type", None), "text": getattr(c, "text", None)}
+               for c in (getattr(result, "content", None) or [])]
+    return {
+        "tool": name,
+        "is_error": bool(getattr(result, "is_error", False)),
+        "structured_content": getattr(result, "structured_content", None),
+        "content": content,
+    }
+
+
+async def _tool_call(request):
+    """Execute a registered tool by name over plain HTTP -- the direct-call
+    equivalent of an MCP ``tools/call``. Gated by the same MCP credential as
+    ``/tools`` and ``/sse`` (it exposes no capability an MCP client lacks), and
+    it runs through the same metrics/sandbox wrapper."""
+    if (denied := await read_guard(request)) is not None:
+        return denied
+    name = request.path_params["name"]
+    tool = request.app.state.loader.get_tool(name)
+    if tool is None:
+        return JSONResponse({"error": f"unknown or disabled tool {name!r}"}, status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    arguments = body.get("arguments", {}) if isinstance(body, dict) else {}
+    if not isinstance(arguments, dict):
+        return JSONResponse({"error": '"arguments" must be a JSON object'}, status_code=400)
+
+    try:
+        result = await tool.run(arguments)
+    except Exception as exc:
+        if _ToolValidationError is not None and isinstance(exc, _ToolValidationError):
+            return JSONResponse({"tool": name, "error": f"invalid arguments: {exc}"}, status_code=400)
+        # The call was well-formed but the tool raised: report it in-band (MCP
+        # treats tool failures as error results, not transport errors).
+        return JSONResponse({"tool": name, "is_error": True,
+                             "error": f"{type(exc).__name__}: {exc}", "content": []})
+    return JSONResponse(_serialize_tool_result(name, result))
+
+
 def register_metrics(loader, app) -> None:
     """Declare counters and scrape-time gauges backed by loader/app state."""
     METRICS.declare("mcp_tool_calls_total", "Total tool invocations")
@@ -207,6 +260,7 @@ def feature_routes() -> List[Route]:
         Route(READY_PATH, _readyz, methods=["GET"]),
         Route("/status", _status, methods=["GET"]),
         Route("/tools", _tools_catalog, methods=["GET"]),
+        Route("/tools/{name}/call", _tool_call, methods=["POST"]),
         Route("/metrics", _metrics, methods=["GET"]),
         Route("/admin/resync", _admin_resync, methods=["POST"]),
         Route("/admin/reload/{name}", _admin_reload, methods=["POST"]),

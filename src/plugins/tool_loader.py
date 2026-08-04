@@ -130,6 +130,7 @@ class ToolLoader:
         self._name_owner: Dict[str, str] = {}           # tool name -> owning module
         self._mtime: Dict[str, float] = {}              # module -> last-loaded mtime
         self._tool_info: Dict[str, dict] = {}           # tool name -> catalog metadata
+        self._tools: Dict[str, FunctionTool] = {}       # tool name -> registered tool (for direct calls)
         self._failures: Dict[str, str] = {}             # module -> failure reason
         self._disabled: Dict[str, str] = {}             # disabled tool name -> owning module
         self._changed = False
@@ -300,6 +301,7 @@ class ToolLoader:
             if self._name_owner.get(name) == module_name:
                 self._name_owner.pop(name, None)
             self._tool_info.pop(name, None)
+            self._tools.pop(name, None)
             self._changed = True
         self._mtime.pop(module_name, None)
         # A module that has been unloaded (deleted / rolled back) is no longer
@@ -375,6 +377,7 @@ class ToolLoader:
             try:
                 self.mcp.add_tool(tool_obj)
                 self._name_owner[name] = module_name
+                self._tools[name] = tool_obj            # keep a ref for direct calls
                 self._tool_info[name] = {
                     "name": name,
                     "module": module_name,
@@ -422,6 +425,13 @@ class ToolLoader:
         onboarding -- use this instead of assuming ``load_path`` succeeded."""
         return list(self._module_tools.get(module_name, [])), self._failures.get(module_name)
 
+    def get_tool(self, name: str) -> Optional["FunctionTool"]:
+        """The currently-registered tool object for ``name`` (None if unknown or
+        disabled). Used by the direct-execution HTTP endpoint; invoking
+        ``tool.run(arguments)`` goes through the same metrics/sandbox wrapper as
+        an MCP ``tools/call``."""
+        return self._tools.get(name)
+
     def load_all(self) -> None:
         for py in self.tools_dir.glob("*.py"):
             if py.name != "__init__.py":
@@ -439,6 +449,7 @@ class ToolLoader:
             self._module_tools[module].remove(name)
         self._name_owner.pop(name, None)
         self._tool_info.pop(name, None)
+        self._tools.pop(name, None)
         self._changed = True
         return True
 

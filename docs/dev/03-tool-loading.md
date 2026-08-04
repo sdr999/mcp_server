@@ -175,6 +175,10 @@ The sandbox path runs the call in a subprocess (`tool_runner.py`, doc 08).
 - `module_outcome(module_name)` → `(registered_names, failure_reason)` — lets
   onboarding report a *truthful* result instead of assuming success.
 - `invalidate(module_name)` — drop the cached mtime so an overwrite re-imports.
+- `get_tool(name)` → the registered `FunctionTool` (or `None` if
+  unknown/disabled), so it can be executed by name via `POST /tools/{name}/call`
+  (doc 05). The loader keeps a `_tools` name→object map maintained in
+  `commit`/`unload`/`disable`.
 
 ## Signed tools (`plugins/signing.py`)
 
