@@ -17,7 +17,13 @@ from typing import List, Optional, Tuple
 
 from dotenv import dotenv_values
 
-from agentic_framework.utils import global_variables
+# Optional: the agentic framework is only needed so framework-authored tool
+# modules can read the server's env via ``global_variables.env``. The server
+# core never reads it, so this is a soft dependency — absence is fine.
+try:
+    from agentic_framework.utils import global_variables
+except Exception:  # pragma: no cover - framework not installed
+    global_variables = None
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
@@ -102,12 +108,14 @@ def merge_env(os_env, fallbacks: dict) -> dict:
 
 
 def load_environment(base_dir: Path) -> dict:
-    """Build the process env and alias it onto ``global_variables.env`` so the
-    framework and tool modules read the same configuration."""
+    """Build the process env. When the (optional) agentic framework is present,
+    alias the result onto ``global_variables.env`` so framework-authored tool
+    modules read the same configuration. The server core does not depend on it."""
     env_path = base_dir / "config" / ".env"
     fallbacks = dotenv_values(str(env_path)) if env_path.exists() else {}
     env = merge_env(os.environ, fallbacks)
-    global_variables.env = env
+    if global_variables is not None:
+        global_variables.env = env
     return env
 
 
