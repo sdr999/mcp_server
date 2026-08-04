@@ -39,6 +39,7 @@ async def _status(request):
     return JSONResponse({
         "ready": bool(getattr(st, "ready", False)),
         "auth": st.auth_type,
+        "transport": getattr(st, "mcp_transport", "http"),
         "source": "local",
         "stats": st.loader.stats(),
     })

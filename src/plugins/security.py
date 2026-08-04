@@ -50,14 +50,16 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
     configurable policy via :func:`enforce`, so the middleware does not touch
     them — that's what makes per-route auth configurable."""
 
-    def __init__(self, app, header: str, value: str, exempt=EXEMPT_PATHS):
+    def __init__(self, app, header: str, value: str, protected_prefixes=("/sse", "/messages")):
         super().__init__(app)
         self._header = header.lower()
         self._value = value
+        # The MCP protocol path(s) depend on the transport: /sse + /messages for
+        # SSE, /mcp for streamable HTTP. build_app passes the right ones.
+        self._protected = tuple(protected_prefixes)
 
     async def dispatch(self, request, call_next):
-        path = request.url.path
-        if path.startswith("/sse") or path.startswith("/messages"):
+        if request.url.path.startswith(self._protected):
             provided = request.headers.get(self._header, "")
             if not hmac.compare_digest(provided, self._value):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)

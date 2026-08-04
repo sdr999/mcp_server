@@ -87,9 +87,19 @@ def build_app(ctx):
         loader_lock=loader_lock,
     )
 
-    app = mcp.http_app(transport="sse")
+    # MCP protocol transport. "http"/"streamable-http" → a single /mcp endpoint;
+    # "sse" → the legacy /sse + /messages pair. stateless_http applies to the
+    # streamable-HTTP transport only.
+    transport = ctx.mcp_transport
+    if transport == "sse":
+        app = mcp.http_app(transport="sse")
+        protocol_prefixes = ("/sse", "/messages")
+    else:
+        app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
+        protocol_prefixes = ("/mcp",)
     if ctx.auth_type == "api_key":
-        app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value)
+        app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
+                           protected_prefixes=protocol_prefixes)
     for route in feature_routes():
         app.router.routes.append(route)
 
@@ -110,6 +120,7 @@ def build_app(ctx):
     # Federation registry
     app.state.upstreams = UpstreamRegistry(
         ctx.upstreams, timeout=ctx.upstream_timeout, allow_runtime=ctx.upstream_allow_runtime)
+    app.state.mcp_transport = transport
     register_metrics(loader, app)
 
     original_lifespan = app.router.lifespan_context

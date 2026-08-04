@@ -90,8 +90,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         sys.path.insert(0, package_root)
 
     app, _mcp = build_app(ctx)
-    log.info("Starting MCP tool server on %s:%s (auth=%s, tools_dir=%s)",
-              ctx.host, ctx.port, ctx.auth_type or "none", ctx.tools_dir)
+    _endpoint = "/mcp" if ctx.mcp_transport != "sse" else "/sse + /messages"
+    log.info("Starting MCP tool server on %s:%s (transport=%s [%s], auth=%s, tools_dir=%s)",
+              ctx.host, ctx.port, ctx.mcp_transport, _endpoint, ctx.auth_type or "none", ctx.tools_dir)
     uvicorn.run(app, host=ctx.host, port=ctx.port, log_level="info")
 
 

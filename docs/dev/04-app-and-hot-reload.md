@@ -36,6 +36,31 @@ def build_app(ctx):
     ...
 ```
 
+## Choosing the MCP transport
+
+`MCP_TRANSPORT` selects how MCP clients speak to the server. The custom REST
+routes (`/status`, `/tools/{name}/call`, `/admin/*`, …) are plain HTTP and exist
+regardless — only the *protocol* endpoint changes.
+
+```python
+transport = ctx.mcp_transport
+if transport == "sse":
+    app = mcp.http_app(transport="sse")              # legacy: /sse + /messages
+    protocol_prefixes = ("/sse", "/messages")
+else:
+    app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)   # /mcp
+    protocol_prefixes = ("/mcp",)
+```
+
+| `MCP_TRANSPORT` | Endpoint(s) | When |
+|-----------------|-------------|------|
+| `http` (default) | `/mcp` (Streamable HTTP) | current MCP standard; single endpoint, proxy/LB-friendly, `MCP_STATELESS_HTTP=true` for horizontal scaling |
+| `sse` | `/sse` + `/messages` | legacy clients that require SSE (deprecated in the MCP spec) |
+
+`protocol_prefixes` is what the api-key middleware guards (doc 02), so the right
+endpoint is protected for whichever transport is active. `/status` reports the
+live `transport`.
+
 ## The lifespan: readiness split + background worker
 
 FastMCP's `http_app` already has a lifespan (its session manager). We **wrap**
