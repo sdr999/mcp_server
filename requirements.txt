@@ -6,3 +6,10 @@ fastmcp>=3.4
 watchdog>=3.0
 python-dotenv>=1.0
 starlette>=0.35
+
+# --- Optional ---
+# The agentic framework is NOT required by src/main.py (the plugin server). It is
+# imported softly and only used to share env with framework-authored tool modules.
+# Install the local wheels only if your tools need it:
+#   pip install lib/agentic_framework-1.0.0-py3-none-any.whl lib/agentic_adapters-1.0.0-py3-none-any.whl
+# (The Azure-backed src/multiple_mcp_main.py DOES require them, plus azure-storage-file-share.)

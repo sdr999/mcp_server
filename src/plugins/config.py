@@ -17,7 +17,13 @@ from typing import List, Optional, Tuple
 
 from dotenv import dotenv_values
 
-from agentic_framework.utils import global_variables
+# Optional: the agentic framework is only needed so framework-authored tool
+# modules can read the server's env via ``global_variables.env``. The server
+# core never reads it, so this is a soft dependency — absence is fine.
+try:
+    from agentic_framework.utils import global_variables
+except Exception:  # pragma: no cover - framework not installed
+    global_variables = None
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
@@ -62,6 +68,10 @@ class AppContext:
     onboard_audit_log: Optional[Path] = None
     onboard_require_explicit: bool = True
     onboard_max_tools: int = 0
+    # MCP protocol transport: "http" (streamable HTTP, single /mcp endpoint) or
+    # "sse" (legacy, /sse + /messages). streamable HTTP is the current standard.
+    mcp_transport: str = "http"
+    mcp_stateless: bool = False     # streamable HTTP only: no per-session state
     # Per-route auth policies: "none" | "mcp" | "admin"
     read_auth: str = "mcp"          # /status, /tools
     metrics_auth: str = "mcp"       # /metrics
@@ -98,12 +108,14 @@ def merge_env(os_env, fallbacks: dict) -> dict:
 
 
 def load_environment(base_dir: Path) -> dict:
-    """Build the process env and alias it onto ``global_variables.env`` so the
-    framework and tool modules read the same configuration."""
+    """Build the process env. When the (optional) agentic framework is present,
+    alias the result onto ``global_variables.env`` so framework-authored tool
+    modules read the same configuration. The server core does not depend on it."""
     env_path = base_dir / "config" / ".env"
     fallbacks = dotenv_values(str(env_path)) if env_path.exists() else {}
     env = merge_env(os.environ, fallbacks)
-    global_variables.env = env
+    if global_variables is not None:
+        global_variables.env = env
     return env
 
 
@@ -215,6 +227,8 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         onboard_audit_log=(base_dir / (env.get("MCP_TOOL_AUDIT_LOG") or "logs/onboarding_audit.log")),
         onboard_require_explicit=env.get("MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT", "true").lower() == "true",
         onboard_max_tools=int(env.get("MCP_TOOL_ONBOARD_MAX_TOOLS", "0")),
+        mcp_transport=(env.get("MCP_TRANSPORT") or "http").lower(),
+        mcp_stateless=env.get("MCP_STATELESS_HTTP", "false").lower() == "true",
         read_auth=_policy(env, "MCP_READ_AUTH"),
         metrics_auth=_policy(env, "MCP_METRICS_AUTH"),
         tool_call_auth=_policy(env, "MCP_TOOL_CALL_AUTH"),
@@ -227,6 +241,8 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
 
 def validate_context(ctx: AppContext) -> None:
     """Fail fast on missing required configuration."""
+    if ctx.mcp_transport not in ("http", "streamable-http", "sse"):
+        raise RuntimeError(f"MCP_TRANSPORT must be http|streamable-http|sse, got {ctx.mcp_transport!r}")
     if ctx.auth_type not in ("", "none", "api_key", "bearer_jwt"):
         raise RuntimeError(f"MCP_AUTH_TYPE must be none|api_key|bearer_jwt, got {ctx.auth_type!r}")
     if ctx.auth_type == "bearer_jwt" and not ctx.jwks_url:

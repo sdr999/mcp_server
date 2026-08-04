@@ -65,3 +65,25 @@ def test_validate_context_requires_jwks_for_bearer_jwt(tmp_path):
     )
     with pytest.raises(RuntimeError):
         cfg.validate_context(ctx)
+
+
+def test_transport_defaults_to_http_and_validates(tmp_path, monkeypatch):
+    monkeypatch.delenv("MCP_TRANSPORT", raising=False)
+    ctx = cfg.build_context([], base_dir=tmp_path)
+    assert ctx.mcp_transport == "http"
+    cfg.validate_context(ctx)                       # no raise
+
+    monkeypatch.setenv("MCP_TRANSPORT", "sse")
+    assert cfg.build_context([], base_dir=tmp_path).mcp_transport == "sse"
+
+    monkeypatch.setenv("MCP_TRANSPORT", "bogus")
+    with pytest.raises(RuntimeError):
+        cfg.validate_context(cfg.build_context([], base_dir=tmp_path))
+
+
+def test_load_environment_works_without_the_optional_framework(monkeypatch, tmp_path):
+    # The agentic framework is an optional soft dependency; load_environment must
+    # not require it (the server core never reads global_variables.env).
+    monkeypatch.setattr(cfg, "global_variables", None)
+    env = cfg.load_environment(tmp_path)
+    assert isinstance(env, dict)

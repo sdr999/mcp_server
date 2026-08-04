@@ -115,7 +115,8 @@ curl -X POST $BASE/tools/weather/call \
 ```
 
 `404` = unknown/disabled, `400` = bad arguments, `200` with `is_error:true` = the
-tool raised. (Tools are also callable by any MCP client over `/sse`.)
+tool raised. (Tools are also callable by any MCP client over the protocol
+endpoint — `/mcp` by default; see step 6.)
 
 ### 4. Onboard a tool over HTTP (with dependencies)
 
@@ -156,7 +157,30 @@ curl -X POST $BASE/mcp/upstreams/billing/tools/invoice_lookup/call \
 curl "${ADM[@]}" -X POST $BASE/admin/mcp/upstreams -d '{"name":"search","url":"http://search:8000/sse"}'
 ```
 
-### 6. Secure it & configure per-route auth
+### 6. Choose the MCP transport
+
+The server speaks MCP over **Streamable HTTP** by default (single `/mcp`
+endpoint); switch to legacy SSE if a client needs it. The REST endpoints
+(`/tools/{name}/call`, `/status`, …) are always plain HTTP regardless.
+
+```bash
+python main.py                              # default: Streamable HTTP at /mcp
+MCP_TRANSPORT=sse python main.py            # legacy SSE at /sse + /messages
+MCP_TRANSPORT=http MCP_STATELESS_HTTP=true python main.py   # stateless, for scaling
+```
+
+Connect with an MCP client (FastMCP shown):
+
+```python
+from fastmcp import Client
+async with Client("http://localhost:8000/mcp") as c:   # or ".../sse" in sse mode
+    print([t.name for t in await c.list_tools()])
+    await c.call_tool("weather", {"city": "Paris"})
+```
+
+`curl $BASE/status` reports the active `"transport"`.
+
+### 7. Secure it & configure per-route auth
 
 ```bash
 # API key (simplest)
@@ -175,7 +199,7 @@ MCP_TOOL_CALL_AUTH=admin     # only operators may execute tools over HTTP
 Full auth details: [MCP_AUTH_GUIDE.md](MCP_AUTH_GUIDE.md) and
 [dev/02](dev/02-security-auth.md).
 
-### 7. Harden with signed tools / sandbox
+### 8. Harden with signed tools / sandbox
 
 ```bash
 # generate a signed manifest, then require it
@@ -186,7 +210,7 @@ MCP_REQUIRE_SIGNED_TOOLS=true MCP_TOOL_SIGNING_KEY=$KEY python main.py
 MCP_SANDBOX_TOOLS=true MCP_SANDBOX_TIMEOUT_SEC=30 python main.py
 ```
 
-### 8. Observe & administer
+### 9. Observe & administer
 
 ```bash
 curl $BASE/metrics                                        # Prometheus text
@@ -195,7 +219,7 @@ curl "${ADM[@]}" -X POST $BASE/admin/tool/weather/disable # unregister across re
 curl "${ADM[@]}" -X POST $BASE/admin/tool/weather/enable
 ```
 
-### 9. CI: validate a tools directory
+### 10. CI: validate a tools directory
 
 ```bash
 python main.py --validate ./tools     # exit 0 if every module yields a tool, 1 otherwise

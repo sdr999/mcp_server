@@ -92,6 +92,19 @@ runs through the same metrics/sandbox wrapper as a protocol `tools/call`. A
 comes back `200` with `is_error: true` (MCP treats tool failures as in-band
 results).
 
+## MCP transport
+
+`MCP_TRANSPORT` selects the MCP protocol transport (the REST endpoints above are
+plain HTTP either way):
+
+| Value | Endpoint | Notes |
+|-------|----------|-------|
+| `http` (default) | `/mcp` | Streamable HTTP — the current MCP standard; single endpoint, proxy/LB-friendly. `MCP_STATELESS_HTTP=true` for stateless horizontal scaling. |
+| `sse` | `/sse` + `/messages` | Legacy Server-Sent Events, for older clients (deprecated in the MCP spec). |
+
+`GET /status` reports the active `"transport"`. See
+[dev/04](dev/04-app-and-hot-reload.md) for how it's wired.
+
 ## CLI
 
 ```bash

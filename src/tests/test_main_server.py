@@ -428,3 +428,36 @@ def test_read_auth_none_opens_status_in_api_key_mode(tmp_path):
     with TestClient(app) as client:
         _wait_ready(client)
         assert client.get("/status").status_code == 200        # opened by policy
+
+
+# ---- configurable MCP transport --------------------------------------------
+def _paths(app):
+    return [getattr(r, "path", None) for r in app.router.routes]
+
+
+def test_default_transport_is_http_and_mounts_mcp(tmp_path):
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))   # default http
+    assert "/mcp" in _paths(app)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.get("/status").json()["transport"] == "http"
+
+
+def test_sse_transport_mounts_sse_endpoints(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.mcp_transport = "sse"
+    app, _mcp = build_app(ctx)
+    assert "/sse" in _paths(app)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.get("/status").json()["transport"] == "sse"
+
+
+def test_api_key_guards_the_mcp_endpoint_in_http_mode(tmp_path):
+    ctx = _make_ctx(_tools_dir(tmp_path))
+    ctx.auth_type = "api_key"; ctx.api_key_header = "x-api-key"; ctx.api_key_value = "k"
+    app, _mcp = build_app(ctx)
+    with TestClient(app) as client:
+        _wait_ready(client)
+        assert client.post("/mcp", json={}).status_code == 401            # no key → middleware blocks
+        assert client.post("/mcp", json={}, headers={"x-api-key": "k"}).status_code != 401
