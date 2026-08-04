@@ -8,6 +8,10 @@ store): tools always live in a local directory, and a filesystem watcher
 gives hot-reload. Everything else — auth, admin API, signed tools, metrics,
 sandboxing, fault isolation — is preserved.
 
+> **Developer deep-dive:** for a per-module walkthrough of *how it works
+> inside* — with code snippets — see the developer guide in
+> **[docs/dev/](dev/README.md)**.
+
 Each feature is a separate module under `src/plugins/` instead of one large
 file, so any single concern (auth, loading, signing, routing, …) can be read,
 tested, and changed in isolation:
