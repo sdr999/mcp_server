@@ -128,3 +128,56 @@ def test_unknown_scope_type_does_not_match_everyone():
         assert res.decision != "ALLOW_GRANT"
 
     asyncio.run(_run())
+
+
+# --------------------------------------------------------------------------
+# H2 — grant match_type vocabulary: name | tag | owner | all (+ legacy aliases).
+# --------------------------------------------------------------------------
+
+def test_grant_match_types_name_tag_owner_all():
+    async def _run():
+        store = MemoryTenancyStore()
+        # A tool owned by acme, tagged 'finance', visibility private.
+        await store.set_tool_ownership(
+            "billing", owner_org="acme", visibility="private", tags=["finance"]
+        )
+        ev = PolicyEvaluator(store=store, cache=DecisionCache(ttl_sec=0.0))
+        p = _member_principal(org="acme")
+
+        # 'tag' match — previously dead code (evaluator only knew exact/prefix/glob).
+        await store.add_tool_grant("org", "acme", "allow", "tag", "finance")
+        assert (await ev.evaluate(p, "tool:call", "billing")).decision == "ALLOW_GRANT"
+
+        # 'owner' match on a fresh store.
+        store2 = MemoryTenancyStore()
+        await store2.set_tool_ownership("billing", owner_org="acme", visibility="private")
+        await store2.add_tool_grant("org", "acme", "allow", "owner", "acme")
+        ev2 = PolicyEvaluator(store=store2, cache=DecisionCache(ttl_sec=0.0))
+        assert (await ev2.evaluate(p, "tool:call", "billing")).decision == "ALLOW_GRANT"
+
+        # 'name' with a glob, and 'all'.
+        store3 = MemoryTenancyStore()
+        await store3.set_tool_ownership("github_x", owner_org="acme", visibility="private")
+        await store3.add_tool_grant("org", "acme", "allow", "name", "github_*")
+        ev3 = PolicyEvaluator(store=store3, cache=DecisionCache(ttl_sec=0.0))
+        assert (await ev3.evaluate(p, "tool:call", "github_x")).decision == "ALLOW_GRANT"
+
+        store4 = MemoryTenancyStore()
+        await store4.set_tool_ownership("anything", owner_org="acme", visibility="private")
+        await store4.add_tool_grant("org", "acme", "allow", "all", "*")
+        ev4 = PolicyEvaluator(store=store4, cache=DecisionCache(ttl_sec=0.0))
+        assert (await ev4.evaluate(p, "tool:call", "anything")).decision == "ALLOW_GRANT"
+
+    asyncio.run(_run())
+
+
+def test_legacy_pattern_aliases_still_work():
+    async def _run():
+        store = MemoryTenancyStore()
+        await store.set_tool_ownership("github_x", owner_org="acme", visibility="private")
+        await store.add_tool_grant("org", "acme", "allow", "prefix", "github_*")
+        ev = PolicyEvaluator(store=store, cache=DecisionCache(ttl_sec=0.0))
+        p = _member_principal(org="acme")
+        assert (await ev.evaluate(p, "tool:call", "github_x")).decision == "ALLOW_GRANT"
+
+    asyncio.run(_run())

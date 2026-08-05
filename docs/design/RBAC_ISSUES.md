@@ -21,9 +21,12 @@ fixed. Severity: 🔴 Critical · 🟠 High · 🟡 Medium.
 - [ ] **H1 — Store not authoritative for roles/permissions.** Roles from JWT claims,
   perms from a hardcoded map in `identity.py`; store `roles` table unused on hot path
   → two sources of truth. (§4, §5, §20.1) _Partially addressed by C1; reconcile the claim fallback._
-- [ ] **H2 — Grant `match_type` mismatch → tag/all grants are dead code.** Model uses
-  `{name,tag,owner,all}`; evaluator handles `{exact,prefix,glob}`. `scope_type` uses
-  `"user"` vs model `"principal"`. (§6, §17.6) — `rbac/evaluator.py`, `tenancy/models.py`
+- [x] **H2 — Grant `match_type` mismatch → tag/all grants are dead code.** Model uses
+  `{name,tag,owner,all}`; evaluator handled only `{exact,prefix,glob}`; `scope_type`
+  used `"user"` vs model `"principal"`. (§6, §17.6) — `rbac/evaluator.py`, `tenancy/models.py`
+  _Fix: `_match_grant` now supports `name` (glob-aware) / `tag` / `owner` / `all` and keeps
+  the pattern aliases for back-compat; ownership is resolved once and reused; `scope_type`
+  alias handled in `_grant_applies_to` (C2). Legacy `verify`/pattern grants still work._
 - [ ] **H3 — Default role `developer` for any signed token** (incl. `tool:onboard`).
   Should floor at `agent_consumer`. (§6, §17.4) — `identity.py:build_principal_from_claims`
 - [ ] **H4 — No shadow mode.** No `MCP_RBAC_MODE=shadow|enforce`; enforcement is

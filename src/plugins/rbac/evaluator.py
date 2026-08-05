@@ -61,13 +61,40 @@ class PolicyEvaluator:
             return grant.scope_id in principal.roles
         return False
 
-    def _match_grant(self, match_type: str, match_value: str, resource: str) -> bool:
-        if match_type == "exact":
-            return match_value == resource
-        elif match_type == "prefix":
-            return resource.startswith(match_value)
-        elif match_type == "glob":
-            return fnmatch.fnmatch(resource, match_value)
+    def _match_grant(self, grant, resource: str, ownership=None) -> bool:
+        """Whether a grant's match clause selects ``resource``.
+
+        The data-model vocabulary (§6, §8) is the ``match_type`` dimension:
+          - ``all``   → matches any resource.
+          - ``name``  → matches the tool name; ``match_value`` may contain glob
+                        wildcards (``* ? []``), else it is an exact match.
+          - ``tag``   → matches if the tool's ownership carries that tag.
+          - ``owner`` → matches if the tool's owning org equals ``match_value``.
+        Legacy pattern aliases (``exact`` | ``prefix`` | ``glob``) are still
+        accepted and treated as name-pattern matches for backward compatibility.
+        """
+        mt = (grant.match_type or "").lower()
+        mv = grant.match_value or ""
+
+        if mt == "all":
+            return True
+        if mt == "name":
+            if any(ch in mv for ch in "*?["):
+                return fnmatch.fnmatch(resource, mv)
+            return resource == mv
+        if mt == "tag":
+            return bool(ownership and mv in (ownership.tags or []))
+        if mt == "owner":
+            return bool(ownership and ownership.owner_org == mv)
+
+        # --- backward-compatible pattern aliases (name-pattern semantics) ---
+        if mt == "exact":
+            return resource == mv
+        if mt == "prefix":
+            base = mv[:-1] if mv.endswith("*") else mv
+            return resource.startswith(base)
+        if mt == "glob":
+            return fnmatch.fnmatch(resource, mv)
         return False
 
     async def evaluate(
@@ -95,6 +122,12 @@ class PolicyEvaluator:
             self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
             return res
 
+        # Resolve tool ownership once up front — grant matching (tag/owner) and the
+        # tenant-boundary check below both need it, and it saves a second lookup.
+        ownership = None
+        if resource and action in ("tool:call", "tool:list", "tool:manage"):
+            ownership = await self.store.get_tool_ownership(resource)
+
         # 2. Check Explicit Tool Grants.
         # Precedence is DENY-OVERRIDE (§17.13): a matching deny at ANY scope wins
         # over any allow, regardless of order or specificity. So we must scan ALL
@@ -104,7 +137,7 @@ class PolicyEvaluator:
         for g in grants:
             if not self._grant_applies_to(g, principal):
                 continue
-            if not self._match_grant(g.match_type, g.match_value, resource):
+            if not self._match_grant(g, resource, ownership):
                 continue
             if g.effect == "deny":
                 res = EvaluationResult(
@@ -140,9 +173,9 @@ class PolicyEvaluator:
             self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
             return res
 
-        # 4. Tenant & Visibility Boundaries Check (for tools)
+        # 4. Tenant & Visibility Boundaries Check (for tools). ``ownership`` was
+        # resolved once above.
         if action in ("tool:call", "tool:list", "tool:manage") and resource:
-            ownership = await self.store.get_tool_ownership(resource)
             if ownership:
                 if ownership.visibility == "public":
                     res = EvaluationResult(

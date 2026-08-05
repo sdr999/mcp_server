@@ -348,7 +348,10 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                     principal.issuer, principal.subject, active_org, active_ws
                 )
             except Exception as exc:
-                log.debug("resolve_principal failed: %s", exc)
+                # Fail-closed, security-relevant: log at WARNING so it lands in the
+                # rotating file handler (INFO level) rather than being swallowed at
+                # DEBUG. The caller keeps its pre-overlay (claim-derived) principal.
+                log.warning("tenancy resolve_principal failed for %s: %s", principal.principal_id[:12], exc)
             if resolved is not None:
                 resolved.kind = principal.kind
                 resolved.metadata = dict(principal.metadata or {})
