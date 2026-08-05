@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from plugins.identity import Principal, derive_principal_id
+from plugins.identity import Principal, derive_principal_id, select_tenant_context
 from .base import TenancyStore
 from .models import AuditEntry, Membership, Organization, Role, ToolGrant, ToolOwnership, Workspace
 
@@ -162,8 +162,8 @@ class SqliteTenancyStore(TenancyStore):
 
                 memberships = [Membership(principal_id=pid, org_id=r["org_id"], role=r["role"], workspace_id=r["workspace_id"]) for r in rows]
 
-                org_id = active_org or (memberships[0].org_id if memberships else "default")
-                workspace_id = active_ws or (memberships[0].workspace_id if memberships else "default")
+                # Header is only honored for orgs the caller is actually a member of.
+                org_id, workspace_id = select_tenant_context(memberships, active_org, active_ws)
 
                 roles: List[str] = []
                 permissions: Set[str] = {"tool:list", "tool:call", "upstream:read", "upstream:call"}

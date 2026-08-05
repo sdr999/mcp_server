@@ -45,6 +45,43 @@ def derive_principal_id(issuer: str, subject: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def select_tenant_context(
+    memberships,
+    active_org: Optional[str],
+    active_ws: Optional[str] = None,
+    default_org: str = "default",
+    default_ws: str = "default",
+):
+    """Resolve the caller's active (org, workspace) from their store memberships.
+
+    A tenant header (``X-Tenant-Id`` / ``X-Workspace-Id``) is a *request*, not a
+    fact: it is honored **only** when the caller actually holds a membership in
+    that org (the §9 / §17.8 anti-spoofing rule). A header naming a non-member org
+    is ignored, never trusted. Callers with no memberships collapse to the default
+    (public) org, so an unauthenticated/first-seen principal can never assert
+    another tenant's context. Returns ``(org_id, workspace_id)``.
+    """
+    member_orgs = [m.org_id for m in memberships]
+    if active_org and active_org in member_orgs:
+        org_id = active_org
+    elif memberships:
+        org_id = memberships[0].org_id
+    else:
+        org_id = default_org
+
+    # Workspace is honored only within the resolved org's memberships; otherwise
+    # fall back to a membership workspace or the default. (Org is the isolation
+    # boundary; workspace is a sub-partition.)
+    org_workspaces = [m.workspace_id for m in memberships if m.org_id == org_id and m.workspace_id]
+    if active_ws and active_ws in org_workspaces:
+        workspace_id = active_ws
+    elif org_workspaces:
+        workspace_id = org_workspaces[0]
+    else:
+        workspace_id = (active_ws or default_ws) if not member_orgs else default_ws
+    return org_id, workspace_id
+
+
 @dataclass
 class Principal:
     principal_id: str
@@ -162,6 +199,13 @@ def create_anonymous_principal(org_id: str = "default", workspace_id: str = "def
     )
 
 
+SUPERADMIN_PERMISSIONS = {
+    "tool:list", "tool:call", "tool:onboard", "tool:manage",
+    "upstream:read", "upstream:call", "upstream:manage",
+    "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin",
+}
+
+
 def create_superadmin_principal(org_id: str = "default", workspace_id: str = "default") -> Principal:
     pid = derive_principal_id("local", "admin-token")
     return Principal(
@@ -172,11 +216,7 @@ def create_superadmin_principal(org_id: str = "default", workspace_id: str = "de
         org_id=org_id,
         workspace_id=workspace_id,
         roles=["platform_superadmin"],
-        permissions={
-            "tool:list", "tool:call", "tool:onboard", "tool:manage",
-            "upstream:read", "upstream:call", "upstream:manage",
-            "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin",
-        },
+        permissions=set(SUPERADMIN_PERMISSIONS),
     )
 
 
@@ -237,6 +277,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         superadmin_email = getattr(app_state, "superadmin_email", "") if app_state else ""
 
         principal: Optional[Principal] = None
+        is_admin_token = False
 
         # 1. Check Authorization header (accept Bearer <token> or raw <token>)
         authz = request.headers.get("authorization", "").strip()
@@ -244,6 +285,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
 
         if admin_token and bearer_token and hmac.compare_digest(bearer_token, admin_token):
             principal = create_superadmin_principal(org_id=active_org, workspace_id=active_ws)
+            is_admin_token = True  # bootstrap superadmin; not subject to store overlay
 
         # 2. Check LRU Cache / Verify JWT Token if present
         if principal is None and bearer_token:
@@ -292,14 +334,38 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                     )
                     token_cache.set(bearer_token, principal, exp_timestamp=exp)
 
-            if principal:
-                principal.org_id = active_org
-                principal.workspace_id = active_ws
+        # 3. Store-authoritative overlay (§4 hybrid, §9/§17.8 anti-spoofing).
+        # When RBAC is enabled, org/workspace/roles/permissions come from the
+        # tenancy store keyed on the *verified* (issuer, subject) — never from the
+        # raw tenant header. resolve_principal() validates the requested org
+        # against the caller's memberships. The admin bootstrap token is exempt.
+        rbac_enabled = getattr(app_state, "rbac_enabled", False) if app_state else False
+        store = getattr(app_state, "tenancy_store", None) if app_state else None
+        if principal is not None and not is_admin_token and rbac_enabled and store is not None:
+            resolved = None
+            try:
+                resolved = await store.resolve_principal(
+                    principal.issuer, principal.subject, active_org, active_ws
+                )
+            except Exception as exc:
+                log.debug("resolve_principal failed: %s", exc)
+            if resolved is not None:
+                resolved.kind = principal.kind
+                resolved.metadata = dict(principal.metadata or {})
+                # Bootstrap: the configured platform-admin email stays superadmin
+                # even before an explicit store binding exists.
+                email = (principal.metadata or {}).get("email", "")
+                if superadmin_email and email and email.lower() == superadmin_email.lower():
+                    if "platform_superadmin" not in resolved.roles:
+                        resolved.roles.append("platform_superadmin")
+                    resolved.permissions = set(resolved.permissions) | SUPERADMIN_PERMISSIONS
+                principal = resolved
 
-
-        # 3. Fallback to Anonymous Principal if unassigned
+        # 4. Fallback to Anonymous Principal if unassigned. Anonymous callers hold
+        # no memberships, so they are pinned to the default (public) org and can
+        # never assert another tenant's context via a header.
         if principal is None:
-            principal = create_anonymous_principal(org_id=active_org, workspace_id=active_ws)
+            principal = create_anonymous_principal(org_id="default", workspace_id="default")
 
 
         request.state.principal = principal

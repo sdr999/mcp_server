@@ -43,6 +43,24 @@ class PolicyEvaluator:
         self.store = store
         self.cache = cache or DecisionCache()
 
+    def _grant_applies_to(self, grant, principal: Principal) -> bool:
+        """Whether a grant's scope targets this principal.
+
+        Scope types (aligned with the data model): principal | org | workspace |
+        role. ``user`` is accepted as an alias for ``principal``. An unrecognized
+        scope_type does NOT apply — it must never fall through and match everyone.
+        """
+        st = grant.scope_type
+        if st in ("principal", "user"):
+            return grant.scope_id == principal.principal_id
+        if st == "org":
+            return grant.scope_id == principal.org_id
+        if st == "workspace":
+            return grant.scope_id == principal.workspace_id
+        if st == "role":
+            return grant.scope_id in principal.roles
+        return False
+
     def _match_grant(self, match_type: str, match_value: str, resource: str) -> bool:
         if match_type == "exact":
             return match_value == resource
@@ -77,35 +95,38 @@ class PolicyEvaluator:
             self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
             return res
 
-        # 2. Check Explicit Tool Grants (Deny Grants first, then Allow Grants)
+        # 2. Check Explicit Tool Grants.
+        # Precedence is DENY-OVERRIDE (§17.13): a matching deny at ANY scope wins
+        # over any allow, regardless of order or specificity. So we must scan ALL
+        # matching grants, not return on the first one.
         grants = await self.store.list_tool_grants()
+        matched_allow = False
         for g in grants:
-            if g.scope_type == "user" and g.scope_id != principal.principal_id:
+            if not self._grant_applies_to(g, principal):
                 continue
-            if g.scope_type == "org" and g.scope_id != principal.org_id:
+            if not self._match_grant(g.match_type, g.match_value, resource):
                 continue
-            if g.scope_type == "workspace" and g.scope_id != principal.workspace_id:
-                continue
+            if g.effect == "deny":
+                res = EvaluationResult(
+                    allowed=False,
+                    decision="DENY_EXPLICIT",
+                    reason=f"Explicit deny grant matched for resource {resource}",
+                    eval_time_ms=round((time.perf_counter() - start_t) * 1000, 3),
+                )
+                self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
+                return res
+            elif g.effect == "allow":
+                matched_allow = True
 
-            if self._match_grant(g.match_type, g.match_value, resource):
-                if g.effect == "deny":
-                    res = EvaluationResult(
-                        allowed=False,
-                        decision="DENY_EXPLICIT",
-                        reason=f"Explicit deny grant matched for resource {resource}",
-                        eval_time_ms=round((time.perf_counter() - start_t) * 1000, 3),
-                    )
-                    self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
-                    return res
-                elif g.effect == "allow":
-                    res = EvaluationResult(
-                        allowed=True,
-                        decision="ALLOW_GRANT",
-                        reason=f"Explicit allow grant matched for resource {resource}",
-                        eval_time_ms=round((time.perf_counter() - start_t) * 1000, 3),
-                    )
-                    self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
-                    return res
+        if matched_allow:
+            res = EvaluationResult(
+                allowed=True,
+                decision="ALLOW_GRANT",
+                reason=f"Explicit allow grant matched for resource {resource} (no deny overrode it)",
+                eval_time_ms=round((time.perf_counter() - start_t) * 1000, 3),
+            )
+            self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
+            return res
 
 
         # 3. Role Permissions Check

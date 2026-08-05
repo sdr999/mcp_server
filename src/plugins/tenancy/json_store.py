@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from plugins.identity import Principal, derive_principal_id
+from plugins.identity import Principal, derive_principal_id, select_tenant_context
 from .base import TenancyStore
 from .models import AuditEntry, Membership, Organization, Role, ToolGrant, ToolOwnership, Workspace
 
@@ -80,8 +80,8 @@ class JsonTenancyStore(TenancyStore):
             pid = derive_principal_id(issuer, subject)
             user_memberships = [m for m in self._memberships if m.principal_id == pid]
 
-            org_id = active_org or (user_memberships[0].org_id if user_memberships else "default")
-            workspace_id = active_ws or (user_memberships[0].workspace_id if user_memberships else "default")
+            # Header is only honored for orgs the caller is actually a member of.
+            org_id, workspace_id = select_tenant_context(user_memberships, active_org, active_ws)
 
             roles: List[str] = []
             permissions: Set[str] = {"tool:list", "tool:call", "upstream:read", "upstream:call"}
