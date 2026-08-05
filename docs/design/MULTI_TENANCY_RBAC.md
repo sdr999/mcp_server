@@ -1,7 +1,14 @@
 # Design: Multi-Tenancy & RBAC for the MCP Tool Server
 
-Status: **Proposed** · Branch: `org` · Author: architecture spike · Scope of
-this doc: design only (no implementation)
+Status: **Proposed (revised after SDE5 review — see §17–§19)** · Branch: `org`
+· Scope of this doc: design only (no implementation)
+
+> **Review note:** §§1–16 are the original proposal. §17 (corner cases), §18
+> (cross-cutting concerns), and §19 (safe rollout) are the review layer and, where
+> they conflict with an earlier section, **they win** — the most important being:
+> the principal key is `(issuer, subject)` not `subject` (§17.1); onboarded tool
+> names are **tenant-qualified** to survive the flat FastMCP registry (§17.2);
+> and SQLite is single-instance so multi-replica deployments need Postgres (§18.1).
 
 ## Decisions baked into this design
 
@@ -119,6 +126,13 @@ Tools resolve against a **shared catalog + per-tenant overlay**:
 `/tools` (catalog) and `/tools/{name}/call` filter by this decision; a principal
 never sees or calls a tool outside their grants.
 
+> **Name collision is a first-class problem, not a footnote (see §17.2).** The
+> FastMCP registry is a **single global namespace** — two orgs cannot both
+> register a tool literally named `weather`. Onboarded tools are therefore
+> stored under a **tenant-qualified name** (`org__[workspace__]name`); the caller
+> uses the short name and the router resolves it within their active tenant.
+> Platform (`src/tools/`) tools keep their bare names and are `public`.
+
 ## 7. Enforcement architecture
 
 New plugin modules (mirroring the existing single-purpose layout):
@@ -151,22 +165,39 @@ existing single-tenant deployments.
 ## 8. Data model (SQLite)
 
 ```sql
-organizations(org_id TEXT PK, name TEXT, created_at, settings_json TEXT)
-workspaces(workspace_id TEXT PK, org_id TEXT FK, name TEXT, created_at)
-principals(subject TEXT PK, display_name TEXT, disabled INT DEFAULT 0, created_at)
-memberships(subject TEXT, org_id TEXT, role TEXT, workspace_id TEXT NULL,
-            PRIMARY KEY(subject, org_id, workspace_id, role))
+schema_meta(version INTEGER)                                   -- migrations (§18.3)
+
+organizations(org_id TEXT PK, name TEXT, status TEXT DEFAULT 'active'  -- active|suspended|deleting
+              CHECK(status IN('active','suspended','deleting')), created_at, settings_json TEXT)
+workspaces(workspace_id TEXT PK, org_id TEXT FK, name TEXT, created_at,
+           UNIQUE(org_id, name))
+
+-- Principal key is (issuer, subject) — 'sub' is only unique per IdP (§17.1).
+principals(principal_id TEXT PK,                               -- e.g. sha256(issuer|subject)
+           issuer TEXT, subject TEXT, kind TEXT DEFAULT 'user' -- user|service|agent
+           , display_name TEXT, disabled INT DEFAULT 0, created_at,
+           UNIQUE(issuer, subject))
+
+memberships(principal_id TEXT, org_id TEXT, role TEXT, workspace_id TEXT NULL,
+            PRIMARY KEY(principal_id, org_id, workspace_id, role))
 roles(role TEXT PK, permissions_json TEXT)                     -- data-driven role→perms
-tool_ownership(tool_name TEXT PK, owner_org TEXT, owner_workspace TEXT NULL,
-               visibility TEXT CHECK(visibility IN('private','org','public')))
-tool_grants(id INTEGER PK, scope_type TEXT, scope_id TEXT, effect TEXT,
-            match_type TEXT, match_value TEXT, created_at)
-audit(id INTEGER PK, ts, actor_subject TEXT, org_id TEXT, action TEXT,
-      resource TEXT, result TEXT, detail TEXT)
+
+tool_ownership(tool_name TEXT PK,                              -- tenant-qualified name (§17.2)
+               owner_org TEXT, owner_workspace TEXT NULL, created_by TEXT,  -- principal_id
+               visibility TEXT CHECK(visibility IN('private','org','public')),
+               tags_json TEXT, trusted_tags_json TEXT)         -- who may grant by tag (§17.6)
+tool_grants(id INTEGER PK, scope_type TEXT, scope_id TEXT, effect TEXT,       -- allow|deny
+            match_type TEXT, match_value TEXT, created_at)      -- name|tag|owner|all
+upstream_ownership(upstream_name TEXT PK, owner_org TEXT, visibility TEXT)   -- §17.9
+
+audit(id INTEGER PK, ts, actor_principal TEXT, issuer TEXT, org_id TEXT,
+      action TEXT, resource TEXT, decision TEXT, detail TEXT)   -- log allows AND denies
 ```
 
-Single-file, embedded, no new dependency. A JSON-file backend is a drop-in
-alternative for tiny deployments; the store interface abstracts it.
+Single-file, embedded, no new dependency. **Caveat:** SQLite is single-writer /
+single-instance — a multi-replica deployment (e.g. stateless streamable-HTTP,
+doc "transport") needs Postgres. The store is an interface with SQLite and
+Postgres backends; a JSON-file backend suits single-tenant/dev (§18.1).
 
 ## 9. Security considerations
 
@@ -185,6 +216,17 @@ alternative for tiny deployments; the store interface abstracts it.
   matching grant → `403`.
 - **Secrets:** upstream/tenant secrets keep the existing redaction + `0600`
   storage discipline.
+- **Onboarding is effectively platform-power (§17.4).** Onboarding runs arbitrary
+  Python in the shared process, so a Developer who can `tool:onboard` can read
+  *any* tenant's data/secrets/files. Under logical multi-tenancy this means
+  `tool:onboard` must be treated as a **trusted, org-admin-level** capability in
+  multi-tenant deployments — not a routine Developer right. Default the Developer
+  onboarding grant **off** when `MCP_RBAC_ENABLED=true`.
+- **Existence disclosure (§17.7):** return **404**, not 403, for a tool the
+  caller may not see, so error codes don't confirm another tenant's tools exist.
+- **Inbound tenant headers:** `X-Tenant-Id`/`X-Workspace-Id` must be **stripped
+  at the trusted edge** and only accepted from the app itself; always
+  re-validated against membership regardless.
 
 ## 10. API surface changes
 
@@ -216,6 +258,12 @@ MCP_JWT_SUBJECT_CLAIM=sub        # hybrid identity mapping
 MCP_JWT_ORG_CLAIM=org            # optional JIT-provisioning seed
 MCP_JWT_ROLES_CLAIM=roles        # optional JIT-provisioning seed
 MCP_RBAC_JIT_PROVISION=false     # allow claim-seeded first-login binding
+MCP_RBAC_MODE=enforce            # shadow | enforce  (shadow = log decisions, don't block, §19)
+MCP_RBAC_CACHE_TTL_SEC=30        # principal/permission cache TTL (§18.2)
+MCP_TENANCY_DB_BACKEND=sqlite    # sqlite | postgres | json  (§18.1)
+MCP_DEFAULT_MULTI_ORG=deny       # >1 membership & no tenant header → deny | pick-newest (§17.8)
+# API keys become identities when RBAC is on: map named keys → principals
+MCP_API_KEYS_FILE=config/api_keys.json   # {"<key>": {"subject": "...", "org": "..."}} (§17.3)
 ```
 
 ## 12. Backward compatibility & migration
@@ -264,7 +312,123 @@ can be tenant-filtered at registration time as an interim measure.
 
 1. **`/mcp` enforcement** — FastMCP hook availability (spike, §13).
 2. **Quota model** — per-org rate/concurrency limits: needed in v1 or defer to
-   Phase 5?
+   Phase 5? (§18.4 argues *at least basic* quotas are v1.)
 3. **Custom roles** — ship the 4 built-ins only, or expose role CRUD in v1?
 4. **Cross-tenant tool sharing** — allow an org to publish a tool `public` to
    other orgs, or keep `public` = platform-only?
+5. **Onboarding in multi-tenant** — is `tool:onboard` allowed for tenant
+   Developers at all, given §17.4? (Recommend: admin-only until Phase 5.)
+
+---
+
+## 17. Corner cases & edge conditions (SDE5 review)
+
+Each item is a real gap in §§1–16; the fix is authoritative.
+
+### Identity
+- **17.1 `subject` is not globally unique.** `sub` is unique only *per issuer*.
+  With >1 IdP (or IdP re-provisioning), two people can share a `sub`. **Fix:**
+  the principal key is `(issuer, subject)` → a derived `principal_id`
+  (schema §8). All memberships/grants/audit key on `principal_id`.
+- **17.2 Tool name collision across tenants** *(the sharpest one)*. The FastMCP
+  registry is one global namespace; two tenants can't both hold `weather`.
+  **Fix:** onboarded tools are stored **tenant-qualified** (`org__ws__name`);
+  the caller uses the short name, resolved within their active tenant. Platform
+  tools stay bare + `public`. This also affects `/admin/reload`, `disable`,
+  `enable`, and the loader's first-wins policy — all become tenant-aware.
+- **17.3 `api_key` mode has no per-user identity.** A single shared key = one
+  principal, so RBAC can't distinguish callers. **Fix:** support **named API
+  keys → principals** (`MCP_API_KEYS_FILE`); document that fine-grained RBAC
+  needs JWT. A lone shared key maps to one service principal.
+- **17.8 Ambiguous active org.** A principal in ≥2 orgs with no `X-Tenant-Id`
+  is undefined in §4. **Fix:** `MCP_DEFAULT_MULTI_ORG` = `deny` (return `409
+  tenant-required`) or `pick-newest`. Single membership auto-selects.
+- **17.10 Machine/agent identity (M2M).** OAuth `client_credentials` tokens have
+  no human `sub`; use `client_id` as the subject with `kind='service'`. "Agent
+  Consumer" is typically an M2M principal.
+- **17.11 Token revocation / role change latency.** A cached principal can
+  outlive a revoked token or a removed role. **Fix:** short cache TTL (§18.2) +
+  cache-bust on membership/grant writes; never cache across the JWT `exp`.
+
+### Authorization
+- **17.4 Onboarding = privilege escalation** (see §9). `tool:onboard` runs
+  arbitrary in-process code → cross-tenant read. Treat as admin-level; default
+  Developer onboarding **off** under RBAC.
+- **17.5 `tool:manage (own)` needs tool ownership by principal.** "Own" = tools
+  the principal created → `tool_ownership.created_by` (schema §8), not just same
+  org.
+- **17.6 Tag-based grants + user-set tags = escalation.** A `tag:finance allow`
+  grant auto-applies to any future tool tagged `finance`; if a Developer can tag
+  their own onboarded tool `finance`, they self-grant. **Fix:** only admins set
+  tags used in grants (`trusted_tags`), or tag-grants require an admin-owned tag
+  namespace.
+- **17.7 403-vs-404 existence disclosure** — return 404 for not-visible tools
+  (see §9).
+- **17.12 Workspace-scoped permission resolution.** Effective permissions =
+  union of role perms for the principal's bindings **matching the active
+  workspace** ∪ org-level (workspace-null) bindings. An org_admin is org-wide; a
+  Developer bound to W1 gets nothing in W2. Make the resolution algorithm
+  explicit and test it.
+- **17.13 Grant precedence is deny-override.** Any matching `deny` at *any*
+  scope (principal/role/workspace/org) denies, regardless of a more-specific
+  `allow`. Simple and safe; documented so no one expects "most-specific wins".
+
+### Tenancy / data
+- **17.9 Upstreams (federation) have no tenancy.** `/mcp/upstreams*` and
+  `upstreams.json` are global today. **Fix:** `upstream_ownership(owner_org,
+  visibility)`; a tenant only sees/calls upstreams owned-by or shared-to their
+  org; upstream secrets are per-tenant. Otherwise multi-tenancy leaks remote
+  credentials/targets across orgs.
+- **17.14 Org lifecycle.** Suspending/deleting an org must block its members and
+  cascade (workspaces, memberships, grants, tool ownership). **Fix:** `status`
+  column (§8) + soft-delete + a cascade/GC job. Suspended org → all members 403.
+- **17.15 Superadmin bootstrap (chicken-and-egg).** The first org_admin can't be
+  created by an org_admin. **Fix:** the `MCP_ADMIN_TOKEN` → `platform_superadmin`
+  mapping is the bootstrap path; document it and the "create first org + bind
+  first admin" runbook.
+
+## 18. Cross-cutting concerns
+
+- **18.1 Horizontal scaling vs SQLite.** SQLite is single-file/single-writer, so
+  it **breaks multi-replica** deployments (which the stateless streamable-HTTP
+  transport otherwise enables). Ship a `Store` interface with **SQLite (default,
+  single-node)** and **Postgres (multi-node)** backends; pick via
+  `MCP_TENANCY_DB_BACKEND`. Call this out in ops docs.
+- **18.2 Performance / caching.** An RBAC decision per request must not hit the
+  DB every time. Cache `principal → {roles, permissions, grants}` with a short
+  TTL (`MCP_RBAC_CACHE_TTL_SEC`, default 30s) and invalidate on writes. Bound the
+  grant-evaluation cost (compile grants into a matcher per principal).
+- **18.3 Schema migrations.** A `schema_meta(version)` table + ordered
+  migrations; the store refuses to start on an unknown/newer version. Needed
+  from day one so Phase 1→3 schema growth is safe.
+- **18.4 Noisy-neighbor / quotas.** Logical multi-tenancy shares one process, so
+  one tenant's agent can starve others (CPU, connections, pip installs). At
+  least **basic per-org concurrency + rate limits are v1**, not Phase 5 — a token
+  bucket keyed by `org_id` on `tool:call`/onboard. Full resource isolation stays
+  Phase 5.
+- **18.5 Tenant-labeled observability.** `/metrics` and the audit log gain an
+  `org` label/field (cardinality bounded by #orgs). Enables per-tenant usage,
+  error rates, and abuse detection. Audit records **denials** too (a security
+  signal), keyed on `principal_id`.
+- **18.6 Config validation.** `validate_context` must reject contradictions:
+  `MCP_RBAC_ENABLED=true` with `MCP_AUTH_TYPE=none` (no identity to bind), or an
+  unwritable `MCP_TENANCY_DB`, or `postgres` backend without a DSN.
+
+## 19. Safe rollout — shadow → enforce
+
+Flipping deny-by-default on a live deployment is high-risk. Add
+`MCP_RBAC_MODE`:
+- **`shadow`** — resolve the principal and evaluate every decision, but **do not
+  block**; log `would-deny` with the principal, permission, and resource. Run
+  here until the logs are clean and grants are seeded correctly.
+- **`enforce`** — decisions are binding.
+
+Rollout: enable RBAC in `shadow` → seed orgs/grants from the shadow logs →
+switch to `enforce`. This makes the migration observable and reversible, and is
+the single most important operational safeguard for a permissions change.
+
+### Revised phase notes
+- Add **shadow mode** to **Phase 2** (ship the PDP in shadow first).
+- Add **upstream tenancy (§17.9)** and **basic quotas (§18.4)** to **Phase 3**.
+- Add the **`Store` interface + Postgres backend (§18.1)** as a Phase 1
+  sub-task if multi-replica is a near-term requirement.
