@@ -18,7 +18,7 @@ Status: **Proposed (revised after SDE5 review — see §17–§19)** · Branch: 
 |----------|----------|
 | Identity source | **Hybrid** — a JWT (`bearer_jwt` mode) proves *who* the caller is (the `subject`); the **local tenancy store** is the source of truth for org/workspace membership, role bindings, and tool grants, joined by `subject`. |
 | Isolation depth | **RBAC + logical multi-tenancy** — scoped visibility/calls, per-tenant catalogs, roles, grants, quotas — all **in-process**. Tenant tools are trusted. Hard execution isolation is an explicit **non-goal** here (see §9). |
-| Store | **Pluggable, plug-and-play** — a `TenancyStore` interface with interchangeable backends selected by `MCP_TENANCY_STORE` (`memory` \| `json` \| `sqlite` \| `postgres` \| custom), mirroring the existing `plugins/` pattern. **SQLite is the default** (stdlib `sqlite3`, no new hard dependency); nothing above the interface knows which backend is live. On first start the store **self-seeds** roles/default org if empty (§20). |
+| Store | **Pluggable, plug-and-play** — a `TenancyStore` interface with interchangeable backends selected by `MCP_TENANCY_STORE` (`memory` \| `json` \| `sqlite` \| `postgres` \| `mongodb` \| custom), mirroring the existing `plugins/` pattern. **SQLite is the default** (stdlib `sqlite3`, no new hard dependency); nothing above the interface knows which backend is live. On first start the store **self-seeds** roles/default org if empty (§20). |
 
 ---
 
@@ -209,10 +209,11 @@ audit(id INTEGER PK, ts, actor_principal TEXT, issuer TEXT, org_id TEXT,
 
 **Backend selection is config, not code.** SQLite (single-file, embedded, no new
 dependency) is the **default** and suits single-node deployments; a multi-replica
-deployment (e.g. stateless streamable-HTTP) selects `postgres`; `json`/`memory`
-suit dev and tests. All four implement the same `TenancyStore` interface behind
-`create_store(ctx)`, chosen by `MCP_TENANCY_STORE` — see §20 for the interface,
-registry, and first-start seeding.
+deployment (e.g. stateless streamable-HTTP) selects `postgres` (relational) or
+`mongodb` (document); `json`/`memory` suit dev and tests. All implement the same
+`TenancyStore` interface behind `create_store(ctx)`, chosen by
+`MCP_TENANCY_STORE` — see §20 for the interface, registry, and first-start
+seeding.
 
 ## 9. Security considerations
 
@@ -267,9 +268,10 @@ optional; defaulted from membership.
 MCP_RBAC_ENABLED=false           # master switch; false = today's behavior exactly
 
 # --- Pluggable tenancy store (§20) -----------------------------------------
-MCP_TENANCY_STORE=sqlite         # memory | json | sqlite | postgres | <dotted.path:Factory>
+MCP_TENANCY_STORE=sqlite         # memory | json | sqlite | postgres | mongodb | <dotted.path:Factory>
 MCP_TENANCY_DB=data/tenancy.db   # sqlite: file path (relative to src/); json: file path
-MCP_TENANCY_DSN=                 # postgres: connection string (required for that backend)
+MCP_TENANCY_DSN=                 # postgres: connection string / mongodb: URI (required for those)
+MCP_TENANCY_DB_NAME=mcp_tenancy  # mongodb: database name (collections per entity)
 MCP_TENANCY_SEED=true            # on first start, if store is empty seed roles + default org (§20)
 MCP_TENANCY_SEED_FILE=           # optional path to a seed doc overriding the built-in defaults
 
@@ -419,9 +421,10 @@ Each item is a real gap in §§1–16; the fix is authoritative.
 - **18.1 Horizontal scaling vs SQLite.** SQLite is single-file/single-writer, so
   it **breaks multi-replica** deployments (which the stateless streamable-HTTP
   transport otherwise enables). This is exactly why the store is pluggable: the
-  `TenancyStore` interface ships **SQLite (default, single-node)** and **Postgres
-  (multi-node)** backends, picked via `MCP_TENANCY_STORE` (§20). Call the
-  single-node caveat out in ops docs.
+  `TenancyStore` interface ships **SQLite (default, single-node)**, **Postgres
+  (multi-node, relational)**, and **MongoDB (multi-node, document)** backends,
+  picked via `MCP_TENANCY_STORE` (§20). Call the single-node caveat out in ops
+  docs.
 - **18.2 Performance / caching.** An RBAC decision per request must not hit the
   DB every time. Cache `principal → {roles, permissions, grants}` with a short
   TTL (`MCP_RBAC_CACHE_TTL_SEC`, default 30s) and invalidate on writes. Bound the
@@ -551,6 +554,7 @@ register_backend("memory",   lambda ctx: MemoryStore())
 register_backend("json",     lambda ctx: JsonStore(ctx.tenancy_db))
 register_backend("sqlite",   lambda ctx: SqliteStore(ctx.tenancy_db))
 register_backend("postgres", lambda ctx: PostgresStore(ctx.tenancy_dsn))
+register_backend("mongodb",  lambda ctx: MongoStore(ctx.tenancy_dsn, ctx.tenancy_db_name))
 ```
 
 `create_store(ctx)` is called once during app lifespan (like `UpstreamRegistry`
@@ -565,12 +569,18 @@ a `register_backend` call — no edits to any consumer.
 | `memory` | `tenancy/memory.py` | tests, ephemeral dev; not persisted | none |
 | `json` | `tenancy/json_store.py` | single-tenant / small; human-readable file, atomic `0600` writes (reuses the `upstreams.json` discipline) | none |
 | `sqlite` *(default)* | `tenancy/sqlite_store.py` | single-node production | stdlib `sqlite3` |
-| `postgres` | `tenancy/postgres_store.py` | multi-replica / HA | `psycopg` (soft import; only if selected) |
+| `postgres` | `tenancy/postgres_store.py` | multi-replica / HA, relational | `psycopg` (soft import; only if selected) |
+| `mongodb` | `tenancy/mongo_store.py` | multi-replica / HA, document store; natural fit for the `*_json` fields (§8) | `pymongo` (soft import; only if selected) |
 | custom | `module.path:Factory` | Redis/DynamoDB/hosted API | supplied by the deployment |
 
-The Postgres dependency stays **soft** — imported only when that backend is
-selected — so the default install adds nothing (consistent with the "no new hard
-dependency" rule and the existing soft-import pattern for the agentic framework).
+The Postgres and MongoDB drivers stay **soft** — imported only when that backend
+is selected — so the default install adds nothing (consistent with the "no new
+hard dependency" rule and the existing soft-import pattern for the agentic
+framework). MongoDB is a clean fit here: the coarse, SQL-free interface (§20.1)
+already returns small dataclasses, and the entities' `*_json` columns (roles'
+`permissions_json`, tools' `tags_json`) map directly to nested documents — one
+collection per entity, `(issuer,subject)` as a unique index (§17.1), `org_id` as
+the shard/partition key for tenant locality.
 
 ### 20.4 First-start seeding
 
@@ -609,16 +619,16 @@ default permission sets. Properties:
 ### 20.5 Contract test (one suite, every backend)
 
 Because all backends share the interface, a **single parametrized test suite**
-runs against every registered backend (`memory`/`json`/`sqlite`, and `postgres`
-in CI when a DSN is present). It asserts identical semantics — grant deny-override
+runs against every registered backend (`memory`/`json`/`sqlite`, and
+`postgres`/`mongodb` in CI when a DSN is present). It asserts identical semantics — grant deny-override
 (§17.13), workspace-scoped resolution (§17.12), `is_empty()`/seed idempotency,
 `(issuer,subject)` uniqueness (§17.1). This is what makes the store genuinely
 plug-and-play: correctness is defined by the interface, not by any one backend.
 
 ### 20.6 Config validation (extends §18.6)
 
-`validate_context` rejects: an unknown `MCP_TENANCY_STORE`; `postgres` without
-`MCP_TENANCY_DSN`; `sqlite`/`json` with an unwritable path; a `module:Factory`
+`validate_context` rejects: an unknown `MCP_TENANCY_STORE`; `postgres`/`mongodb`
+without `MCP_TENANCY_DSN`; `sqlite`/`json` with an unwritable path; a `module:Factory`
 string that fails to import or doesn't satisfy the `TenancyStore` protocol; and
 `MCP_RBAC_ENABLED=true` with `MCP_AUTH_TYPE=none` (no identity to bind). Fail fast
 at startup, never mid-request.
