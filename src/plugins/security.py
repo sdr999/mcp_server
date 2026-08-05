@@ -149,6 +149,9 @@ async def enforce(request, policy: str):
     principal = getattr(request.state, "principal", None)
 
     if rbac_enabled and evaluator and principal:
+        from metrics import METRICS
+        METRICS.inc("mcp_authz_evaluations_total")
+
         path = request.url.path
         if "/call" in path:
             action = "tool:call"
@@ -165,10 +168,12 @@ async def enforce(request, policy: str):
 
         eval_res = await evaluator.evaluate(principal, action, resource)
         if not eval_res.allowed:
+            METRICS.inc("mcp_authz_denials_total")
             return JSONResponse(
                 {"error": eval_res.reason, "decision": eval_res.decision},
                 status_code=403,
             )
+
 
     return None
 

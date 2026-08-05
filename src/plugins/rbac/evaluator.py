@@ -142,6 +142,20 @@ class PolicyEvaluator:
                     self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
                     return res
 
+                # ABAC Attribute Evaluation (Phase 4)
+                from .abac import ABACEvaluator
+                abac_res = ABACEvaluator.evaluate_tool_attributes(principal, resource, ownership, context)
+                if not abac_res.allowed:
+                    res = EvaluationResult(
+                        allowed=False,
+                        decision="DENY_ABAC_ATTRIBUTE",
+                        reason=abac_res.reason,
+                        eval_time_ms=round((time.perf_counter() - start_t) * 1000, 3),
+                    )
+                    self.cache.put(principal.principal_id, principal.org_id, principal.workspace_id, action, resource, res)
+                    return res
+
+
         # 5. Default Allow for Role-permitted Action
         res = EvaluationResult(
             allowed=True,

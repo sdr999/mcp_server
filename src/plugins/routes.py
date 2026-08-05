@@ -252,7 +252,10 @@ def register_metrics(loader, app) -> None:
     METRICS.declare("mcp_tool_duration_seconds", "Tool execution wall-time")
     METRICS.declare("mcp_reloads_total", "Module (re)loads that registered tools")
     METRICS.declare("mcp_load_failures_total", "Module loads that failed or yielded no tools")
+    METRICS.declare("mcp_authz_evaluations_total", "Total authorization policy evaluations")
+    METRICS.declare("mcp_authz_denials_total", "Total authorization policy denials")
     METRICS.gauge("mcp_ready", lambda: 1.0 if getattr(app.state, "ready", False) else 0.0,
+
                   "1 once the initial tool load has completed")
     METRICS.gauge("mcp_tools_loaded", lambda: loader.stats()["total_tools"], "Currently registered tools")
     METRICS.gauge("mcp_modules_failed", lambda: loader.stats()["failed_modules"], "Modules currently failing to load")
@@ -907,6 +910,61 @@ async def _admin_list_members(request):
     return JSONResponse([{"principal_id": m.principal_id, "org_id": m.org_id, "role": m.role, "workspace_id": m.workspace_id} for m in mems])
 
 
+async def _admin_add_tool_grant(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    scope_type = (body.get("scope_type") or "org").strip()
+    scope_id = (body.get("scope_id") or org_id).strip()
+    effect = (body.get("effect") or "allow").strip()
+    match_type = (body.get("match_type") or "exact").strip()
+    match_value = (body.get("match_value") or "").strip()
+    if not match_value:
+        return JSONResponse({"error": "match_value is required"}, status_code=400)
+    grant = await store.add_tool_grant(scope_type, scope_id, effect, match_type, match_value)
+    evaluator = getattr(request.app.state, "policy_evaluator", None)
+    if evaluator and getattr(evaluator, "cache", None):
+        evaluator.cache.clear()
+    return JSONResponse({
+        "id": grant.id,
+        "scope_type": grant.scope_type,
+        "scope_id": grant.scope_id,
+        "effect": grant.effect,
+        "match_type": grant.match_type,
+        "match_value": grant.match_value,
+        "created_at": grant.created_at,
+    }, status_code=201)
+
+
+async def _admin_list_tool_grants(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    grants = await store.list_tool_grants(scope_id=org_id)
+    return JSONResponse([{
+        "id": g.id,
+        "scope_type": g.scope_type,
+        "scope_id": g.scope_id,
+        "effect": g.effect,
+        "match_type": g.match_type,
+        "match_value": g.match_value,
+        "created_at": g.created_at,
+    } for g in grants])
+
+
+
 
 def feature_routes() -> List[Route]:
     return [
@@ -963,7 +1021,10 @@ def feature_routes() -> List[Route]:
         Route("/admin/orgs/{org}/workspaces", _admin_list_workspaces, methods=["GET"]),
         Route("/admin/orgs/{org}/members", _admin_bind_member, methods=["POST"]),
         Route("/admin/orgs/{org}/members", _admin_list_members, methods=["GET"]),
+        Route("/admin/orgs/{org}/tool-grants", _admin_add_tool_grant, methods=["POST"]),
+        Route("/admin/orgs/{org}/tool-grants", _admin_list_tool_grants, methods=["GET"]),
     ]
+
 
 
 

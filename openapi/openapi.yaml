@@ -41,7 +41,10 @@ servers:
 
 
 tags:
+  - name: Onboarding & Admin
+    description: Administration, onboarding, and multi-tenancy management endpoints
   - name: System
+
     description: Liveness, readiness, status, and metrics
   - name: Authentication & Identity
     description: Supabase Auth endpoints (sign up, sign in, token refresh, password recovery) and identity inspection
@@ -243,6 +246,70 @@ paths:
                   status:
                     type: string
                     example: ok
+
+  /admin/orgs:
+    get:
+      tags:
+        - Onboarding & Admin
+      summary: List Organizations
+      description: Returns list of registered organizations in the tenancy store. Requires admin token.
+      operationId: adminListOrgs
+      responses:
+        '200':
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    org_id:
+                      type: string
+                    name:
+                      type: string
+                    status:
+                      type: string
+                    created_at:
+                      type: number
+
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Create Organization
+      description: Registers a new organization tenant in the store. Requires admin token.
+      operationId: adminCreateOrg
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - org_id
+                - name
+              properties:
+                org_id:
+                  type: string
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  org_id:
+                    type: string
+                  name:
+                    type: string
+                  status:
+                    type: string
+                  created_at:
+                    type: number
+
 
   /readyz:
     get:
