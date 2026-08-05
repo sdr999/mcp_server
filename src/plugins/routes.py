@@ -461,9 +461,23 @@ async def _admin_upstream_add(request):
         return JSONResponse({"error": "request body must be JSON"}, status_code=400)
     name, url = body.get("name"), body.get("url")
     if not isinstance(name, str) or not isinstance(url, str) or not name or not url:
-        return JSONResponse({"error": 'expected {"name": str, "url": str, "token"?: str}'}, status_code=400)
-    st.upstreams.add(name, url, body.get("token"))
+        return JSONResponse({"error": 'expected {"name": str, "url": str}'}, status_code=400)
+    st.upstreams.add(
+        name,
+        url,
+        token=body.get("token"),
+        api_key=body.get("api_key"),
+        header_name=body.get("header_name"),
+        auth_type=body.get("auth_type"),
+        headers=body.get("headers"),
+
+        token_url=body.get("token_url"),
+        client_id=body.get("client_id"),
+        client_secret=body.get("client_secret"),
+    )
     return JSONResponse({"status": "added", "upstream": name}, status_code=201)
+
+
 
 
 async def _admin_upstream_remove(request):
@@ -476,6 +490,79 @@ async def _admin_upstream_remove(request):
     if not st.upstreams.remove(server):
         return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
     return JSONResponse({"status": "removed", "upstream": server})
+
+
+# -- OpenAPI Plugin management endpoints ------------------------------------
+async def _admin_openapi_register(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    mgr = getattr(st, "openapi_manager", None)
+    if not mgr:
+        return JSONResponse({"error": "OpenAPI plugin manager is not enabled"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+
+    collection_id = body.get("collection_id")
+    spec_input = body.get("spec")
+    if not isinstance(collection_id, str) or not isinstance(spec_input, str) or not collection_id or not spec_input:
+        return JSONResponse({"error": 'expected {"collection_id": str, "spec": str}'}, status_code=400)
+
+    auth_config = {
+        "auth_type": body.get("auth_type"),
+        "api_key": body.get("api_key"),
+        "header_name": body.get("header_name"),
+        "token": body.get("token"),
+        "headers": body.get("headers") or {},
+    }
+
+
+    try:
+        res = mgr.register_spec_collection(
+            collection_id,
+            spec_input,
+            base_url_override=body.get("base_url"),
+            auth_config=auth_config,
+        )
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(res, status_code=201)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+async def _admin_openapi_specs(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    mgr = getattr(st, "openapi_manager", None)
+    if not mgr:
+        return JSONResponse({"collections": []})
+    cols = []
+    for col_id, record in mgr.collections.items():
+        cols.append({
+            "collection_id": col_id,
+            "base_url": record.get("base_url"),
+            "tools_count": len(record.get("tool_names", [])),
+            "tool_names": record.get("tool_names", []),
+        })
+    return JSONResponse({"collections": cols})
+
+
+async def _admin_openapi_remove(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    mgr = getattr(st, "openapi_manager", None)
+    if not mgr:
+        return JSONResponse({"error": "OpenAPI plugin manager is not enabled"}, status_code=503)
+    collection_id = request.path_params["collection_id"]
+    if not mgr.remove_spec_collection(collection_id):
+        return JSONResponse({"error": f"unknown OpenAPI collection {collection_id!r}"}, status_code=404)
+    await notify_tools_changed(st.mcp)
+    return JSONResponse({"status": "removed", "collection_id": collection_id})
+
 
 
 async def _admin_logs(request):
@@ -590,6 +677,10 @@ def feature_routes() -> List[Route]:
         Route("/admin/tools/pending/{name}", _admin_tools_pending_detail, methods=["GET"]),
         Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),
         Route("/admin/tools/pending/{name}/reject", _admin_tools_pending_reject, methods=["POST"]),
+        # OpenAPI Spec plugin management
+        Route("/admin/openapi/register", _admin_openapi_register, methods=["POST"]),
+        Route("/admin/openapi/specs", _admin_openapi_specs, methods=["GET"]),
+        Route("/admin/openapi/{collection_id}/remove", _admin_openapi_remove, methods=["POST"]),
         # Federation: remote MCP servers
         Route("/mcp/upstreams", _upstreams_list, methods=["GET"]),
         Route("/mcp/upstreams/{server}/tools", _upstream_tools, methods=["GET"]),
@@ -597,3 +688,4 @@ def feature_routes() -> List[Route]:
         Route("/admin/mcp/upstreams", _admin_upstream_add, methods=["POST"]),
         Route("/admin/mcp/upstreams/{server}/remove", _admin_upstream_remove, methods=["POST"]),
     ]
+

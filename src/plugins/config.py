@@ -68,7 +68,9 @@ class AppContext:
     onboard_audit_log: Optional[Path] = None
     onboard_require_explicit: bool = True
     onboard_max_tools: int = 0
+    openapi_specs_dir: Optional[Path] = None
     # MCP protocol transport: "http" (streamable HTTP, single /mcp endpoint) or
+
     # "sse" (legacy, /sse + /messages). streamable HTTP is the current standard.
     mcp_transport: str = "http"
     mcp_stateless: bool = False     # streamable HTTP only: no per-session state

@@ -738,8 +738,41 @@ paths:
     post:
       tags:
         - Federation
-      summary: Add runtime upstream server
-      description: Register a new remote MCP server at runtime.
+      summary: Add runtime upstream server with security credentials
+      description: |
+
+        Register a new remote MCP server at runtime with security credentials.
+        
+        ### Auth Mode Quick Guide (What to give & what can be empty):
+        - **API Key (`auth_type: "api_key"`)**:
+          - **Give**: `name`, `url`, `api_key`, and optional `header_name` (default: `X-API-Key`).
+
+          - **Leave empty**: `token`, `token_url`, `client_id`, `client_secret`.
+
+        - **Bearer Token (`auth_type: "bearer"`)**:
+
+          - **Give**: `name`, `url`, `token`.
+
+          - **Leave empty**: `api_key`, `header_name`, `token_url`, `client_id`, `client_secret`.
+
+        - **OAuth 2.0 (`auth_type: "oauth"`)**:
+
+          - **Give**: `name`, `url`, `token_url`, `client_id`, `client_secret`.
+
+          - **Leave empty**: `token`, `api_key`, `header_name`.
+
+        - **Custom Headers (`auth_type: "custom"`)**:
+
+          - **Give**: `name`, `url`, `headers` dict (e.g. `{"X-Tenant-ID": "acme"}`).
+
+          - **Leave empty**: `token`, `api_key`, `token_url`.
+
+        - **No Auth (`auth_type: "none"`)**:
+
+          - **Give**: `name`, `url`.
+
+          - **Leave empty**: All security fields.
+          
       operationId: addUpstream
       security:
         - AdminTokenAuth: []
@@ -755,13 +788,50 @@ paths:
               properties:
                 name:
                   type: string
+                  description: "REQUIRED: Unique identifier for the remote MCP server"
+                  example: poc_server
                 url:
                   type: string
+                  description: "REQUIRED: Target HTTP/SSE URL of the remote MCP server"
+                  example: http://localhost:9000
+                auth_type:
+                  type: string
+                  enum: [bearer, api_key, oauth, custom, none]
+                  description: "OPTIONAL: Explicit authentication mode selector (bearer, api_key, oauth, custom, none)"
+                  example: api_key
+                api_key:
+                  type: string
+                  description: "For auth_type=api_key: Secret API Key string. Leave empty for bearer/oauth."
+                  example: secret_key_12345
+                header_name:
+                  type: string
+                  description: "For auth_type=api_key: HTTP header name for API Key. Default is 'X-API-Key'."
+                  example: X-API-Key
                 token:
                   type: string
+                  description: "For auth_type=bearer: Bearer JWT token string. Leave empty for api_key/oauth."
+                  example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                headers:
+                  type: object
+                  description: "For auth_type=custom (or optional extra headers): JSON dictionary of custom HTTP headers."
+                  example: {"X-Tenant-ID": "acme_corp"}
+                token_url:
+                  type: string
+                  description: "For auth_type=oauth: OAuth 2.0 Token Exchange endpoint URL. Leave empty if static token is given."
+                  example: https://auth.example.com/oauth/token
+                client_id:
+                  type: string
+                  description: "For auth_type=oauth: OAuth 2.0 Client ID."
+                  example: my-client-id
+                client_secret:
+                  type: string
+                  description: "For auth_type=oauth: OAuth 2.0 Client Secret."
+                  example: my-client-secret
       responses:
         '201':
-          description: Upstream added
+          description: Upstream server registered successfully
+
+
 
   /admin/mcp/upstreams/{server}/remove:
     post:
@@ -781,6 +851,91 @@ paths:
       responses:
         '200':
           description: Upstream removed
+
+  /admin/openapi/register:
+    post:
+      tags:
+        - OpenAPI Specs
+      summary: Register OpenAPI 3.0/3.1 Spec as Live MCP Tools
+      description: Parses an OpenAPI spec (URL, file path, or raw YAML/JSON) and registers all operations as live MCP tools.
+      operationId: registerOpenAPISpec
+      security:
+        - AdminTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - collection_id
+                - spec
+              properties:
+                collection_id:
+                  type: string
+                  example: petstore
+                spec:
+                  type: string
+                  description: HTTP URL, local file path, or raw YAML/JSON spec text
+                  example: https://petstore.swagger.io/v2/swagger.json
+                base_url:
+                  type: string
+                  description: Optional override for target REST API base URL. If omitted, uses 'servers' URL from spec.
+                  example: http://localhost:9998/v1
+                auth_type:
+                  type: string
+                  enum: [bearer, api_key, custom, none]
+                  description: "Optional authentication mode (bearer, api_key, custom, none)"
+                  example: none
+                api_key:
+                  type: string
+                  description: Optional API Key for authenticating REST calls (used when auth_type=api_key)
+                header_name:
+                  type: string
+                  description: Optional HTTP header name for API Key (default X-API-Key)
+                token:
+                  type: string
+                  description: Optional Bearer JWT token for authenticating REST calls (used when auth_type=bearer)
+                headers:
+                  type: object
+                  description: Optional custom HTTP headers dictionary (used when auth_type=custom)
+
+      responses:
+        '201':
+          description: OpenAPI spec parsed and tools registered successfully
+
+  /admin/openapi/specs:
+    get:
+      tags:
+        - OpenAPI Specs
+      summary: List Registered OpenAPI Spec Collections
+      description: Returns a list of all registered OpenAPI collections, base URLs, and generated tool names.
+      operationId: listOpenAPISpecs
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: List of registered OpenAPI spec collections
+
+  /admin/openapi/{collection_id}/remove:
+    post:
+      tags:
+        - OpenAPI Specs
+      summary: Unregister OpenAPI Spec Collection
+      description: Unregisters an OpenAPI collection and removes all of its generated tools from FastMCP.
+      operationId: removeOpenAPISpec
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: OpenAPI spec collection unregistered successfully
+
 
 components:
   schemas:

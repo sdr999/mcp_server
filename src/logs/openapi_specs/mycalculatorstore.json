@@ -1,0 +1,122 @@
+{
+  "collection_id": "mycalculatorstore",
+  "base_url": "http://localhost:9998/v1",
+  "tool_names": [
+    "add_mycalculatorstore",
+    "subtract_mycalculatorstore",
+    "multiply_mycalculatorstore"
+  ],
+  "auth_config": {
+    "auth_type": null,
+    "api_key": null,
+    "header_name": null,
+    "token": null,
+    "headers": {}
+  },
+  "spec": {
+    "openapi": "3.0.0",
+    "info": {
+      "title": "Mock Calculator REST API",
+      "version": "1.0.0",
+      "description": "API for basic arithmetic operations"
+    },
+    "servers": [
+      {
+        "url": "http://localhost:9998/v1"
+      }
+    ],
+    "paths": {
+      "/add": {
+        "get": {
+          "operationId": "add",
+          "summary": "Add two numbers",
+          "parameters": [
+            {
+              "name": "a",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "number"
+              }
+            },
+            {
+              "name": "b",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "number"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Result of addition"
+            }
+          }
+        }
+      },
+      "/subtract": {
+        "get": {
+          "operationId": "subtract",
+          "summary": "Subtract b from a",
+          "parameters": [
+            {
+              "name": "a",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "number"
+              }
+            },
+            {
+              "name": "b",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "number"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Result of subtraction"
+            }
+          }
+        }
+      },
+      "/multiply": {
+        "post": {
+          "operationId": "multiply",
+          "summary": "Multiply two numbers",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "a",
+                    "b"
+                  ],
+                  "properties": {
+                    "a": {
+                      "type": "number"
+                    },
+                    "b": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Result of multiplication"
+            }
+          }
+        }
+      }
+    }
+  }
+}

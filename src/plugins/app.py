@@ -126,11 +126,20 @@ def build_app(ctx):
     app.state.metrics_auth = ctx.metrics_auth
     app.state.tool_call_auth = ctx.tool_call_auth
     app.state.upstream_auth = ctx.upstream_auth
+    # OpenAPI Plugin Manager
+    from .openapi_plugin import OpenAPIToolManager
+    openapi_dir = ctx.openapi_specs_dir or ((ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "openapi_specs")
+    openapi_manager = OpenAPIToolManager(mcp_server=mcp, loader=loader, storage_dir=openapi_dir)
+
+    openapi_manager.load_saved_collections_from_disk()
+    app.state.openapi_manager = openapi_manager
+
     # Federation registry
     app.state.upstreams = UpstreamRegistry(
         ctx.upstreams, timeout=ctx.upstream_timeout, allow_runtime=ctx.upstream_allow_runtime)
     app.state.mcp_transport = transport
     register_metrics(loader, app)
+
 
     original_lifespan = app.router.lifespan_context
     stop_event = threading.Event()

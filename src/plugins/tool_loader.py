@@ -464,7 +464,55 @@ class ToolLoader:
             if py.name != "__init__.py":
                 self.load_path(py)
 
+    # -- external plugin registration ---------------------------------------
+    def register_external_tool(
+        self,
+        name: str,
+        fn_or_tool: Any,
+        description: Optional[str] = None,
+        module_name: str = "openapi",
+        tags: Optional[List[str]] = None,
+    ) -> FunctionTool:
+        """Register a dynamic external tool (e.g. from OpenAPI plugin) into FastMCP and loader registries."""
+        _name, tool_obj = self._to_tool(fn_or_tool, name)
+        if description and hasattr(tool_obj, "description"):
+            tool_obj.description = description
+
+        with contextlib.suppress(Exception):
+            provider = getattr(self.mcp, "local_provider", self.mcp)
+            provider.add_tool(tool_obj)
+
+        self._name_owner[name] = module_name
+        self._tools[name] = tool_obj
+        self._tool_info[name] = {
+            "name": name,
+            "module": module_name,
+            "description": getattr(tool_obj, "description", None) or description,
+            "tags": sorted(tags or ["openapi"]),
+        }
+        if module_name not in self._module_tools:
+            self._module_tools[module_name] = []
+        if name not in self._module_tools[module_name]:
+            self._module_tools[module_name].append(name)
+        self._changed = True
+        return tool_obj
+
+    def unregister_external_tool(self, name: str, module_name: str = "openapi") -> bool:
+        """Unregister an external tool from FastMCP and loader registries."""
+        with contextlib.suppress(Exception):
+            provider = getattr(self.mcp, "local_provider", self.mcp)
+            provider.remove_tool(name)
+        if self._name_owner.get(name) == module_name:
+            self._name_owner.pop(name, None)
+        self._tool_info.pop(name, None)
+        self._tools.pop(name, None)
+        if module_name in self._module_tools and name in self._module_tools[module_name]:
+            self._module_tools[module_name].remove(name)
+        self._changed = True
+        return True
+
     # -- admin / introspection ----------------------------------------------
+
     def disable(self, name: str) -> bool:
         module = self._name_owner.get(name)
         if not module and name not in self._disabled:
