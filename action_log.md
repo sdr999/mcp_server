@@ -33,11 +33,13 @@ This document tracks all execution steps taken to analyze the MCP tool server, u
 | 2026-08-05T11:43:10 | ACT-022 | Upstream Security & OpenAPI Completion | Documented 100% of missing Federation endpoints in `openapi/openapi.yaml` (`GET /mcp/upstreams`, `GET /mcp/upstreams/{server}/tools`, `POST /mcp/upstreams/{server}/tools/{name}/call`, `POST /admin/mcp/upstreams`, `POST /admin/mcp/upstreams/{server}/remove`). Upgraded `src/plugins/upstreams.py` with multi-scheme auth (API Key `X-API-Key`, Bearer Token / OAuth 2.0 JWT, Custom Headers), secret redaction on API responses, and atomic file persistence (`upstreams.json`). Added unit test suite (`src/tests/test_upstreams_poc_security.py`). All unit tests passing (`58 passed`). | COMPLETED |
 | 2026-08-05T12:47:57 | ACT-023 | OpenAPI MCP Native Plugin | Built `src/plugins/openapi_plugin.py` to parse any OpenAPI 3.0/3.1 spec (URL, local file, or raw JSON/YAML) and dynamically generate live FastMCP tools for every REST operation. Features explicit signature compilation, tool name sanitization, circular `$ref` recursion limits (max 10), and REST execution via `httpx.AsyncClient` with 30s timeout & 5MB cap. Added Admin APIs (`POST /admin/openapi/register`, `GET /admin/openapi/specs`, `POST /admin/openapi/{id}/remove`) and documented in `openapi.yaml`. Added test suite (`src/tests/test_openapi_plugin.py`). All unit tests passing (`61 passed`). | COMPLETED |
 | 2026-08-05T13:40:47 | ACT-024 | ToolLoader Dynamic External Registration Sync | Enhanced `ToolLoader` in `src/plugins/tool_loader.py` with `register_external_tool()` and `unregister_external_tool()`. Connected `OpenAPIToolManager` directly to `ToolLoader` so dynamically registered OpenAPI tools automatically synchronize with `GET /tools` catalog and `POST /tools/{name}/call` HTTP execution endpoint. Added unit tests in `src/tests/test_openapi_plugin.py`. All unit tests passing (`61 passed`). | COMPLETED |
+| 2026-08-05T13:44:29 | ACT-025 | Documentation Suite Update | Created [`docs/OPENAPI_PLUGIN_GUIDE.md`](docs/OPENAPI_PLUGIN_GUIDE.md) detailing OpenAPI registration payloads, field references, `auth_type` security options, tool execution details, and step-by-step testing with `mock_calculator_server.py`. Updated [`README.md`](README.md) and [`docs/README.md`](docs/README.md). | COMPLETED |
 
 ---
 
 ## Key Output Artifacts & Endpoints
 
+- **OpenAPI Plugin Guide**: [`docs/OPENAPI_PLUGIN_GUIDE.md`](docs/OPENAPI_PLUGIN_GUIDE.md)
 - **Swagger UI Page**: `http://localhost:8000/docs` (or `/swagger`)
 - **OpenAPI Register Spec API**: `POST /admin/openapi/register`
 - **OpenAPI List Specs API**: `GET /admin/openapi/specs`

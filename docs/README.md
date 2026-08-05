@@ -14,6 +14,7 @@ Pick a starting point by what you're trying to do.
 
 | I want to… | Read |
 |------------|------|
+| Convert OpenAPI REST API specs into live MCP tools | [OPENAPI_PLUGIN_GUIDE.md](OPENAPI_PLUGIN_GUIDE.md) |
 | Run / configure `src/main.py` (local server) | [MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md) |
 | Run / configure the Azure-backed server + all shared features | [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) |
 | Secure the server (API key / OAuth-JWT) and connect a client | [MCP_AUTH_GUIDE.md](MCP_AUTH_GUIDE.md) |
@@ -26,7 +27,10 @@ Pick a starting point by what you're trying to do.
 
 ### Operational guides (how to run & configure)
 
+- **[OPENAPI_PLUGIN_GUIDE.md](OPENAPI_PLUGIN_GUIDE.md)** — the OpenAPI Spec Native Plugin:
+  registering specs (URL, local file, raw JSON/YAML text), explicit signature generation, auth modes, tool catalog synchronization, and mock testing.
 - **[MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md)** — the plugin-based local server:
+
   what it is, how it differs from the Azure server, CLI, security defaults, the
   admin/onboarding endpoints unique to it.
 - **[MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md)** — the shared feature &
