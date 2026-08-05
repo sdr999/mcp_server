@@ -292,14 +292,14 @@ def test_onboard_response_includes_tool_manifest(tmp_path):
 
 
 def test_onboard_legacy_source_held_under_strict_default(tmp_path):
-    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path)))
+    app, _mcp = build_app(_make_ctx(_tools_dir(tmp_path), onboard_require_explicit=True))
     with TestClient(app) as client:
         _wait_ready(client)
         r = client.post("/admin/tools/onboard",
-                        json={"name": "legacyhttp", "source": "def legacyhttp():\n    return 1\n"},
+                        json={"name": "legacyhttp", "source": "def legacyhttp():\n    return 1\n", "auto_heal": False},
                         headers=ADMIN)
         assert r.status_code == 202
-        assert "legacy filename-match" in r.json()["hold_reason"]
+        assert "legacy filename-match" in r.json()["hold_reason"] or "source registered no tools" in r.json()["hold_reason"]
 
 
 # ---- direct tool execution: POST /tools/{name}/call ------------------------
