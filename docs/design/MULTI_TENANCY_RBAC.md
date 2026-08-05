@@ -224,7 +224,7 @@ seeding.
   A's tool and tenant B's tool share the interpreter, env vars, filesystem, and
   installed packages. RBAC controls *who can call what*, **not** what a running
   tool can reach. Treat all tenant tools as **trusted**. Hard isolation (safe
-  for *untrusted* tenants) needs per-tenant workers/containers — future Phase 5,
+  for *untrusted* tenants) needs per-tenant workers/containers — future Phase 6,
   seeded by the existing `MCP_SANDBOX_TOOLS` subprocess sandbox.
 - **Tenant-header spoofing:** `X-Tenant-Id` / `X-Workspace-Id` are *requests*,
   never trusted on their own — always validated against the principal's
@@ -317,16 +317,38 @@ interception points** before committing Phase 4. Until then, RBAC is enforced on
 the REST surface (`/tools`, `/tools/{name}/call`, admin) and the `/mcp` catalog
 can be tenant-filtered at registration time as an interim measure.
 
-## 14. Phased rollout
+## 14. Phased rollout (consolidated — authoritative)
 
-| Phase | Delivers | Risk |
-|-------|----------|------|
-| **0 — Principal propagation** | Keep `AccessToken` claims → `Principal` on `request.state`; `/whoami`. No behavior change. | Low — unblocks all |
-| **1 — Tenancy store & model** | `TenancyStore` interface + backend registry/factory; `memory`+`json`+`sqlite` backends (Postgres stub); orgs/workspaces/members/roles/grants; admin CRUD; **first-start seeding** (§20). | Low |
-| **2 — RBAC PDP** | `require(permission)`; adapter maps existing policies; audit gains actor identity. | Med |
-| **3 — Tenant-scoped tools** | Ownership tags + grant overlay; `/tools` & call filtered; onboarding owns tools per tenant. | Med |
-| **4 — Enforce on `/mcp`** | Per-tool RBAC on the MCP protocol path (after the spike). | **High (unknown)** |
-| **5 — Isolation & quotas** *(future / out of current scope)* | Per-tenant sandbox/worker, rate/resource quotas. | High |
+This is the **single source of truth** for sequencing; it folds in every phase
+note the review layers (§§19, 21, 22) had scattered. Two design rules shape it:
+
+1. **Single-node first.** Phases 0–4 deliver a *complete* multi-tenant server on
+   one replica (SQLite + in-process queue). Distributed-systems complexity
+   (Postgres/Mongo, brokers, cross-replica cache invalidation) is deferred to
+   Phase 5 so it never blocks earlier value.
+2. **Every phase is default-off-safe and independently shippable.** With
+   `MCP_RBAC_ENABLED=false` the server behaves exactly as today at every phase;
+   enforcement only turns on inside a phase, and only after **shadow mode** (§19)
+   proves the grants are right.
+
+| Phase | Goal | Key deliverables | Exit criteria (done when…) | Risk |
+|---|---|---|---|---|
+| **0 — Identity propagation** | Keep the identity we already authenticate | `AccessToken`→`Principal` on `request.state`; `/whoami`; `api_key`→service principal, admin-token→superadmin. **In parallel:** run the §13 FastMCP interception spike *now* so Phase 4 isn't gated by an unknown. | `/whoami` returns the resolved principal; **zero** behavior change with RBAC off; spike verdict written into §13. | Low — unblocks all |
+| **1 — Pluggable store & model** | Persist tenancy, single-node | Async `TenancyStore` interface + registry/factory (§20); `memory`/`json`/`sqlite` backends (Postgres/Mongo **stubs**); `resolve_principal` hot-path read (§21.3); **seed under lock** + idempotent upserts (§21.1); pagination (§21.11); `schema_meta` migrations (§18.3); role-reconcile decision (§21.5); first-start seeding (§20.4); admin CRUD for orgs/workspaces/members/roles/grants. | Contract-test suite (§20.5) green across `memory`/`json`/`sqlite`; concurrent cold-starts seed exactly once; still default-off. | Low |
+| **2 — PDP in shadow** | Decide, log, don't block | `require(permission)` + adapter over `enforce()` (§7); **`MCP_RBAC_MODE=shadow`** default (§19); audit gains actor identity; principal/permission **cache** + TTL + on-write invalidation (§18.2, in-process); introduce the **queue** (`inline`+`memory`) and route **audit** through it with the durable fallback (§22). | Shadow logs emit `would-deny` with principal/permission/resource; enforce-off parity with today; cache-correctness + audit-fallback tests pass. | Med |
+| **3 — Tenant-scoped tools + enforce (REST)** | Turn RBAC on, on REST | Ownership tags + grant overlay + **tenant-qualified names** (§6/§17.2); `/tools`, call, onboarding tenant-scoped; **upstream tenancy** (§17.9); **envelope-encrypt secrets** — hard gate, since tenant/upstream secrets first enter the store here (§21.7); 403-vs-404 (§17.7); **append-only + mirrored audit** (§21.8); **basic per-org quotas** (single-node token bucket, §18.4); **onboarding offload** (`202`+worker, §22.2). Flip **shadow→enforce on REST** once shadow logs are clean. | Cross-tenant list/call denied; secrets persisted only as ciphertext; enforce live on REST with one-flag rollback to shadow. | Med |
+| **4 — Enforce on `/mcp`** | Close the protocol gap | Per-tool RBAC inside FastMCP `list_tools`/`call_tool` via the Phase-0 spike's chosen hook; interim tenant-filtered catalog if the hook proves insufficient (§13). | An MCP client sees only granted tools and is denied cross-tenant calls over `/mcp`. | **High** (retired by the Phase-0 spike) |
+| **5 — Horizontal scale** | Multi-replica | Promote **Postgres/Mongo** backends from stub (§18.1); **broker** queue backend (`redis`/`rabbitmq`/`kafka`/`sqs`, §22.3); **cross-replica cache invalidation** via pub/sub (Postgres `LISTEN/NOTIFY`, Mongo change streams, §21.4) with TTL backstop; tenant-labeled observability across replicas (§18.5). | Contract suite green on Postgres/Mongo; measured invalidation latency within TTL; N-replica deployment passes cross-tenant tests. | Med–High |
+| **6 — Hard isolation & advanced quotas** *(future / out of current scope)* | Run *untrusted* tenants | Per-tenant sandbox/worker/container (seeded by `MCP_SANDBOX_TOOLS`, §9); full CPU/memory/connection resource quotas beyond the Phase-3 rate limits. | Untrusted tenant code cannot read another tenant's data/secrets/files. | High |
+
+**Critical-path dependencies:** 0 → 1 → 2 → 3 are strictly ordered (each needs the
+prior). **4 depends only on 0's spike + 3's grant model**, so it can proceed in
+parallel with hardening work. **5 is independent of 4** — a single-node deployment
+can stop at 4 and be complete; 5 is opt-in for those who need multiple replicas.
+
+**Shadow→enforce is a *gate*, not a phase:** it applies at the Phase-3 REST cutover
+and again at the Phase-4 `/mcp` cutover — run each surface in shadow until its
+`would-deny` log is clean, then flip.
 
 ## 15. Testing strategy
 
@@ -343,13 +365,15 @@ can be tenant-filtered at registration time as an interim measure.
 ## 16. Open questions
 
 1. **`/mcp` enforcement** — FastMCP hook availability (spike, §13).
-2. **Quota model** — per-org rate/concurrency limits: needed in v1 or defer to
-   Phase 5? (§18.4 argues *at least basic* quotas are v1.)
+2. **Quota model** — *resolved:* basic per-org rate/concurrency limits are **v1
+   (Phase 3)**; full resource isolation is Phase 6 (§18.4, §14). Open sub-question:
+   default limits per role/tenant tier.
 3. **Custom roles** — ship the 4 built-ins only, or expose role CRUD in v1?
 4. **Cross-tenant tool sharing** — allow an org to publish a tool `public` to
    other orgs, or keep `public` = platform-only?
 5. **Onboarding in multi-tenant** — is `tool:onboard` allowed for tenant
-   Developers at all, given §17.4? (Recommend: admin-only until Phase 5.)
+   Developers at all, given §17.4? (Recommend: admin-only until hard isolation
+   lands in Phase 6.)
 
 ---
 
@@ -437,9 +461,9 @@ Each item is a real gap in §§1–16; the fix is authoritative.
   from day one so Phase 1→3 schema growth is safe.
 - **18.4 Noisy-neighbor / quotas.** Logical multi-tenancy shares one process, so
   one tenant's agent can starve others (CPU, connections, pip installs). At
-  least **basic per-org concurrency + rate limits are v1**, not Phase 5 — a token
-  bucket keyed by `org_id` on `tool:call`/onboard. Full resource isolation stays
-  Phase 5.
+  least **basic per-org concurrency + rate limits are v1** (Phase 3, single-node
+  token bucket keyed by `org_id` on `tool:call`/onboard) — **not** deferred to the
+  isolation phase. Full CPU/memory/connection resource isolation stays Phase 6.
 - **18.5 Tenant-labeled observability.** `/metrics` and the audit log gain an
   `org` label/field (cardinality bounded by #orgs). Enables per-tenant usage,
   error rates, and abuse detection. Audit records **denials** too (a security
@@ -461,13 +485,10 @@ Rollout: enable RBAC in `shadow` → seed orgs/grants from the shadow logs →
 switch to `enforce`. This makes the migration observable and reversible, and is
 the single most important operational safeguard for a permissions change.
 
-### Revised phase notes
-- Add **shadow mode** to **Phase 2** (ship the PDP in shadow first).
-- Add **upstream tenancy (§17.9)** and **basic quotas (§18.4)** to **Phase 3**.
-- The **`TenancyStore` interface + backend registry (§20)** is now **core to
-  Phase 1**, not an optional sub-task; the Postgres backend can lag as a stub and
-  land when multi-replica is a near-term requirement, since it's just one more
-  registered backend behind the same interface.
+> **Phase placement:** shadow mode lands in **Phase 2** and gates the Phase-3
+> (REST) and Phase-4 (`/mcp`) enforce cutovers. This and every other phase note
+> from the review layers are consolidated into the authoritative plan in **§14** —
+> refer there, not here.
 
 ---
 
@@ -746,15 +767,16 @@ Where these conflict with earlier sections, they win.
   server-side; an unbounded `list_*` is a latency and memory foot-gun at thousands
   of orgs. Bake pagination into the interface from Phase 1 so it isn't retrofitted.
 
-### Revised phase & config notes
-- **Phase 1** additionally owns: the async interface + pool lifecycle (§21.2),
-  `resolve_principal` (§21.3), the seed lock (§21.1), pagination (§21.11), and the
-  role-reconcile decision (§21.5).
-- **Phase 2/3** own: fail-closed + cache-serve (§21.4), envelope-encrypted secrets
-  (§21.7), append-only/mirrored audit (§21.8).
-- New config: `MCP_TENANCY_KEK` (or KMS ref, §21.7),
-  `MCP_TENANCY_RECONCILE_ROLES=false` (§21.5), `MCP_AUDIT_SINK=store|stdout|both`
-  and `MCP_AUDIT_RETENTION_DAYS` (§21.8), `MCP_TENANCY_POOL_SIZE` (§21.2).
+### New config (from this review)
+`MCP_TENANCY_KEK` (or KMS ref, §21.7), `MCP_TENANCY_RECONCILE_ROLES=false`
+(§21.5), `MCP_AUDIT_SINK=store|stdout|both` and `MCP_AUDIT_RETENTION_DAYS`
+(§21.8), `MCP_TENANCY_POOL_SIZE` (§21.2).
+
+> **Phase placement:** these items are folded into the authoritative plan in
+> **§14** — the async interface/pools, `resolve_principal`, seed lock, pagination
+> and role-reconcile in **Phase 1**; fail-closed cache-serve in **Phase 2**;
+> envelope-encrypted secrets and append-only audit in **Phase 3** (secrets first
+> enter the store there). Refer to §14, not here.
 
 ---
 
@@ -891,10 +913,10 @@ MCP_QUEUE_MAX_RETRIES=5         # handler retries before DLQ
 MCP_AUDIT_ASYNC=true            # route audit through the queue (false = always synchronous store write)
 ```
 
-- **Phase 2** introduces the queue with **`inline`+`memory`** backends and routes
-  **audit** through it (the highest-frequency write) with the durable fallback.
-- **Phase 3** adds the **onboarding job** offload (202 + worker) and
-  cache-invalidation fan-out over the same broker.
-- **Broker backends (`redis`/`rabbitmq`/`kafka`/`sqs`)** land with the multi-replica
-  push (alongside Postgres/Mongo, §18.1) — they're only meaningful once there is
-  more than one replica to coordinate.
+> **Phase placement (see §14 for the consolidated plan):** the queue arrives in
+> **Phase 2** (`inline`+`memory`) routing **audit** through it with the durable
+> fallback; **Phase 3** adds the **onboarding job** offload (`202`+worker); the
+> **broker backends** (`redis`/`rabbitmq`/`kafka`/`sqs`) and **cross-replica
+> cache-invalidation fan-out** land in **Phase 5** with the multi-replica push —
+> they're only meaningful once there is more than one replica to coordinate
+> (single-node invalidation is an in-process call, Phase 2).
