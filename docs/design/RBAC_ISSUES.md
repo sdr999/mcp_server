@@ -29,10 +29,17 @@ fixed. Severity: 🔴 Critical · 🟠 High · 🟡 Medium.
   alias handled in `_grant_applies_to` (C2). Legacy `verify`/pattern grants still work._
 - [ ] **H3 — Default role `developer` for any signed token** (incl. `tool:onboard`).
   Should floor at `agent_consumer`. (§6, §17.4) — `identity.py:build_principal_from_claims`
-- [ ] **H4 — No shadow mode.** No `MCP_RBAC_MODE=shadow|enforce`; enforcement is
-  immediately binding. `shadow_deny` is defined but never produced. (§19)
-- [ ] **H5 — Decision cache never invalidated on writes.** `DecisionCache.invalidate()`
-  has 0 callers; TTL defaults to 300s not 30s. (§18.2, §21.4) — `rbac/cache.py`
+- [x] **H4 — No shadow mode.** No `MCP_RBAC_MODE=shadow|enforce`; enforcement was
+  immediately binding; `shadow_deny` was defined but never produced. (§19)
+  _Fix: `MCP_RBAC_MODE` config (+ validation); `enforce()` in shadow mode logs a
+  would-deny (WARNING → file), writes a `shadow_deny` audit row, increments
+  `mcp_authz_shadow_denials_total`, and returns None (proceeds). Also wired
+  `MCP_RBAC_ENABLED` parsing, which was missing so RBAC couldn't be turned on._
+- [x] **H5 — Decision cache not invalidated on all writes.** `DecisionCache.invalidate()`
+  had no callers on the membership/org-delete paths; TTL defaulted to 300s not 30s.
+  (§18.2, §21.4) — `rbac/cache.py`
+  _Fix: `_invalidate_rbac_cache()` helper wired into `bind_member` (principal-scoped),
+  `delete_org` (org-scoped), and `add_tool_grant` (full clear); TTL default → 30s._
 
 ## 🟡 Medium
 

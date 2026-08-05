@@ -127,6 +127,7 @@ def build_app(ctx):
     app.state.supabase_key = ctx.supabase_key
     app.state.superadmin_email = ctx.superadmin_email
     app.state.rbac_enabled = ctx.rbac_enabled
+    app.state.rbac_mode = ctx.rbac_mode
     app.state.tenant_header = ctx.tenant_header
     app.state.workspace_header = ctx.workspace_header
     app.state.jwks_url = ctx.jwks_url

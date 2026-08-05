@@ -254,6 +254,7 @@ def register_metrics(loader, app) -> None:
     METRICS.declare("mcp_load_failures_total", "Module loads that failed or yielded no tools")
     METRICS.declare("mcp_authz_evaluations_total", "Total authorization policy evaluations")
     METRICS.declare("mcp_authz_denials_total", "Total authorization policy denials")
+    METRICS.declare("mcp_authz_shadow_denials_total", "Authorization would-denials in shadow mode (§19)")
     METRICS.gauge("mcp_ready", lambda: 1.0 if getattr(app.state, "ready", False) else 0.0,
 
                   "1 once the initial tool load has completed")
@@ -795,6 +796,22 @@ async def _auth_forgot_password(request):
     return JSONResponse(res, status_code=200)
 
 
+def _invalidate_rbac_cache(request, *, principal_id=None, org_id=None, full=False):
+    """Bust cached authorization decisions after a tenancy mutation (§18.2/§21.4).
+
+    A stale decision must not outlive the write that changed it. Membership
+    changes target one principal; grant/role changes are broad (clear all).
+    """
+    evaluator = getattr(request.app.state, "policy_evaluator", None)
+    cache = getattr(evaluator, "cache", None) if evaluator else None
+    if cache is None:
+        return
+    if full or (principal_id is None and org_id is None):
+        cache.clear()
+    else:
+        cache.invalidate(principal_id=principal_id, org_id=org_id)
+
+
 async def _admin_create_org(request):
     denied = await enforce(request, "admin")
     if denied:
@@ -838,6 +855,8 @@ async def _admin_delete_org(request):
     ok = await store.delete_org(org_id)
     if not ok:
         return JSONResponse({"error": "Organization not found"}, status_code=404)
+    # Deleting an org cascades memberships -> drop cached decisions for that org.
+    _invalidate_rbac_cache(request, org_id=org_id)
     return JSONResponse({"message": f"Organization {org_id} deleted successfully"})
 
 
@@ -893,6 +912,8 @@ async def _admin_bind_member(request):
     if not principal_id or not role or not org_id:
         return JSONResponse({"error": "principal_id, org_id, and role are required"}, status_code=400)
     mem = await store.bind_member(principal_id, org_id, role, workspace_id)
+    # A role change alters this principal's permissions -> drop their cached decisions.
+    _invalidate_rbac_cache(request, principal_id=principal_id)
     return JSONResponse({"principal_id": mem.principal_id, "org_id": mem.org_id, "role": mem.role, "workspace_id": mem.workspace_id}, status_code=201)
 
 
@@ -930,9 +951,8 @@ async def _admin_add_tool_grant(request):
     if not match_value:
         return JSONResponse({"error": "match_value is required"}, status_code=400)
     grant = await store.add_tool_grant(scope_type, scope_id, effect, match_type, match_value)
-    evaluator = getattr(request.app.state, "policy_evaluator", None)
-    if evaluator and getattr(evaluator, "cache", None):
-        evaluator.cache.clear()
+    # Grants can affect many principals (org/role/tag scope) -> clear all decisions.
+    _invalidate_rbac_cache(request, full=True)
     return JSONResponse({
         "id": grant.id,
         "scope_type": grant.scope_type,

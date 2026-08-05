@@ -181,3 +181,72 @@ def test_legacy_pattern_aliases_still_work():
         assert (await ev.evaluate(p, "tool:call", "github_x")).decision == "ALLOW_GRANT"
 
     asyncio.run(_run())
+
+
+# --------------------------------------------------------------------------
+# H4 — shadow vs enforce mode (§19): shadow evaluates but never blocks.
+# --------------------------------------------------------------------------
+
+import types
+
+from plugins.security import enforce
+from plugins.rbac.evaluator import EvaluationResult
+
+
+class _DenyingEvaluator:
+    def __init__(self):
+        self.cache = DecisionCache(ttl_sec=0.0)
+
+    async def evaluate(self, principal, action, resource, context=None):
+        return EvaluationResult(allowed=False, decision="DENY_NO_PERMISSION",
+                                reason="test-deny", eval_time_ms=0.0)
+
+
+def _fake_request(mode, principal):
+    state = types.SimpleNamespace(
+        auth_type="none", rbac_enabled=True, rbac_mode=mode,
+        policy_evaluator=_DenyingEvaluator(), tenancy_store=None,
+    )
+    req = types.SimpleNamespace(
+        app=types.SimpleNamespace(state=state),
+        url=types.SimpleNamespace(path="/tools/x/call"),
+        path_params={"name": "x"},
+        headers={},
+        state=types.SimpleNamespace(principal=principal),
+    )
+    return req
+
+
+def test_shadow_mode_does_not_block_a_would_deny():
+    res = asyncio.run(enforce(_fake_request("shadow", _member_principal()), "mcp"))
+    assert res is None  # logged as would-deny, request proceeds
+
+
+def test_enforce_mode_blocks_a_deny():
+    res = asyncio.run(enforce(_fake_request("enforce", _member_principal()), "mcp"))
+    assert res is not None and res.status_code == 403
+
+
+# --------------------------------------------------------------------------
+# H5 — decision cache is invalidated on tenancy writes (§18.2/§21.4).
+# --------------------------------------------------------------------------
+
+def test_cache_invalidation_helper():
+    from plugins.routes import _invalidate_rbac_cache
+
+    cache = DecisionCache(ttl_sec=999)
+    cache.put("pidA", "acme", "default", "tool:call", "x", "R")
+    cache.put("pidB", "acme", "default", "tool:call", "y", "R")
+    req = types.SimpleNamespace(
+        app=types.SimpleNamespace(state=types.SimpleNamespace(
+            policy_evaluator=types.SimpleNamespace(cache=cache)))
+    )
+
+    # Principal-scoped invalidation (bind_member) drops only that principal.
+    _invalidate_rbac_cache(req, principal_id="pidA")
+    assert cache.get("pidA", "acme", "default", "tool:call", "x") is None
+    assert cache.get("pidB", "acme", "default", "tool:call", "y") == "R"
+
+    # Full clear (grant change) drops everything.
+    _invalidate_rbac_cache(req, full=True)
+    assert cache.get("pidB", "acme", "default", "tool:call", "y") is None

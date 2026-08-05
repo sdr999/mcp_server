@@ -168,6 +168,28 @@ async def enforce(request, policy: str):
 
         eval_res = await evaluator.evaluate(principal, action, resource)
         if not eval_res.allowed:
+            rbac_mode = getattr(request.app.state, "rbac_mode", "enforce")
+            if rbac_mode == "shadow":
+                # §19: shadow mode evaluates and records but never blocks, so
+                # operators can seed grants from the would-deny log before
+                # flipping to enforce. The warning reaches the rotating file
+                # handler; the audit row is decision='shadow_deny'.
+                METRICS.inc("mcp_authz_shadow_denials_total")
+                log.warning(
+                    "RBAC shadow would-deny: principal=%s action=%s resource=%s decision=%s reason=%s",
+                    principal.principal_id[:12], action, resource, eval_res.decision, eval_res.reason,
+                )
+                store = getattr(request.app.state, "tenancy_store", None)
+                if store is not None:
+                    try:
+                        await store.log_audit(
+                            actor_principal=principal.principal_id, issuer=principal.issuer,
+                            org_id=principal.org_id, action=action, resource=resource,
+                            decision="shadow_deny", detail=eval_res.reason,
+                        )
+                    except Exception as exc:
+                        log.warning("shadow audit write failed: %s", exc)
+                return None
             METRICS.inc("mcp_authz_denials_total")
             return JSONResponse(
                 {"error": eval_res.reason, "decision": eval_res.decision},

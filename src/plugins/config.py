@@ -94,6 +94,7 @@ class AppContext:
     supabase_jwt_kid: str = ""
     superadmin_email: str = ""
     rbac_enabled: bool = False
+    rbac_mode: str = "enforce"  # shadow | enforce (§19 safe rollout)
     tenant_header: str = "X-Tenant-Id"
     workspace_header: str = "X-Workspace-Id"
     api_keys_file: Optional[Path] = None
@@ -101,7 +102,7 @@ class AppContext:
     tenancy_db_path: Optional[Path] = None
     tenancy_dsn: str = ""
     tenancy_db_name: str = "mcp_tenancy"
-    rbac_cache_ttl: float = 300.0
+    rbac_cache_ttl: float = 30.0
     rbac_cache_size: int = 10000
     tenancy_seed: bool = True
     default_org: str = "default"
@@ -277,10 +278,12 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         tenancy_db_path=(base_dir / p if (p := env.get("MCP_TENANCY_DB")) else (base_dir / "data" / "tenancy.db")),
         tenancy_dsn=env.get("MCP_TENANCY_DSN") or env.get("MONGODB_URI") or "",
         tenancy_db_name=env.get("MCP_TENANCY_DB_NAME") or env.get("DB_NAME") or "mcp_tenancy",
-        rbac_cache_ttl=float(env.get("MCP_RBAC_CACHE_TTL_SEC", "300")),
+        rbac_cache_ttl=float(env.get("MCP_RBAC_CACHE_TTL_SEC", "30")),
         rbac_cache_size=int(env.get("MCP_RBAC_CACHE_MAX_SIZE", "10000")),
         tenancy_seed=env.get("MCP_TENANCY_SEED", "true").lower() == "true",
         default_org=env.get("MCP_DEFAULT_ORG", "default"),
+        rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
+        rbac_mode=env.get("MCP_RBAC_MODE", "enforce").lower(),
     )
 
 
@@ -298,3 +301,5 @@ def validate_context(ctx: AppContext) -> None:
         raise RuntimeError("JWKS_URL must be set when MCP_AUTH_TYPE=bearer_jwt")
     if ctx.auth_type == "api_key" and not ctx.api_key_value:
         raise RuntimeError("MCP_API_KEY_VALUE must be set when MCP_AUTH_TYPE=api_key")
+    if ctx.rbac_mode not in ("shadow", "enforce"):
+        raise RuntimeError(f"MCP_RBAC_MODE must be shadow|enforce, got {ctx.rbac_mode!r}")
