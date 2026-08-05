@@ -324,7 +324,8 @@ class ToolLoader:
     def unload_module(self, module_name: str) -> None:
         for name in self._module_tools.pop(module_name, []):
             with contextlib.suppress(Exception):
-                self.mcp.remove_tool(name)
+                provider = getattr(self.mcp, "local_provider", self.mcp)
+                provider.remove_tool(name)
             if self._name_owner.get(name) == module_name:
                 self._name_owner.pop(name, None)
             self._tool_info.pop(name, None)
@@ -519,7 +520,8 @@ class ToolLoader:
             return False
         self._disabled[name] = module or self._disabled.get(name, "")
         with contextlib.suppress(Exception):
-            self.mcp.remove_tool(name)
+            provider = getattr(self.mcp, "local_provider", self.mcp)
+            provider.remove_tool(name)
         if module and name in self._module_tools.get(module, []):
             self._module_tools[module].remove(name)
         self._name_owner.pop(name, None)
