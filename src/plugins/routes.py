@@ -175,7 +175,15 @@ async def _tools_catalog(request):
     st = request.app.state
     if (denied := await enforce(request, st.read_auth)) is not None:
         return denied
-    return JSONResponse({"tools": st.loader.catalog()})
+    tools = st.loader.catalog()
+    store = getattr(st, "tenancy_store", None)
+    evaluator = getattr(st, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+    if store is not None:
+        from .tenancy.scoping import filter_tools_for_principal
+        tools = await filter_tools_for_principal(store, evaluator, principal, tools)
+    return JSONResponse({"tools": tools})
+
 
 
 async def _metrics(request):
@@ -479,7 +487,16 @@ async def _upstream_tools(request):
         return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
     except UpstreamError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
+
+    store = getattr(st, "tenancy_store", None)
+    evaluator = getattr(st, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+    if store is not None:
+        from .tenancy.scoping import filter_tools_for_principal
+        tools = await filter_tools_for_principal(store, evaluator, principal, tools)
+
     return JSONResponse({"upstream": server, "tools": tools})
+
 
 
 async def _upstream_tool_call(request):

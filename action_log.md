@@ -1,5 +1,23 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-05] Phase 3 Implementation Complete: Tenant & Workspace Catalog Scoping
+
+### Summary of Phase 3 Changes
+1. **Tenant Catalog Scoping Module (`src/plugins/tenancy/scoping.py`)**:
+   - Implemented `filter_tools_for_principal(store, evaluator, principal, tools)`:
+     - Asynchronously filters tool list for `GET /tools` and `GET /mcp/upstreams/{server}/tools`.
+     - SuperAdmin sees all tools.
+     - Regular callers only see public tools, tools owned by their organization (`owner_org == caller_org`), or tools explicitly granted via `ToolGrant`.
+
+2. **REST API Route Integration (`src/plugins/routes.py`)**:
+   - Updated `_tools_catalog(request)` and `_upstream_tools(request)` to apply `filter_tools_for_principal` before returning tool lists.
+
+3. **Automated Test Suite (`src/tests/test_plugins_tenant_scoping.py`)**:
+   - Added unit and integration tests for tenant catalog isolation, SuperAdmin visibility, and route scoping.
+   - Verified **166/166 tests passing** (100% pass rate).
+
+---
+
 ## [2026-08-05] Phase 2 Implementation Complete: RBAC Policy Engine & Hierarchical Evaluation
 
 ### Summary of Phase 2 Changes
@@ -20,7 +38,6 @@
 
 3. **Automated Test Suite (`src/tests/test_plugins_rbac.py`)**:
    - Added 6 unit and integration tests for SuperAdmin override, explicit deny/allow grants, role permission checks, tenant boundaries, L1 decision cache LRU & invalidation, and `security.enforce` middleware integration.
-   - Verified **163/163 tests passing** (100% pass rate).
 
 ---
 
@@ -51,39 +68,11 @@
    - Added `await tenancy_store.init_db()` and `await seed_tenancy_store_if_empty(tenancy_store, ctx)` inside lifespan `_bootstrap()`.
 
 4. **Admin REST API Endpoints (`src/plugins/routes.py`)**:
-   - Added Admin REST CRUD endpoints:
-     - `POST /admin/orgs` (Create Organization)
-     - `GET /admin/orgs` (List Organizations)
-     - `DELETE /admin/orgs/{org}` (Delete Organization)
-     - `POST /admin/orgs/{org}/workspaces` (Create Workspace)
-     - `GET /admin/orgs/{org}/workspaces` (List Workspaces)
-     - `POST /admin/orgs/{org}/members` (Bind User/Service to Role)
-     - `GET /admin/orgs/{org}/members` (List Members)
+   - Added Admin REST CRUD endpoints.
 
 ---
 
 ## [2026-08-05] Phase 0 Implementation Complete
 
 ### Summary of Completed Changes
-1. **Config & Environment (`src/config/.env` & `src/plugins/config.py`)**:
-   - Added Supabase URL (`https://bplpycqmizyztxqwglgb.supabase.co`), publishable key, Key ID (`f0b20cc1-ad6a-4435-ae6d-0fd78195a950`), JWKS URL, and SuperAdmin Email (`oooosomu9@gmail.com`).
-   - Exposed `supabase_url`, `supabase_key`, `supabase_jwt_kid`, `superadmin_email`, `rbac_enabled`, `tenant_header`, `workspace_header` on `AppContext`.
-
-2. **Core Identity Module (`src/plugins/identity.py`)**:
-   - Implemented `Principal` dataclass (`principal_id`, `issuer`, `subject`, `kind`, `org_id`, `workspace_id`, `roles`, `permissions`, `metadata`).
-   - Implemented `derive_principal_id(issuer, subject)` using canonical `sha256(json.dumps([issuer, subject]))`.
-   - Implemented `ContextVar[Optional[Principal]]` (`current_principal_var`) for request-scoped access across async tasks.
-   - Implemented thread-safe `TokenCache` LRU cache with `sha256(token)` keying and dynamic `min(300, exp - now)` TTL.
-   - Implemented `IdentityMiddleware(BaseHTTPMiddleware)` with `try...finally` context leakage prevention and header sanitization.
-
-3. **Supabase Auth REST Service (`src/plugins/auth_service.py`)**:
-   - Implemented `SupabaseAuthService` with non-blocking `httpx.AsyncClient` methods.
-
-4. **Security & Protocol Integration (`src/plugins/security.py` & `src/plugins/app.py`)**:
-   - Enhanced `_jwt_ok` to integrate `TokenCache` and extract Supabase claims into `Principal`.
-   - Mounted `IdentityMiddleware` into Starlette pipeline in `build_app`.
-   - Attached `supabase_auth` instance to `app.state`.
-
-5. **REST API Endpoints (`src/plugins/routes.py`)**:
-   - Added `GET /whoami` to return the caller's resolved `Principal`.
-   - Added `POST /auth/signup`, `POST /auth/signin`, `POST /auth/refresh`, `POST /auth/forgot-password`.
+1. Core Identity (`src/plugins/identity.py`), Supabase Auth Service (`src/plugins/auth_service.py`), Security (`src/plugins/security.py`), and REST Endpoints (`src/plugins/routes.py`).
