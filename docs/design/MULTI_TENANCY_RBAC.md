@@ -1,17 +1,19 @@
 # Design: Multi-Tenancy & RBAC for the MCP Tool Server
 
-Status: **Proposed (revised after SDE5 + staff-architect review — see §17–§21)**
+Status: **Proposed (revised after SDE5 + staff-architect review — see §17–§22)**
 · Branch: `org` · Scope of this doc: design only (no implementation)
 
 > **Review note:** §§1–16 are the original proposal. §17 (corner cases), §18
-> (cross-cutting concerns), §19 (safe rollout), §20 (pluggable store), and §21
-> (staff-architect review) are the review layer and, where they conflict with an
-> earlier section, **they win** — the most important being: the principal key is
-> `(issuer, subject)` not `subject` (§17.1); onboarded tool names are
-> **tenant-qualified** to survive the flat FastMCP registry (§17.2); the tenancy
-> store is a **pluggable, env-selected backend** (SQLite is only the *default*)
-> with first-start seeding (§20); and the store interface is **async, read-optimized
-> for the authz hot path, seeded under a lock, and fails closed** (§21).
+> (cross-cutting concerns), §19 (safe rollout), §20 (pluggable store), §21
+> (staff-architect review), and §22 (write-path clogging + pluggable queue) are the
+> review layer and, where they conflict with an earlier section, **they win** — the
+> most important being: the principal key is `(issuer, subject)` not `subject`
+> (§17.1); onboarded tool names are **tenant-qualified** to survive the flat FastMCP
+> registry (§17.2); the tenancy store is a **pluggable, env-selected backend**
+> (SQLite is only the *default*) with first-start seeding (§20); the store interface
+> is **async, read-optimized for the authz hot path, seeded under a lock, and fails
+> closed** (§21); and deferrable writes go through a **pluggable service queue** so
+> the request path never clogs on the single-writer store (§22).
 
 ## Decisions baked into this design
 
@@ -753,3 +755,146 @@ Where these conflict with earlier sections, they win.
 - New config: `MCP_TENANCY_KEK` (or KMS ref, §21.7),
   `MCP_TENANCY_RECONCILE_ROLES=false` (§21.5), `MCP_AUDIT_SINK=store|stdout|both`
   and `MCP_AUDIT_RETENTION_DAYS` (§21.8), `MCP_TENANCY_POOL_SIZE` (§21.2).
+
+---
+
+## 22. Write-path clogging & the pluggable service queue
+
+### 22.1 Yes — clogging happens on the *write* path, and it's the real risk
+
+Reads are cacheable (§18.2/§21.3); **writes are the bottleneck**, and under logical
+multi-tenancy they all land on one shared store in one process:
+
+- **Audit on every request.** §18.5/§21.8 record allows *and* denies keyed on
+  `principal_id`. That turns **every** authorized call — the hot path — into a
+  store **write**. On the default SQLite backend (single-writer, one file) these
+  writes **serialize**: a burst from one tenant's agent stalls audit writes for
+  everyone, and if audit is synchronous it stalls the *requests* too.
+- **Cache-invalidation fan-out.** A grant/role change must invalidate cached
+  principals across replicas (§21.4). Doing that inline couples the admin write to
+  N network calls.
+- **Onboarding.** `/admin/tools/onboard` can run `pip install` and import modules —
+  **seconds** of work holding a request open; several at once exhaust the worker
+  pool (a noisy-neighbor vector, §18.4).
+- **Metrics / notifications.** `tools/list_changed` pushes (`notifications.py`) and
+  per-tenant metric updates are best-effort side-effects that shouldn't block a
+  reply.
+
+Left synchronous, these make the **write path the clog point**: request latency
+becomes hostage to the slowest writer, and a single tenant can starve the shared
+worker pool and the single store writer. **Decoupling deferrable writes from the
+request path is the fix** — enqueue, ack the request, drain on a background worker.
+
+### 22.2 What is queued vs what stays synchronous (correctness first)
+
+The split is dictated by **authorization correctness**, not convenience:
+
+| Write | Path | Why |
+|-------|------|-----|
+| Grant / role / membership / org changes | **Synchronous, durable before 2xx** | These *are* the authz truth. Acking before commit could authorize against state that never persisted. Never queue. |
+| **Audit** records | **Queued** (with a durable-fallback, §22.5) | Must not be lost, but must not block the reply; slight delay is fine. |
+| Cache-invalidation events | **Queued** (pub/sub fan-out) | Best-effort + TTL backstop already (§21.4). |
+| Onboarding install/import | **Queued job** → status via existing `pending` flow | Long-running; the API returns `202 accepted` + a job id, worker installs, result surfaces through the current pending/approve endpoints. |
+| Metrics / `list_changed` notify | **Queued**, droppable | Pure side-effects; a bounded-queue drop is acceptable. |
+
+Rule: **anything a later request's authorization decision depends on is written
+synchronously; everything else is enqueued.**
+
+### 22.3 The queue is pluggable — same pattern as the store (§20)
+
+Do **not** hard-code a broker. A `TaskQueue` interface with an env-selected backend
+and a registry/factory, mirroring §20 exactly (`plugins/queue/`):
+
+```python
+class TaskQueue(Protocol):
+    async def enqueue(self, topic: str, payload: dict, *,
+                      key: str | None = None,        # ordering/partition key (e.g. org_id)
+                      dedup_id: str | None = None) -> None: ...
+    def subscribe(self, topic: str, handler: Callable[[dict], Awaitable[None]]) -> None: ...
+    async def start(self) -> None: ...   # spawn workers in the app lifespan
+    async def close(self) -> None: ...   # drain + stop on shutdown
+
+_QUEUE_BACKENDS: dict[str, Callable[[AppContext], TaskQueue]] = {}
+def register_queue(name, ctor): _QUEUE_BACKENDS[name.lower()] = ctor
+
+def create_queue(ctx) -> TaskQueue:
+    spec = ctx.queue_backend                     # MCP_QUEUE_BACKEND
+    q = (_load_dotted(spec) if ":" in spec else _QUEUE_BACKENDS[spec.lower()])(ctx)
+    return q
+
+register_queue("inline",   lambda ctx: InlineQueue())      # run handler inline (RBAC-off / dev parity)
+register_queue("memory",   lambda ctx: AsyncioQueue(ctx))  # in-process asyncio.Queue + worker task
+register_queue("redis",    lambda ctx: RedisStreamsQueue(ctx))
+register_queue("rabbitmq", lambda ctx: AmqpQueue(ctx))
+register_queue("kafka",    lambda ctx: KafkaQueue(ctx))
+register_queue("sqs",      lambda ctx: SqsQueue(ctx))
+```
+
+| Backend (`MCP_QUEUE_BACKEND`) | Use case | Dependency |
+|---|---|---|
+| `inline` *(default)* | single-node / RBAC-off; handler runs inline — **exact current behavior**, zero moving parts | none |
+| `memory` | single-node async offload: `asyncio.Queue` + background worker task | none |
+| `redis` | multi-replica; Redis Streams (consumer groups, acks, replay) | `redis` (soft) |
+| `rabbitmq` | multi-replica; AMQP work queues + DLX | `aio-pika` (soft) |
+| `kafka` | high-throughput / durable log / analytics | `aiokafka` (soft) |
+| `sqs` | serverless / managed | `aioboto3` (soft) |
+| custom | `module:Factory` (NATS, Pub/Sub, …) | deployment-supplied |
+
+`inline` is the **default so nothing changes for single-node or RBAC-off** — the
+same "opt-in, zero-change-by-default" discipline as the store. Broker drivers are
+**soft imports**, loaded only when selected. `create_queue(ctx)` is built once in
+the lifespan alongside `create_store(ctx)`; workers start after the store is ready
+and **drain on shutdown**.
+
+### 22.4 Delivery semantics (must line up with the store's idempotency)
+
+- **At-least-once + idempotent handlers.** Brokers redeliver on crash. Every
+  consumer must be **idempotent** — which the store writes already are (idempotent
+  upserts, §21.1). Audit rows carry a `dedup_id` (e.g. request id) so a redelivered
+  audit event upserts, not duplicates.
+- **Ordering only where it matters.** Global ordering is expensive; use the
+  **partition key = `org_id`** so a tenant's events stay ordered relative to each
+  other without serializing the whole system.
+- **Bounded queue + shed policy (back-pressure).** The queue is capped
+  (`MCP_QUEUE_MAX_DEPTH`); on overflow, **droppable** topics (metrics/notify) are
+  shed with a counter while **audit** applies the durable fallback (§22.5). This
+  stops a write storm from turning into unbounded memory growth — the queue must
+  relieve clogging, not relocate it.
+- **Dead-letter queue.** Handlers that fail past `MCP_QUEUE_MAX_RETRIES` go to a
+  DLQ topic with the error, for inspection/replay — never silently dropped for
+  non-droppable topics.
+
+### 22.5 Failure semantics — the queue must not lose audit or fail open
+
+- **Queue down ≠ authz down.** Authorization reads/writes go **straight to the
+  store**, never through the queue, so a broker outage can't affect access
+  decisions (they already fail closed, §21.4). The queue only carries deferrable
+  work.
+- **Durable audit fallback.** Audit is security evidence (§21.8) and must survive a
+  broker outage: if `enqueue` fails, the handler **writes the audit record
+  synchronously to the store (or the stdout sink)** before returning. Slower, but
+  **never lost**. `MCP_AUDIT_SINK=both` (§21.8) already gives an independent path.
+- **Droppable side-effects degrade, not fail.** Metrics/notify losses increment a
+  `queue_dropped_total{topic}` counter and are otherwise ignored.
+- **Config validation (extends §20.6/§18.6).** Reject an unknown
+  `MCP_QUEUE_BACKEND`; a broker backend without its connection URL; `kafka`/`sqs`
+  selected without the soft dep installed. Fail fast at startup.
+
+### 22.6 Config & phase placement
+
+```bash
+MCP_QUEUE_BACKEND=inline         # inline | memory | redis | rabbitmq | kafka | sqs | <module:Factory>
+MCP_QUEUE_URL=                   # broker connection (redis/amqp/kafka bootstrap/sqs); required for those
+MCP_QUEUE_MAX_DEPTH=10000        # bounded queue; overflow → shed droppable / fallback audit (§22.4)
+MCP_QUEUE_WORKERS=2              # background consumer concurrency per replica
+MCP_QUEUE_MAX_RETRIES=5         # handler retries before DLQ
+MCP_AUDIT_ASYNC=true            # route audit through the queue (false = always synchronous store write)
+```
+
+- **Phase 2** introduces the queue with **`inline`+`memory`** backends and routes
+  **audit** through it (the highest-frequency write) with the durable fallback.
+- **Phase 3** adds the **onboarding job** offload (202 + worker) and
+  cache-invalidation fan-out over the same broker.
+- **Broker backends (`redis`/`rabbitmq`/`kafka`/`sqs`)** land with the multi-replica
+  push (alongside Postgres/Mongo, §18.1) — they're only meaningful once there is
+  more than one replica to coordinate.
