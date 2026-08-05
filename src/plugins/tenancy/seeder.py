@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from plugins.identity import derive_principal_id
+from plugins.identity import BUILTIN_ROLE_PERMISSIONS, derive_principal_id
 
 if TYPE_CHECKING:
     from .base import TenancyStore
@@ -16,25 +16,9 @@ log = logging.getLogger("MCP_logger")
 
 SEED_LOCK = asyncio.Lock()
 
-BUILTIN_ROLES = {
-    "platform_superadmin": [
-        "tool:list", "tool:call", "tool:onboard", "tool:manage",
-        "upstream:read", "upstream:call", "upstream:manage",
-        "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin"
-    ],
-    "org_admin": [
-        "tool:list", "tool:call", "tool:onboard", "tool:manage",
-        "upstream:read", "upstream:call", "upstream:manage",
-        "member:manage", "role:bind", "org:admin", "workspace:admin"
-    ],
-    "developer": [
-        "tool:list", "tool:call", "tool:onboard", "tool:manage",
-        "upstream:read", "upstream:call"
-    ],
-    "agent_consumer": [
-        "tool:list", "tool:call", "upstream:read", "upstream:call"
-    ],
-}
+# Seed the store from the canonical role->permission matrix (§5) defined in
+# plugins.identity, so the seeded rows and the in-code fallback never drift (H1).
+BUILTIN_ROLES = {role: sorted(perms) for role, perms in BUILTIN_ROLE_PERMISSIONS.items()}
 
 
 async def seed_tenancy_store_if_empty(store: TenancyStore, ctx) -> None:

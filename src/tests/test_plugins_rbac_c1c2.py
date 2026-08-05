@@ -250,3 +250,40 @@ def test_cache_invalidation_helper():
     # Full clear (grant change) drops everything.
     _invalidate_rbac_cache(req, full=True)
     assert cache.get("pidB", "acme", "default", "tool:call", "y") is None
+
+
+# --------------------------------------------------------------------------
+# H3 — a bare signed token floors at agent_consumer, not developer.
+# H1 — one canonical role->permission matrix (identity == seeder), no drift.
+# --------------------------------------------------------------------------
+
+def test_default_role_is_least_privilege():
+    from plugins.identity import build_principal_from_claims
+
+    p = build_principal_from_claims(issuer="iss", subject="nobody")  # no roles claim
+    assert p.roles == ["agent_consumer"]
+    # Must NOT inherit onboarding / management from a bare token (H3, §17.4).
+    assert "tool:onboard" not in p.permissions
+    assert "tool:manage" not in p.permissions
+    assert {"tool:list", "tool:call"} <= p.permissions
+
+
+def test_permissions_derived_from_matrix_and_unknown_role_denied():
+    from plugins.identity import build_principal_from_claims, BUILTIN_ROLE_PERMISSIONS
+
+    p = build_principal_from_claims(issuer="iss", subject="a", roles=["org_admin"])
+    assert p.permissions == BUILTIN_ROLE_PERMISSIONS["org_admin"]
+
+    # An unknown role contributes nothing (deny-by-default).
+    p2 = build_principal_from_claims(issuer="iss", subject="b", roles=["wizard"])
+    assert p2.permissions == set()
+
+
+def test_seeder_and_identity_share_one_matrix():
+    from plugins.identity import BUILTIN_ROLE_PERMISSIONS
+    from plugins.tenancy.seeder import BUILTIN_ROLES
+
+    # Seeder rows are exactly the identity matrix (sorted lists) -> no drift (H1).
+    assert set(BUILTIN_ROLES) == set(BUILTIN_ROLE_PERMISSIONS)
+    for role, perms in BUILTIN_ROLE_PERMISSIONS.items():
+        assert set(BUILTIN_ROLES[role]) == perms

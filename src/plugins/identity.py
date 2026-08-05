@@ -185,6 +185,52 @@ class TokenCache:
 token_cache = TokenCache()
 
 
+# Canonical role -> permission matrix (§5). SINGLE source of truth: the store's
+# `roles` table is seeded from this (see tenancy.seeder) and it is authoritative
+# at runtime via resolve_principal(); this in-code copy is the seed and the
+# RBAC-off / store-unavailable fallback derivation, so the two never drift (H1).
+BUILTIN_ROLE_PERMISSIONS: Dict[str, Set[str]] = {
+    "platform_superadmin": {
+        "tool:list", "tool:call", "tool:onboard", "tool:manage",
+        "upstream:read", "upstream:call", "upstream:manage",
+        "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin",
+    },
+    "org_admin": {
+        "tool:list", "tool:call", "tool:onboard", "tool:manage",
+        "upstream:read", "upstream:call", "upstream:manage",
+        "member:manage", "role:bind", "org:admin", "workspace:admin",
+    },
+    "developer": {
+        "tool:list", "tool:call", "tool:onboard", "tool:manage",
+        "upstream:read", "upstream:call",
+    },
+    "agent_consumer": {
+        "tool:list", "tool:call", "upstream:read", "upstream:call",
+    },
+}
+
+# The least-privilege default for an authenticated principal with no role binding
+# (deny-by-default, §6). NOT 'developer' — a bare signed token must not inherit
+# tool:onboard / tool:manage (H3, §17.4).
+DEFAULT_ROLE = "agent_consumer"
+
+# Back-compat alias used by the identity middleware's superadmin-email bootstrap.
+SUPERADMIN_PERMISSIONS = BUILTIN_ROLE_PERMISSIONS["platform_superadmin"]
+
+
+def permissions_for_roles(roles: List[str]) -> Set[str]:
+    """Union of the permissions of the given roles per the built-in matrix.
+
+    Unknown roles contribute nothing (deny-by-default). This is the fallback
+    derivation; when RBAC is enabled the store's role definitions win via
+    resolve_principal().
+    """
+    perms: Set[str] = set()
+    for r in roles:
+        perms |= BUILTIN_ROLE_PERMISSIONS.get(r, set())
+    return perms
+
+
 def create_anonymous_principal(org_id: str = "default", workspace_id: str = "default") -> Principal:
     pid = derive_principal_id("local", "anonymous")
     return Principal(
@@ -194,16 +240,9 @@ def create_anonymous_principal(org_id: str = "default", workspace_id: str = "def
         kind="user",
         org_id=org_id,
         workspace_id=workspace_id,
-        roles=["agent_consumer"],
-        permissions={"tool:list", "tool:call", "upstream:read", "upstream:call"},
+        roles=[DEFAULT_ROLE],
+        permissions=permissions_for_roles([DEFAULT_ROLE]),
     )
-
-
-SUPERADMIN_PERMISSIONS = {
-    "tool:list", "tool:call", "tool:onboard", "tool:manage",
-    "upstream:read", "upstream:call", "upstream:manage",
-    "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin",
-}
 
 
 def create_superadmin_principal(org_id: str = "default", workspace_id: str = "default") -> Principal:
@@ -216,7 +255,7 @@ def create_superadmin_principal(org_id: str = "default", workspace_id: str = "de
         org_id=org_id,
         workspace_id=workspace_id,
         roles=["platform_superadmin"],
-        permissions=set(SUPERADMIN_PERMISSIONS),
+        permissions=permissions_for_roles(["platform_superadmin"]),
     )
 
 
@@ -230,16 +269,13 @@ def build_principal_from_claims(
     superadmin_email: str = "",
 ) -> Principal:
     pid = derive_principal_id(issuer, subject)
-    assigned_roles = roles[:] if roles else ["developer"]
+    # Floor at the least-privilege default, not 'developer' (H3).
+    assigned_roles = roles[:] if roles else [DEFAULT_ROLE]
     if superadmin_email and email and email.lower() == superadmin_email.lower():
         if "platform_superadmin" not in assigned_roles:
             assigned_roles.append("platform_superadmin")
 
-    perms = {"tool:list", "tool:call", "upstream:read", "upstream:call"}
-    if "platform_superadmin" in assigned_roles or "org_admin" in assigned_roles:
-        perms.update({"tool:onboard", "tool:manage", "upstream:manage", "member:manage", "role:bind", "org:admin", "workspace:admin"})
-    if "platform_superadmin" in assigned_roles:
-        perms.add("platform:admin")
+    perms = permissions_for_roles(assigned_roles)
 
     metadata = {}
     if email:
