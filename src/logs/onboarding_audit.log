@@ -1,0 +1,25 @@
+{"ts": 1785896665.3471885, "action": "onboard", "name": "calculator", "result": "onboarded", "detail": "tools=['add', 'multiply']"}
+{"ts": 1785897371.3938522, "action": "onboard", "name": "user_service", "result": "onboarded", "detail": "tools=['get_info']"}
+{"ts": 1785897557.4252038, "action": "onboard", "name": "get_info1", "result": "pending", "detail": "tool failed to load: tool 'get_info1' is exposed only by the legacy filename-match convention; onboarded tools must opt in explicitly with @tool(...), TOOLS=[...], or register(mcp)"}
+{"ts": 1785899076.8030827, "action": "onboard", "name": "good_tool", "result": "pending", "detail": "tool failed to load: import error: No module named 'tools.good_tool'"}
+{"ts": 1785899086.47815, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785899179.9915638, "action": "onboard", "name": "get_info2", "result": "pending", "detail": "tool failed to load: tool 'get_info2' is exposed only by the legacy filename-match convention; onboarded tools must opt in explicitly with @tool(...), TOOLS=[...], or register(mcp)"}
+{"ts": 1785899386.9911885, "action": "onboard", "name": "get_info3", "result": "onboarded", "detail": "tools=['get_info3']"}
+{"ts": 1785899483.205976, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785899564.8836884, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785899645.2469957, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785899767.8585057, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900429.4578946, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900746.6780105, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900756.982644, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900784.362843, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900807.7048118, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900827.252662, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900843.667051, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900862.7913313, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900879.5390058, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900932.3320384, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785900988.178891, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785901007.0916085, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785901044.0125976, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785901058.0994592, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}

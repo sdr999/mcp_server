@@ -15,6 +15,7 @@ import threading
 
 from . import dependency_risk as risk
 from .notifications import notify_tools_changed
+from .observability import TraceCorrelationMiddleware, setup_observability
 from .onboarding import OnboardingManager
 from .routes import feature_routes, register_metrics
 from .security import ApiKeyMiddleware, build_mcp
@@ -24,6 +25,7 @@ from .upstreams import UpstreamRegistry
 from .watcher import ToolDirectoryWatcher
 
 log = logging.getLogger("MCP_logger")
+
 
 
 async def _reload_drain(loader: ToolLoader, reload_q: "queue.Queue", mcp, import_timeout: float,
@@ -97,11 +99,18 @@ def build_app(ctx):
     else:
         app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
         protocol_prefixes = ("/mcp",)
+    app.add_middleware(TraceCorrelationMiddleware)
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
                            protected_prefixes=protocol_prefixes)
     for route in feature_routes():
         app.router.routes.append(route)
+
+    log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
+    setup_observability(app=app, log_file=log_file_path)
+    app.state.log_file_path = log_file_path
+
+
 
     app.state.ready = False
     app.state.loader = loader

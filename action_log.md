@@ -1,0 +1,45 @@
+# Action Log — Swagger UI & OpenAPI Specification Implementation
+
+## Executive Summary
+This document tracks all execution steps taken to analyze the MCP tool server, update the OpenAPI specification, build the interactive Swagger UI interface, enable remote MCP federation docs, and verify system integrity via unit testing.
+
+---
+
+## Chronological Action Log
+
+| Timestamp (ISO) | Step ID | Component | Description / Action Taken | Status |
+|-----------------|---------|-----------|----------------------------|--------|
+| 2026-08-04T23:28:10 | ACT-001 | Codebase Scan | Analyzed directory structure, entry points (`src/main.py`, `src/multiple_mcp_main.py`), plugins (`src/plugins/*`), routes, and documentation. Identified core functions (System Probes, Tool Catalog, Direct HTTP Tool Call, Onboarding, Admin, Federation). | COMPLETED |
+| 2026-08-04T23:28:30 | ACT-002 | Swagger Status Check | Verified absence of Swagger UI page on server. `docs/MCP_SERVER_FEATURES.md` noted: `"there is no Swagger/OpenAPI UI on this server"`. | COMPLETED |
+| 2026-08-04T23:28:39 | ACT-003 | Implementation Planning | Formulated comprehensive design plan in `implementation_plan.md` covering schema updates, route registration, UI template embedding, and test coverage. | COMPLETED |
+| 2026-08-04T23:30:10 | ACT-004 | OpenAPI Spec Update | Rebuilt `openapi/openapi.yaml` to document all 24 API routes across System, Tools, Onboarding & Admin, and Federation tags, including schemas and security definitions. | COMPLETED |
+| 2026-08-04T23:30:14 | ACT-005 | Security Exemption Update | Modified `src/plugins/security.py` to add `DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml"}` to `EXEMPT_PATHS`. | COMPLETED |
+| 2026-08-04T23:30:33 | ACT-006 | Plugin Routes Update | Added `SWAGGER_UI_HTML` template, `_swagger_ui`, `_openapi_json`, and `_openapi_yaml` handlers in `src/plugins/routes.py`. Registered `/docs`, `/swagger`, `/openapi.json`, and `/openapi.yaml` in `feature_routes()`. | COMPLETED |
+| 2026-08-04T23:32:18 | ACT-007 | Test Suite Creation | Authored unit tests in `src/tests/test_swagger_docs.py` testing `/docs`, `/swagger`, `/openapi.json`, and `/openapi.yaml`. | COMPLETED |
+| 2026-08-04T23:32:19 | ACT-008 | Documentation Update | Updated `docs/MCP_SERVER_FEATURES.md` and `openapi/README.md` to document the newly available interactive Swagger UI endpoints. | COMPLETED |
+| 2026-08-04T23:33:51 | ACT-009 | Dependency Check | Installed missing dependencies (`fastmcp`, `watchdog`) to enable test suite execution. | COMPLETED |
+| 2026-08-04T23:33:55 | ACT-010 | Unit Test Execution | Ran `pytest src/tests/test_swagger_docs.py`. Verified 100% pass rate (`1 passed`). | COMPLETED |
+| 2026-08-04T23:34:46 | ACT-011 | Integration Test Suite | Executed full core plugin test suite (`120 passed in 14.77s`). | COMPLETED |
+| 2026-08-04T23:38:29 | ACT-012 | OpenAPI Docs Self-Ref | Added `/docs`, `/swagger`, `/openapi.json`, `/openapi.yaml` path definitions to `openapi/openapi.yaml`. | COMPLETED |
+| 2026-08-04T23:38:43 | ACT-013 | Monolith Parity Update | Updated `src/multiple_mcp_main.py` with `DOCS_PATHS`, `SWAGGER_UI_HTML`, and handlers so both single-file and plugin servers serve Swagger UI. | COMPLETED |
+| 2026-08-04T23:39:06 | ACT-014 | Final Verification | Ran combined test suite (`33 passed in 5.46s`). | COMPLETED |
+| 2026-08-05T08:55:00 | ACT-015 | Unused Code Cleanup | Audit of `src/utils/` revealed 5 unreferenced dead files (`common_utils.py`, `mcp_server_generator.py`, `otel_utils.py`, `rag_store.py`, `servicenow_agent_runtime.py`). Directory removed. | COMPLETED |
+| 2026-08-05T08:56:34 | ACT-016 | Observability Module | Implemented `src/plugins/observability.py` with `StructuredJsonFormatter`, `SecretMaskingFilter`, `ProbeLogSampler`, W3C `traceparent` parser, and `TraceCorrelationMiddleware`. | COMPLETED |
+| 2026-08-05T08:56:47 | ACT-017 | App Integration | Wired `TraceCorrelationMiddleware` and `setup_observability()` into `src/plugins/app.py` and `src/tool_runner.py` with `RotatingFileHandler` support (`logs/mcp_server.json.log`). | COMPLETED |
+| 2026-08-05T08:57:15 | ACT-018 | Observability Test Suite | Created `src/tests/test_observability.py`. Executed full test suite (`46 passed in 7.68s`). | COMPLETED |
+| 2026-08-05T09:07:44 | ACT-019 | Log Exposure Endpoints | Implemented `GET /admin/logs` and `GET /admin/logs/{log_category}` in `routes.py` with level, trace ID, and search filtering. Documented in `openapi.yaml`. Test suite passing (`47 passed`). | COMPLETED |
+
+---
+
+## Key Output Artifacts & Endpoints
+- **Swagger UI Page**: `http://localhost:8000/docs` (or `/swagger`)
+- **Log Exposure API**: `GET /admin/logs?type=server` (or `audit` / `all`) & `GET /admin/logs/{log_category}`
+- **OpenAPI JSON Spec**: `http://localhost:8000/openapi.json`
+- **OpenAPI YAML Spec**: `http://localhost:8000/openapi.yaml`
+- **Specification File**: [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml)
+- **Observability Module**: [`src/plugins/observability.py`](file:///d:/python/mcp_server/src/plugins/observability.py)
+- **Plugin Routes File**: [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py)
+- **Monolith Server File**: [`src/multiple_mcp_main.py`](file:///d:/python/mcp_server/src/multiple_mcp_main.py)
+- **Test Suite**: [`src/tests/test_observability.py`](file:///d:/python/mcp_server/src/tests/test_observability.py)
+
+

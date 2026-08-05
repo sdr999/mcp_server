@@ -55,7 +55,7 @@ from fastmcp import FastMCP
 from fastmcp.tools import FunctionTool
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -82,7 +82,8 @@ DEFAULT_SANDBOX_TIMEOUT = 30
 DEFAULT_MANIFEST = "tools.manifest.json"
 HEALTH_PATH = "/healthz"
 READY_PATH = "/readyz"
-EXEMPT_PATHS = {HEALTH_PATH, READY_PATH}
+DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml"}
+EXEMPT_PATHS = {HEALTH_PATH, READY_PATH} | DOCS_PATHS
 
 
 # ======================================================================
@@ -994,10 +995,80 @@ async def _admin_enable(request):
     return JSONResponse({"status": "enabled", "tool": name, "reloaded": bool(module)})
 
 
+SWAGGER_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MCP Server API - Swagger UI</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="icon" type="image/png" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/favicon-32x32.png" />
+  <style>
+    html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+    *, *:before, *:after { box-sizing: inherit; }
+    body { margin:0; background: #fafafa; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" charset="UTF-8"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js" charset="UTF-8"></script>
+  <script>
+    window.onload = function() {
+      window.ui = SwaggerUIBundle({
+        url: "/openapi.json",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
+      });
+    };
+  </script>
+</body>
+</html>
+"""
+
+
+async def _swagger_ui(_request):
+    return HTMLResponse(SWAGGER_UI_HTML)
+
+
+def _load_openapi_spec() -> dict:
+    spec_path = Path(__file__).resolve().parent.parent / "openapi" / "openapi.yaml"
+    if not spec_path.exists():
+        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+    try:
+        import yaml
+        return yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.error("Failed to parse openapi.yaml: %s", exc)
+        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+
+
+async def _openapi_json(_request):
+    spec = _load_openapi_spec()
+    return JSONResponse(spec)
+
+
+async def _openapi_yaml(_request):
+    spec_path = Path(__file__).resolve().parent.parent / "openapi" / "openapi.yaml"
+    content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+    return PlainTextResponse(content, media_type="text/yaml")
+
+
 def _feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
         Route(READY_PATH, _readyz, methods=["GET"]),
+        Route("/docs", _swagger_ui, methods=["GET"]),
+        Route("/swagger", _swagger_ui, methods=["GET"]),
+        Route("/openapi.json", _openapi_json, methods=["GET"]),
+        Route("/openapi.yaml", _openapi_yaml, methods=["GET"]),
         Route("/status", _status, methods=["GET"]),
         Route("/tools", _tools_catalog, methods=["GET"]),
         Route("/metrics", _metrics, methods=["GET"]),
@@ -1006,6 +1077,7 @@ def _feature_routes() -> List[Route]:
         Route("/admin/tool/{name}/disable", _admin_disable, methods=["POST"]),
         Route("/admin/tool/{name}/enable", _admin_enable, methods=["POST"]),
     ]
+
 
 
 # ======================================================================

@@ -80,8 +80,12 @@ _SPEC_RE = re.compile(
 IMPORT_TO_PACKAGE = {
     "yaml": "pyyaml", "bs4": "beautifulsoup4", "PIL": "pillow",
     "cv2": "opencv-python", "sklearn": "scikit-learn", "dotenv": "python-dotenv",
-    "jwt": "pyjwt",
+    "jwt": "pyjwt", "fitz": "pymupdf", "docx": "python-docx",
+    "pptx": "python-pptx", "dateutil": "python-dateutil",
+    "psycopg2": "psycopg2-binary", "mysql": "mysql-connector-python",
+    "git": "gitpython", "dns": "dnspython", "magic": "python-magic",
 }
+
 
 
 def resolve_import_name(module_name: str) -> str:

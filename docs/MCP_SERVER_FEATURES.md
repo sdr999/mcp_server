@@ -102,7 +102,7 @@ treated as unset, so the fallback still applies). A missing `config/.env` is fin
 `bearer_jwt` modes (api key or a valid JWT respectively); they are open only in
 `none` mode. Admin endpoints always require `MCP_ADMIN_TOKEN` regardless of MCP auth
 mode, and are **disabled** (503) when it is unset. `GET` routes also answer `HEAD`.
-Unknown paths return `404` (there is no Swagger/OpenAPI UI on this server).
+Unknown paths return `404`. Interactive Swagger UI documentation is available at `/docs` (and `/swagger`), backed by `/openapi.json` and `/openapi.yaml`.
 
 Readiness split lets a blue-green deploy wait for `/readyz == 200` before routing.
 

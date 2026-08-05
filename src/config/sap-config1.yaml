@@ -1,6 +1,0 @@
-purchase_order_attributes:
-  - CreationDate
-  - NetPriceAmount
-  - Supplier
-  - CompanyCode
-  - PurchasingOrganization

@@ -64,6 +64,16 @@ def main() -> int:
             sys.path.insert(0, path)
     _apply_limits(req.get("limits"))
 
+    # Set trace_id if passed from parent server process
+    trace_id = req.get("trace_id") or os.environ.get("MCP_TRACE_ID")
+    if trace_id:
+        try:
+            from plugins.observability import trace_id_ctx
+            trace_id_ctx.set(trace_id)
+        except Exception:
+            pass
+
+
     import contextlib
     import io
 

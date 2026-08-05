@@ -20,7 +20,8 @@ log = logging.getLogger("MCP_logger")
 
 HEALTH_PATH = "/healthz"
 READY_PATH = "/readyz"
-EXEMPT_PATHS = {HEALTH_PATH, READY_PATH}
+DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml"}
+EXEMPT_PATHS = {HEALTH_PATH, READY_PATH} | DOCS_PATHS
 
 
 def build_mcp(ctx) -> Tuple[FastMCP, Optional[JWTVerifier]]:

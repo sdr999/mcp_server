@@ -294,10 +294,10 @@ class OnboardingManager:
                              "(MCP_REQUIRE_SIGNED_TOOLS=true); publish via the signed manifest instead")
         if not _NAME_RE.match(name or ""):
             raise ValueError("invalid tool name: must match ^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-        try:
-            ast.parse(source)
-        except SyntaxError as exc:
-            raise ValueError(f"tool source has a syntax error: {exc}")
+        val = self.validate_source(source, requirements)
+        if not val["syntax_ok"]:
+            err_detail = val['hints'][0] if val['hints'] else 'invalid syntax'
+            raise ValueError(f"tool source validation failed: {err_detail}")
 
         if not overwrite:
             if (self.tools_dir / f"{name}.py").exists():
@@ -323,7 +323,9 @@ class OnboardingManager:
             "requested_at": time.time(),
             "requirements": [spec for spec, _ in specs_with_origin],
             "risk_reports": [asdict(r) for r in reports],
+            "hints": val.get("hints", []),
         }
+
 
         if not self.autoinstall and needs_install:
             return self._hold(name, source, record,
@@ -515,3 +517,42 @@ class OnboardingManager:
         self._audit("reject", name, "rejected")
         log.info("Pending tool %r rejected and discarded", name)
         return True
+
+    def validate_source(self, source: str, requirements: Optional[List[str]] = None) -> dict:
+        """Dry-run validation: check syntax, detect imports, risk assess dependencies,
+        and find tools declared in source without modifying disk or server state."""
+        result = {
+            "syntax_ok": False,
+            "tools_found": [],
+            "detected_imports": [],
+            "risk_reports": [],
+            "hints": [],
+        }
+        try:
+            tree = ast.parse(source)
+            result["syntax_ok"] = True
+        except SyntaxError as exc:
+            result["hints"].append(f"Syntax error on line {exc.lineno}: {exc.msg}")
+            return result
+
+        top_funcs = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+        result["tools_found"] = top_funcs
+
+        specs_with_origin = self._build_specs(source, requirements or [])
+        reports = self._assess_specs(specs_with_origin)
+        result["detected_imports"] = [spec for spec, _ in specs_with_origin]
+        result["risk_reports"] = [asdict(r) for r in reports]
+
+        if "@tool" in source and "tools_sdk" not in source:
+            result["hints"].append(
+                "Found '@tool' decorator in code but 'from tools_sdk import tool' is missing. "
+                "Add 'from tools_sdk import tool' at the top of your file."
+            )
+        elif "@tool" not in source and "TOOLS" not in source and "def register(" not in source:
+            result["hints"].append(
+                "No explicit @tool decorator or TOOLS list found. "
+                "Set MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT=false or add @tool() above your main function."
+            )
+        return result
+
+

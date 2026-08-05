@@ -1,110 +1,742 @@
 openapi: "3.0.3"
 info:
-  title: MCP Server API
-  version: "0.1.0"
+  title: MCP Tool Server API
+  version: "1.0.0"
   description: |
-    OpenAPI schema for the MCP server project. Replace and extend paths,
-    schemas and security definitions to match your implementation.
+    ### OpenAPI schema & Interactive API for the MCP Tool Server.
+
+    ---
+    ### 🛠️ How to Author & Onboard Tools:
+
+    When onboarding tools via `POST /admin/tools/onboard`, use the `@tool` decorator from `tools_sdk`:
+
+    ```python
+    from tools_sdk import tool
+
+    # Helper functions without @tool remain private/internal
+    def get_internal_data() -> str:
+        return "secret_value"
+
+    # Functions decorated with @tool become exposed MCP tools
+    @tool(description="Public MCP tool description")
+    def my_tool(input_param: str) -> dict:
+        data = get_internal_data()
+        return {"result": input_param, "data": data}
+    ```
+
+    #### Authoring Rules for New Developers:
+    1. **Import `tool`**: Always include `from tools_sdk import tool` at top of file when using `@tool()`.
+    2. **Public vs Private**: Only functions marked with `@tool()` are exposed to clients. Un-decorated functions act as internal helpers.
+    3. **Pip Dependencies**: List any external PyPI packages in the `"requirements": ["package_name"]` array.
+    4. **Dry-Run Test**: Use `POST /admin/tools/validate_source` to dry-run test python code syntax before onboarding.
+
 servers:
   - url: http://localhost:8000
-    description: Local development server
+    description: Local MCP Server
+
+
+tags:
+  - name: System
+    description: Liveness, readiness, status, and metrics
+  - name: Tools
+    description: Tool catalog and execution
+  - name: Onboarding & Admin
+    description: Dynamic tool onboarding, approval workflow, and server administration
+  - name: Federation
+    description: Upstream MCP server federation
+
 paths:
-  /health:
+  /docs:
     get:
-      summary: Health check
-      operationId: getHealth
+      tags:
+        - System
+      summary: Interactive Swagger UI Documentation
+      description: Interactive HTML documentation page for exploring and invoking API endpoints.
+      operationId: getSwaggerDocs
       responses:
         '200':
-          description: Server is healthy
+          description: HTML page containing Swagger UI
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /swagger:
+    get:
+      tags:
+        - System
+      summary: Swagger UI Alias
+      description: Alias for /docs.
+      operationId: getSwaggerAlias
+      responses:
+        '200':
+          description: HTML page containing Swagger UI
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /openapi.json:
+    get:
+      tags:
+        - System
+      summary: OpenAPI JSON Specification
+      description: Returns the OpenAPI 3.0 specification in JSON format.
+      operationId: getOpenApiJson
+      responses:
+        '200':
+          description: OpenAPI 3.0 JSON specification
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
-  /commands:
+                type: object
+
+  /openapi.yaml:
+    get:
+      tags:
+        - System
+      summary: OpenAPI YAML Specification
+      description: Returns the OpenAPI 3.0 specification in YAML format.
+      operationId: getOpenApiYaml
+      responses:
+        '200':
+          description: OpenAPI 3.0 YAML specification
+          content:
+            text/yaml:
+              schema:
+                type: string
+
+  /healthz:
+
+    get:
+      tags:
+        - System
+      summary: Liveness check
+      description: Returns server liveness status. Always open.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags:
+        - System
+      summary: Readiness check
+      description: Returns 200 once the initial tool load completes, else 503.
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Server is ready to serve tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+        '503':
+          description: Server is still loading tools
+
+  /status:
+    get:
+      tags:
+        - System
+      summary: Get server status
+      description: Returns server readiness, active transport, auth mode, and tool loading stats.
+      operationId: getStatus
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Server status details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                  auth:
+                    type: string
+                  transport:
+                    type: string
+                  source:
+                    type: string
+                  stats:
+                    type: object
+
+  /tools:
+    get:
+      tags:
+        - Tools
+      summary: List registered tools catalog
+      description: Returns all currently registered tools, their descriptions, and parameters.
+      operationId: listTools
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: List of registered tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ToolInfo'
+
+  /tools/{name}/call:
     post:
-      summary: Submit a command to the server
-      operationId: submitCommand
+      tags:
+        - Tools
+      summary: Execute a tool by name
+      description: Direct HTTP execution of a registered tool with JSON arguments.
+      operationId: callTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name of the registered tool to execute
+          schema:
+            type: string
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CommandRequest'
+              type: object
+              properties:
+                arguments:
+                  type: object
+                  description: Keyword arguments to pass to the tool function
+                  example: {}
+      responses:
+        '200':
+          description: Tool execution result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolCallResponse'
+        '400':
+          description: Invalid arguments or request body
+        '404':
+          description: Tool not found or disabled
+
+  /metrics:
+    get:
+      tags:
+        - System
+      summary: Prometheus metrics
+      description: Scrape Prometheus formatted metrics for tool calls, durations, and errors.
+      operationId: getMetrics
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Prometheus metrics exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /admin/logs:
+    get:
+      tags:
+        - Onboarding & Admin
+      summary: Retrieve server & audit log streams
+      description: Retrieve structured JSON server logs and administrative audit logs with filtering by level, trace ID, or search query.
+      operationId: getAdminLogs
+      security:
+        - AdminTokenAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [server, audit, all]
+            default: server
+          description: Log stream category
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+          description: Maximum lines to return (max 1000)
+        - in: query
+          name: level
+          schema:
+            type: string
+            enum: [INFO, WARNING, ERROR]
+          description: Filter by log level
+        - in: query
+          name: trace_id
+          schema:
+            type: string
+          description: Filter by specific Trace ID
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search term in log messages
+      responses:
+        '200':
+          description: Log entries stream
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  log_type:
+                    type: string
+                  count:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      type: object
+
+  /admin/tools/onboard:
+
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Onboard / Add a new tool
+      description: |
+        Add a new tool module dynamically by supplying its Python source code and optional pip requirements.
+        The server risk-assesses dependencies, installs them if allowed, and hot-loads the tool into the registry.
+      operationId: onboardTool
+      security:
+        - AdminTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - source
+              properties:
+                name:
+                  type: string
+                  description: Python module name (e.g. calculator)
+                  example: calculator
+                source:
+                  type: string
+                  description: Python source code containing tools
+                  example: |
+                    from tools_sdk import tool
+
+                    @tool()
+                    def add(a: int, b: int) -> int:
+                        return a + b
+                requirements:
+                  type: array
+                  items:
+                    type: string
+                  description: Optional pip package requirements
+                  example: []
+                overwrite:
+                  type: boolean
+                  description: Whether to overwrite an existing tool file
+                  default: false
       responses:
         '201':
-          description: Command accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CommandResponse'
+          description: Tool successfully onboarded and loaded immediately
+        '202':
+          description: Tool held in pending state for admin review
         '400':
-          description: Invalid request
+          description: Invalid source or requirements
+        '409':
+          description: Conflict (tool exists and overwrite is false)
+        '503':
+          description: Onboarding disabled or admin API disabled
+
+  /admin/tools/validate_source:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Dry-run validate tool source code
+      description: Dry-run validation endpoint to check Python source code syntax, detect imports, risk-assess requirements, and preview tools without modifying server state or disk.
+      operationId: validateToolSource
+      security:
+        - AdminTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - source
+              properties:
+                source:
+                  type: string
+                  description: Python source code to validate
+                  example: |
+                    from tools_sdk import tool
+
+                    @tool()
+                    def ping() -> str:
+                        return "pong"
+                requirements:
+                  type: array
+                  items:
+                    type: string
+                  example: []
+      responses:
+        '200':
+          description: Dry-run validation result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-  /commands/{commandId}:
+                type: object
+                properties:
+                  syntax_ok:
+                    type: boolean
+                  tools_found:
+                    type: array
+                    items:
+                      type: string
+                  detected_imports:
+                    type: array
+                    items:
+                      type: string
+                  risk_reports:
+                    type: array
+                    items:
+                      type: object
+                  hints:
+                    type: array
+                    items:
+                      type: string
+
+  /admin/tools/pending:
+
     get:
-      summary: Get command status/result
-      operationId: getCommand
+      tags:
+        - Onboarding & Admin
+      summary: List pending tools
+      description: List tool onboarding submissions awaiting admin review.
+      operationId: listPendingTools
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: List of pending tools
+
+  /admin/tools/pending/{name}:
+    get:
+      tags:
+        - Onboarding & Admin
+      summary: Inspect pending tool details
+      description: Get source code, dependency risk analysis, and status of a pending tool submission.
+      operationId: getPendingTool
       parameters:
-        - name: commandId
+        - name: name
           in: path
           required: true
           schema:
             type: string
+      security:
+        - AdminTokenAuth: []
       responses:
         '200':
-          description: Command status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CommandResponse'
+          description: Pending tool details
         '404':
-          description: Command not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: Pending tool not found
+
+  /admin/tools/pending/{name}/approve:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Approve pending tool
+      description: Approve a pending tool submission, installing requirements and registering the tool.
+      operationId: approvePendingTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Tool approved and registered
+        '404':
+          description: Pending tool not found
+
+  /admin/tools/pending/{name}/reject:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Reject pending tool
+      description: Reject and remove a pending tool submission.
+      operationId: rejectPendingTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Tool submission rejected
+
+  /admin/reload/{name}:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Reload a tool module
+      description: Hot-reload the module that defines the specified tool.
+      operationId: reloadTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Module reloaded
+
+  /admin/tool/{name}/disable:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Disable a tool
+      description: Unregister a tool and keep it disabled across reloads.
+      operationId: disableTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Tool disabled
+
+  /admin/tool/{name}/enable:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Enable a tool
+      description: Re-enable and reload a previously disabled tool.
+      operationId: enableTool
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Tool enabled
+
+  /mcp/upstreams:
+    get:
+      tags:
+        - Federation
+      summary: List upstream MCP servers
+      description: List all configured upstream remote MCP servers.
+      operationId: listUpstreams
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Upstream servers list
+
+  /mcp/upstreams/{server}/tools:
+    get:
+      tags:
+        - Federation
+      summary: List tools from an upstream server
+      description: Query an upstream MCP server for its catalog of available tools.
+      operationId: listUpstreamTools
+      parameters:
+        - name: server
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: List of tools from upstream
+
+  /mcp/upstreams/{server}/tools/{name}/call:
+    post:
+      tags:
+        - Federation
+      summary: Call tool on an upstream server
+      description: Execute a tool on a remote upstream MCP server.
+      operationId: callUpstreamTool
+      parameters:
+        - name: server
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                arguments:
+                  type: object
+      responses:
+        '200':
+          description: Upstream tool result
+
+  /admin/mcp/upstreams:
+    post:
+      tags:
+        - Federation
+      summary: Add runtime upstream server
+      description: Register a new remote MCP server at runtime.
+      operationId: addUpstream
+      security:
+        - AdminTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - url
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                token:
+                  type: string
+      responses:
+        '201':
+          description: Upstream added
+
+  /admin/mcp/upstreams/{server}/remove:
+    post:
+      tags:
+        - Federation
+      summary: Remove upstream server
+      description: Unregister an upstream MCP server.
+      operationId: removeUpstream
+      parameters:
+        - name: server
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Upstream removed
+
 components:
   schemas:
-    Health:
+    ToolInfo:
       type: object
       properties:
-        status:
+        name:
           type: string
-          example: ok
-        uptime:
-          type: number
-          format: double
-          example: 123.45
-    CommandRequest:
-      type: object
-      properties:
-        action:
+          example: text_analyzer
+        module:
           type: string
-          example: start_job
-        payload:
+          example: tools.text_analyzer
+        description:
+          type: string
+          example: Analyzes word and character count in input text.
+        parameters:
           type: object
-          additionalProperties: true
-      required:
-        - action
-    CommandResponse:
+          description: JSON Schema of tool input parameters
+
+    ToolCallResponse:
       type: object
       properties:
-        id:
+        tool:
           type: string
-        status:
-          type: string
-          example: queued
-        result:
+          example: text_analyzer
+        is_error:
+          type: boolean
+          example: false
+        structured_content:
           type: object
-          additionalProperties: true
-    Error:
-      type: object
-      properties:
-        code:
-          type: integer
-        message:
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              text:
+                type: string
+        error:
           type: string
-  securitySchemes: {}
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: API Key authentication header
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer JWT token authentication header
+    AdminTokenAuth:
+      type: http
+      scheme: bearer
+      description: Admin token for /admin/* endpoints (MCP_ADMIN_TOKEN)

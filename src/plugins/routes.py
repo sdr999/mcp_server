@@ -8,10 +8,14 @@ Auth summary (see docs/MCP_AUTH_GUIDE.md):
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
+from pathlib import Path
 from typing import List
 
-from starlette.responses import JSONResponse, PlainTextResponse
+
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
 from metrics import METRICS
@@ -22,8 +26,74 @@ from .upstreams import UpstreamError
 
 log = logging.getLogger("MCP_logger")
 
+SWAGGER_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MCP Tool Server - Swagger UI</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="icon" type="image/png" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/favicon-32x32.png" />
+  <style>
+    html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+    *, *:before, *:after { box-sizing: inherit; }
+    body { margin:0; background: #fafafa; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" charset="UTF-8"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js" charset="UTF-8"></script>
+  <script>
+    window.onload = function() {
+      window.ui = SwaggerUIBundle({
+        url: "/openapi.json",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
+      });
+    };
+  </script>
+</body>
+</html>
+"""
+
+
+async def _swagger_ui(_request):
+    return HTMLResponse(SWAGGER_UI_HTML)
+
+
+def _load_openapi_spec() -> dict:
+    spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
+    if not spec_path.exists():
+        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+    try:
+        import yaml
+        return yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.error("Failed to parse openapi.yaml: %s", exc)
+        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+
+
+async def _openapi_json(_request):
+    spec = _load_openapi_spec()
+    return JSONResponse(spec)
+
+
+async def _openapi_yaml(_request):
+    spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
+    content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+    return PlainTextResponse(content, media_type="text/yaml")
+
 
 async def _health(_request):
+
     return JSONResponse({"status": "ok"})
 
 
@@ -209,12 +279,29 @@ async def _admin_tools_onboard(request):
     try:
         record = await st.onboarding.onboard(name, source, requirements, overwrite=overwrite)
     except OnboardingConflict as exc:
-        return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse({"error": str(exc), "hint": "Set 'overwrite': true in your JSON request body to replace an existing tool."}, status_code=409)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
     await notify_tools_changed(st.mcp)
     return JSONResponse(record, status_code=202 if record["status"] == "pending" else 201)
+
+
+async def _admin_tools_validate_source(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+    source = body.get("source")
+    requirements = body.get("requirements") or []
+    if not isinstance(source, str) or not isinstance(requirements, list):
+        return JSONResponse({"error": "expected {\"source\": str, \"requirements\"?: [str, ...]}"}, status_code=400)
+    res = st.onboarding.validate_source(source, requirements)
+    return JSONResponse(res)
+
 
 
 async def _admin_tools_pending_list(request):
@@ -331,20 +418,110 @@ async def _admin_upstream_remove(request):
     return JSONResponse({"status": "removed", "upstream": server})
 
 
+async def _admin_logs(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    category_param = request.path_params.get("log_category")
+    log_type = (category_param or request.query_params.get("type") or "server").lower()
+    try:
+        limit = min(int(request.query_params.get("limit", 100)), 1000)
+    except ValueError:
+        limit = 100
+
+
+
+    level_filter = request.query_params.get("level", "").upper()
+    trace_filter = request.query_params.get("trace_id", "")
+    search = request.query_params.get("search", "").lower()
+    base_dir = getattr(st.onboarding, "tools_dir", Path(".")).parent
+    logs_dir = base_dir / "logs"
+    server_log_path = getattr(st, "log_file_path", None) or (logs_dir / "mcp_server.json.log")
+
+
+    files_to_read = []
+    if log_type in {"server", "all"}:
+        files_to_read.append(("server", server_log_path))
+    if log_type in {"audit", "all"}:
+        audit_path = getattr(st.onboarding, "audit_log_path", None)
+        if not audit_path or not Path(audit_path).exists():
+            audit_path = logs_dir / "onboard_audit.jsonl"
+        else:
+            audit_path = Path(audit_path)
+        files_to_read.append(("audit", audit_path))
+
+
+
+
+    results = []
+    for category, file_path in files_to_read:
+        if not file_path or not file_path.exists():
+            continue
+        try:
+            lines = file_path.read_text(encoding="utf-8").strip().splitlines()
+            for idx, line in enumerate(reversed(lines)):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    record = {"raw": line}
+
+                if isinstance(record.get("raw"), str) and record["raw"].startswith("{"):
+                    with contextlib.suppress(Exception):
+                        record = json.loads(record["raw"])
+
+                rec_level = str(record.get("level", "")).upper()
+                rec_trace = str(record.get("trace_id", ""))
+
+                if level_filter and rec_level != level_filter:
+                    continue
+                if trace_filter and rec_trace != trace_filter:
+                    continue
+                if search and search not in line.lower():
+                    continue
+
+                record.setdefault("log_type", category)
+                results.append(record)
+
+                if len(results) >= limit:
+                    break
+
+        except Exception as exc:
+            results.append({"error": f"failed to read {category} log: {exc}"})
+
+    return JSONResponse({
+        "log_type": log_type,
+        "count": len(results),
+        "logs": results
+    })
+
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
         Route(READY_PATH, _readyz, methods=["GET"]),
+        Route("/docs", _swagger_ui, methods=["GET"]),
+        Route("/swagger", _swagger_ui, methods=["GET"]),
+        Route("/openapi.json", _openapi_json, methods=["GET"]),
+        Route("/openapi.yaml", _openapi_yaml, methods=["GET"]),
         Route("/status", _status, methods=["GET"]),
         Route("/tools", _tools_catalog, methods=["GET"]),
         Route("/tools/{name}/call", _tool_call, methods=["POST"]),
         Route("/metrics", _metrics, methods=["GET"]),
         Route("/admin/resync", _admin_resync, methods=["POST"]),
+        Route("/admin/logs", _admin_logs, methods=["GET"]),
+        Route("/admin/logs/{log_category}", _admin_logs, methods=["GET"]),
+
         Route("/admin/reload/{name}", _admin_reload, methods=["POST"]),
+
         Route("/admin/tool/{name}/disable", _admin_disable, methods=["POST"]),
         Route("/admin/tool/{name}/enable", _admin_enable, methods=["POST"]),
         Route("/admin/tools/onboard", _admin_tools_onboard, methods=["POST"]),
+        Route("/admin/tools/validate_source", _admin_tools_validate_source, methods=["POST"]),
         Route("/admin/tools/pending", _admin_tools_pending_list, methods=["GET"]),
+
         Route("/admin/tools/pending/{name}", _admin_tools_pending_detail, methods=["GET"]),
         Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),
         Route("/admin/tools/pending/{name}/reject", _admin_tools_pending_reject, methods=["POST"]),
