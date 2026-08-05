@@ -100,6 +100,8 @@ def build_app(ctx):
         app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
         protocol_prefixes = ("/mcp",)
     app.add_middleware(TraceCorrelationMiddleware)
+    from .identity import IdentityMiddleware
+    app.add_middleware(IdentityMiddleware)
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
                            protected_prefixes=protocol_prefixes)
@@ -119,6 +121,25 @@ def build_app(ctx):
     app.state.admin_token = ctx.admin_token
     app.state.jwt_verifier = jwt_verifier
     app.state.onboarding = onboarding
+
+    # --- Supabase & RBAC Phase 0 context state ---
+    app.state.supabase_url = ctx.supabase_url
+    app.state.supabase_key = ctx.supabase_key
+    app.state.superadmin_email = ctx.superadmin_email
+    app.state.rbac_enabled = ctx.rbac_enabled
+    app.state.tenant_header = ctx.tenant_header
+    app.state.workspace_header = ctx.workspace_header
+    app.state.jwks_url = ctx.jwks_url
+    app.state.jwt_issuer = ctx.jwt_issuer
+    app.state.jwt_algorithm = ctx.jwt_algorithm
+
+
+    if ctx.supabase_url and ctx.supabase_key:
+        from .auth_service import SupabaseAuthService
+        app.state.supabase_auth = SupabaseAuthService(ctx.supabase_url, ctx.supabase_key)
+    else:
+        app.state.supabase_auth = None
+
     # Credentials + per-route auth policies (read by security.enforce)
     app.state.api_key_header = ctx.api_key_header
     app.state.api_key_value = ctx.api_key_value

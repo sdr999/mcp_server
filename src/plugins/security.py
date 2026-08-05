@@ -38,7 +38,9 @@ def build_mcp(ctx) -> Tuple[FastMCP, Optional[JWTVerifier]]:
             issuer=ctx.jwt_issuer,
             audience=ctx.jwt_audience,
             required_scopes=ctx.jwt_required_scopes,
+            algorithm=getattr(ctx, "jwt_algorithm", "ES256"),
         )
+
         return FastMCP(name="Tool Server", auth=auth), auth
     return FastMCP(name="Tool Server"), None
 
@@ -78,8 +80,54 @@ async def _jwt_ok(request) -> bool:
     if verifier is None:
         return False                          # bearer_jwt configured but no verifier → fail closed
     authz = request.headers.get("authorization", "")
-    token = authz[7:] if authz.lower().startswith("bearer ") else ""
-    return bool(token) and (await verifier.verify_token(token)) is not None
+    token = authz[7:].strip() if authz.lower().startswith("bearer ") else ""
+    if not token:
+        return False
+
+    from .identity import token_cache, build_principal_from_claims, current_principal_var
+
+    # 1. Check LRU Cache
+    cached_principal = token_cache.get(token)
+    if cached_principal is not None:
+        request.state.principal = cached_principal
+        current_principal_var.set(cached_principal)
+        return True
+
+    # 2. Verify via FastMCP / PyJWKClient verifier
+    verified_token = await verifier.verify_token(token)
+    if verified_token is None:
+        return False
+
+    # Extract claims
+    claims = getattr(verified_token, "claims", {}) or {}
+    sub = getattr(verified_token, "subject", "") or claims.get("sub", "anonymous")
+    iss = claims.get("iss") or getattr(request.app.state, "jwt_issuer", "") or "local"
+    email = claims.get("email") or claims.get("user_metadata", {}).get("email", "")
+    exp = claims.get("exp")
+    superadmin_email = getattr(request.app.state, "superadmin_email", "")
+
+    tenant_header_name = getattr(request.app.state, "tenant_header", "X-Tenant-Id")
+    workspace_header_name = getattr(request.app.state, "workspace_header", "X-Workspace-Id")
+    from .identity import sanitize_header_value
+    active_org = sanitize_header_value(request.headers.get(tenant_header_name), "default")
+    active_ws = sanitize_header_value(request.headers.get(workspace_header_name), "default")
+
+    principal = build_principal_from_claims(
+        issuer=iss,
+        subject=sub,
+        org_id=active_org,
+        workspace_id=active_ws,
+        email=email,
+        superadmin_email=superadmin_email,
+    )
+
+    # Store in LRU cache with dynamic TTL (min(300, exp - now))
+    token_cache.set(token, principal, exp_timestamp=exp)
+
+    request.state.principal = principal
+    current_principal_var.set(principal)
+    return True
+
 
 
 async def enforce(request, policy: str):

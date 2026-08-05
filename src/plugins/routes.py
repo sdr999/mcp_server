@@ -69,27 +69,83 @@ async def _swagger_ui(_request):
     return HTMLResponse(SWAGGER_UI_HTML)
 
 
-def _load_openapi_spec() -> dict:
+def _load_openapi_spec(request=None) -> dict:
     spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
-    if not spec_path.exists():
-        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
-    try:
-        import yaml
-        return yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        log.error("Failed to parse openapi.yaml: %s", exc)
-        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "MCP Tool Server API", "version": "1.0.0"},
+        "paths": {},
+        "tags": [],
+        "components": {"schemas": {}, "securitySchemes": {}},
+    }
+    if spec_path.exists():
+        try:
+            import yaml
+            loaded = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                spec = loaded
+        except Exception as exc:
+            log.error("Failed to parse openapi.yaml: %s", exc)
+
+    if "paths" not in spec or not isinstance(spec["paths"], dict):
+        spec["paths"] = {}
+
+    # Dynamic Route Inspection & Auto-Discovery
+    if request is not None and hasattr(request, "app") and hasattr(request.app, "router"):
+        routes = getattr(request.app.router, "routes", [])
+        for r in routes:
+            path = getattr(r, "path", None)
+            methods = getattr(r, "methods", None)
+            if not path or not methods:
+                continue
+
+            openapi_path = path
+            if openapi_path not in spec["paths"]:
+                spec["paths"][openapi_path] = {}
+
+            tag = "System"
+            if openapi_path.startswith("/auth") or openapi_path == "/whoami":
+                tag = "Authentication & Identity"
+            elif openapi_path.startswith("/tools"):
+                tag = "Tools"
+            elif openapi_path.startswith("/admin"):
+                tag = "Onboarding & Admin"
+            elif openapi_path.startswith("/mcp/upstreams"):
+                tag = "Federation"
+
+            for method in methods:
+                m_lower = method.lower()
+                if m_lower not in spec["paths"][openapi_path]:
+                    op_id = f"auto_{m_lower}_{openapi_path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}"
+                    spec["paths"][openapi_path][m_lower] = {
+                        "tags": [tag],
+                        "summary": f"{method.upper()} {openapi_path}",
+                        "description": f"Auto-discovered route for {method.upper()} {openapi_path}",
+                        "operationId": op_id,
+                        "responses": {
+                            "200": {"description": "Successful operation"}
+                        },
+                    }
+
+    return spec
 
 
-async def _openapi_json(_request):
-    spec = _load_openapi_spec()
+async def _openapi_json(request):
+    spec = _load_openapi_spec(request)
     return JSONResponse(spec)
 
 
-async def _openapi_yaml(_request):
-    spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
-    content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
-    return PlainTextResponse(content, media_type="text/yaml")
+async def _openapi_yaml(request):
+    spec = _load_openapi_spec(request)
+    try:
+        import yaml
+        content = yaml.dump(spec, sort_keys=False)
+        return PlainTextResponse(content, media_type="text/yaml")
+    except Exception:
+        spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
+        content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+        return PlainTextResponse(content, media_type="text/yaml")
+
 
 
 async def _health(_request):
@@ -645,10 +701,89 @@ async def _admin_logs(request):
 
 
 
+async def _whoami(request):
+    denied = await enforce(request, "none")
+    if denied:
+        return denied
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        from .identity import create_anonymous_principal
+        principal = create_anonymous_principal()
+    return JSONResponse(principal.to_dict())
+
+
+async def _auth_signup(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured (set SUPABASE_URL and SUPABASE_KEY)"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    password = (body.get("password") or "").strip()
+    metadata = body.get("metadata") or body.get("data")
+    if not email or not password:
+        return JSONResponse({"error": "Email and password are required"}, status_code=400)
+    res = await auth_service.sign_up(email, password, metadata=metadata)
+    return JSONResponse(res, status_code=201)
+
+
+async def _auth_signin(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured (set SUPABASE_URL and SUPABASE_KEY)"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    username = (body.get("username") or body.get("email") or "").strip()
+    password = (body.get("password") or "").strip()
+    if not username or not password:
+        return JSONResponse({"error": "Email/username and password are required"}, status_code=400)
+    res = await auth_service.sign_in(username, password)
+    return JSONResponse(res, status_code=200)
+
+
+async def _auth_refresh(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    refresh_token = (body.get("refresh_token") or "").strip()
+    if not refresh_token:
+        return JSONResponse({"error": "refresh_token is required"}, status_code=400)
+    res = await auth_service.refresh_token(refresh_token)
+    return JSONResponse(res, status_code=200)
+
+
+async def _auth_forgot_password(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    if not email:
+        return JSONResponse({"error": "email is required"}, status_code=400)
+    res = await auth_service.recover_password(email)
+    return JSONResponse(res, status_code=200)
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
         Route(READY_PATH, _readyz, methods=["GET"]),
+        Route("/whoami", _whoami, methods=["GET"]),
+        Route("/auth/signup", _auth_signup, methods=["POST"]),
+        Route("/auth/signin", _auth_signin, methods=["POST"]),
+        Route("/auth/refresh", _auth_refresh, methods=["POST"]),
+        Route("/auth/forgot-password", _auth_forgot_password, methods=["POST"]),
         Route("/docs", _swagger_ui, methods=["GET"]),
         Route("/swagger", _swagger_ui, methods=["GET"]),
         Route("/openapi.json", _openapi_json, methods=["GET"]),
@@ -688,4 +823,5 @@ def feature_routes() -> List[Route]:
         Route("/admin/mcp/upstreams", _admin_upstream_add, methods=["POST"]),
         Route("/admin/mcp/upstreams/{server}/remove", _admin_upstream_remove, methods=["POST"]),
     ]
+
 

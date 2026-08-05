@@ -25,10 +25,15 @@ info:
     ```
 
     #### Authoring Rules for New Developers:
+
     1. **Import `tool`**: Always include `from tools_sdk import tool` at top of file when using `@tool()`.
+
     2. **Public vs Private**: Only functions marked with `@tool()` are exposed to clients. Un-decorated functions act as internal helpers.
+
     3. **Pip Dependencies**: List any external PyPI packages in the `"requirements": ["package_name"]` array.
+
     4. **Dry-Run Test**: Use `POST /admin/tools/validate_source` to dry-run test python code syntax before onboarding.
+
 
 servers:
   - url: http://localhost:8000
@@ -38,6 +43,8 @@ servers:
 tags:
   - name: System
     description: Liveness, readiness, status, and metrics
+  - name: Authentication & Identity
+    description: Supabase Auth endpoints (sign up, sign in, token refresh, password recovery) and identity inspection
   - name: Tools
     description: Tool catalog and execution
   - name: Onboarding & Admin
@@ -46,8 +53,119 @@ tags:
     description: Upstream MCP server federation
 
 paths:
+  /whoami:
+    get:
+      tags:
+        - Authentication & Identity
+      summary: Inspect Authenticated Principal Identity
+      description: Returns the resolved caller Principal (User ID, Supabase UUID, active tenant org, workspace, roles, and permissions).
+      operationId: getWhoAmI
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+        - AdminTokenAuth: []
+        - {}
+      responses:
+        '200':
+          description: Resolved Principal identity object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+
+  /auth/signup:
+    post:
+      tags:
+        - Authentication & Identity
+      summary: User Sign Up (Supabase Auth)
+      description: Register a new user with email and password via Supabase Auth.
+      operationId: authSignUp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid parameters or account already exists
+        '503':
+          description: Supabase auth service unconfigured or unavailable
+
+  /auth/signin:
+    post:
+      tags:
+        - Authentication & Identity
+      summary: User Sign In (Supabase Auth)
+      description: Authenticate user with email and password to receive JWT access_token and refresh_token.
+      operationId: authSignIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+        '503':
+          description: Supabase auth service unconfigured or unavailable
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication & Identity
+      summary: Refresh Access Token
+      description: Exchange a valid refresh token for a new access token.
+      operationId: authRefresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid or missing refresh token
+
+  /auth/forgot-password:
+    post:
+      tags:
+        - Authentication & Identity
+      summary: Send Password Reset Email
+      description: Trigger a password recovery email for the specified email address.
+      operationId: authForgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Reset email sent if account exists
+
   /docs:
     get:
+
       tags:
         - System
       summary: Interactive Swagger UI Documentation
@@ -857,8 +975,50 @@ paths:
       tags:
         - OpenAPI Specs
       summary: Register OpenAPI 3.0/3.1 Spec as Live MCP Tools
-      description: Parses an OpenAPI spec (URL, file path, or raw YAML/JSON) and registers all operations as live MCP tools.
+      description: |
+        Parses an OpenAPI spec (HTTP/HTTPS URL, local file path, or raw YAML/JSON text) and dynamically registers all operations as live MCP tools.
+
+        ### Auth Mode Quick Guide (What to give & what can be empty):
+
+        - **No Auth (`auth_type: "none"` or omitted)**:
+
+          - **Give**: `collection_id`, `spec`.
+
+          - **Leave empty**: `api_key`, `header_name`, `token`, `headers`.
+
+
+
+        - **API Key (`auth_type: "api_key"`)**:
+
+          - **Give**: `collection_id`, `spec`, `api_key`, and optional `header_name` (default: `X-API-Key`).
+
+          - **Leave empty**: `token`, `headers`.
+
+
+
+        - **Bearer Token (`auth_type: "bearer"`)**:
+
+          - **Give**: `collection_id`, `spec`, `token`.
+
+          - **Leave empty**: `api_key`, `header_name`, `headers`.
+
+
+        - **Custom Headers (`auth_type: "custom"`)**:
+        
+          - **Give**: `collection_id`, `spec`, `headers` dict (e.g. `{"X-Tenant-ID": "acme"}`).
+          
+          - **Leave empty**: `api_key`, `header_name`, `token`.
+          
+
+
+        - **Base URL Override**:
+        
+          - **Give `base_url`** ONLY if you want to override the REST API target endpoint.
+          
+          - **Leave `base_url` empty/null** to automatically use the `servers` URL defined inside your OpenAPI specification.
+          
       operationId: registerOpenAPISpec
+
       security:
         - AdminTokenAuth: []
       requestBody:
@@ -978,7 +1138,112 @@ components:
         error:
           type: string
 
+    PrincipalResponse:
+      type: object
+      properties:
+        principal_id:
+          type: string
+          example: 8f3b4c1a2d5e...
+        issuer:
+          type: string
+          example: https://bplpycqmizyztxqwglgb.supabase.co/auth/v1
+        subject:
+          type: string
+          example: a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        kind:
+          type: string
+          example: user
+        org_id:
+          type: string
+          example: default
+        workspace_id:
+          type: string
+          example: default
+        roles:
+          type: array
+          items:
+            type: string
+          example: ["platform_superadmin"]
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["tool:list", "tool:call", "platform:admin"]
+        metadata:
+          type: object
+          example: {"email": "oooosomu9@gmail.com"}
+
+    SignUpRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: oooosomu9@gmail.com
+        password:
+          type: string
+          format: password
+          example: secretpass123
+        metadata:
+          type: object
+          example: {"name": "Somu Admin"}
+
+    SignInRequest:
+      type: object
+      required:
+        - password
+      properties:
+        username:
+          type: string
+          example: oooosomu9@gmail.com
+        email:
+          type: string
+          example: oooosomu9@gmail.com
+        password:
+          type: string
+          format: password
+          example: secretpass123
+
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: eyJhbGci...
+
+    ForgotPasswordRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: oooosomu9@gmail.com
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+          example: 3600
+        refresh_token:
+          type: string
+        user:
+          type: object
+
   securitySchemes:
+
     ApiKeyAuth:
       type: apiKey
       in: header

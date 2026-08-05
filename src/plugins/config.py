@@ -57,7 +57,10 @@ class AppContext:
     require_signed: bool
     manifest_name: str
     signing_key: Optional[str]
+    jwt_algorithm: str = "ES256"
     onboard_enabled: bool = True
+
+
     onboard_autoinstall: bool = True
     onboard_network_check: bool = True
     onboard_network_timeout: float = 3.0
@@ -80,9 +83,22 @@ class AppContext:
     tool_call_auth: str = "mcp"     # POST /tools/{name}/call
     upstream_auth: str = "mcp"      # /mcp/upstreams* (list + call)
     # Federation: remote MCP servers this server can list/call tools on
+
     upstreams: dict = field(default_factory=dict)   # name -> {"url", "token"}
     upstream_timeout: float = 30.0
     upstream_allow_runtime: bool = True             # admin add/remove at runtime
+
+    # --- Supabase & Multi-Tenancy / RBAC (Phase 0) ---
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_jwt_kid: str = ""
+    superadmin_email: str = ""
+    rbac_enabled: bool = False
+    tenant_header: str = "X-Tenant-Id"
+    workspace_header: str = "X-Workspace-Id"
+    api_keys_file: Optional[Path] = None
+
+
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -206,7 +222,9 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         jwt_issuer=env.get("MCP_JWT_ISSUER") or None,
         jwt_audience=env.get("MCP_JWT_AUDIENCE") or None,
         jwt_required_scopes=scopes or None,
+        jwt_algorithm=env.get("MCP_JWT_ALGORITHM", "ES256"),
         host=env.get("MCP_HOST", DEFAULT_HOST),
+
         port=int(env.get("MCP_PORT", DEFAULT_PORT)),
         import_timeout=float(env.get("MCP_TOOL_IMPORT_TIMEOUT_SEC", DEFAULT_IMPORT_TIMEOUT)),
         metrics_enabled=(env.get("MCP_METRICS", "true").lower() == "true"),
@@ -238,7 +256,16 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         upstreams=_load_upstreams(env, base_dir),
         upstream_timeout=float(env.get("MCP_UPSTREAM_TIMEOUT_SEC", "30")),
         upstream_allow_runtime=env.get("MCP_UPSTREAM_ALLOW_RUNTIME", "true").lower() == "true",
+        supabase_url=env.get("SUPABASE_URL", ""),
+        supabase_key=env.get("SUPABASE_KEY") or env.get("SUPABASE_PUBLISHABLE_KEY") or "",
+        supabase_jwt_kid=env.get("SUPABASE_JWT_KID", ""),
+        superadmin_email=env.get("MCP_SUPERADMIN_EMAIL", ""),
+        rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
+        tenant_header=env.get("MCP_TENANT_HEADER", "X-Tenant-Id"),
+        workspace_header=env.get("MCP_WORKSPACE_HEADER", "X-Workspace-Id"),
+        api_keys_file=(base_dir / p if (p := env.get("MCP_API_KEYS_FILE")) else None),
     )
+
 
 
 def validate_context(ctx: AppContext) -> None:
