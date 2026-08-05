@@ -4,11 +4,13 @@ Status: **Proposed (revised after SDE5 review — see §17–§19)** · Branch: 
 · Scope of this doc: design only (no implementation)
 
 > **Review note:** §§1–16 are the original proposal. §17 (corner cases), §18
-> (cross-cutting concerns), and §19 (safe rollout) are the review layer and, where
-> they conflict with an earlier section, **they win** — the most important being:
-> the principal key is `(issuer, subject)` not `subject` (§17.1); onboarded tool
-> names are **tenant-qualified** to survive the flat FastMCP registry (§17.2);
-> and SQLite is single-instance so multi-replica deployments need Postgres (§18.1).
+> (cross-cutting concerns), §19 (safe rollout), and §20 (pluggable store) are the
+> review layer and, where they conflict with an earlier section, **they win** — the
+> most important being: the principal key is `(issuer, subject)` not `subject`
+> (§17.1); onboarded tool names are **tenant-qualified** to survive the flat FastMCP
+> registry (§17.2); and the tenancy store is a **pluggable, env-selected backend**
+> (SQLite is only the *default*), following the repo's plugin pattern, with
+> first-start seeding (§20).
 
 ## Decisions baked into this design
 
@@ -16,7 +18,7 @@ Status: **Proposed (revised after SDE5 review — see §17–§19)** · Branch: 
 |----------|----------|
 | Identity source | **Hybrid** — a JWT (`bearer_jwt` mode) proves *who* the caller is (the `subject`); the **local tenancy store** is the source of truth for org/workspace membership, role bindings, and tool grants, joined by `subject`. |
 | Isolation depth | **RBAC + logical multi-tenancy** — scoped visibility/calls, per-tenant catalogs, roles, grants, quotas — all **in-process**. Tenant tools are trusted. Hard execution isolation is an explicit **non-goal** here (see §9). |
-| Store | **SQLite** via the stdlib `sqlite3` (no new hard dependency), file at `MCP_TENANCY_DB`. |
+| Store | **Pluggable, plug-and-play** — a `TenancyStore` interface with interchangeable backends selected by `MCP_TENANCY_STORE` (`memory` \| `json` \| `sqlite` \| `postgres` \| custom), mirroring the existing `plugins/` pattern. **SQLite is the default** (stdlib `sqlite3`, no new hard dependency); nothing above the interface knows which backend is live. On first start the store **self-seeds** roles/default org if empty (§20). |
 
 ---
 
@@ -58,7 +60,7 @@ REST API and (eventually) the MCP protocol.
 |---|--------------|--------|------|
 | 1 | **Principal propagation** — identity on `request.state` | ❌ discarded after auth | Phase 0 (blocker; unblocks all) |
 | 2 | **Identity source** | JWT mode exists but claims unused | Hybrid: JWT `subject` + local store |
-| 3 | **Persistence** | flat files/env only | SQLite tenancy store (Phase 1) |
+| 3 | **Persistence** | flat files/env only | Pluggable `TenancyStore` (backend via `MCP_TENANCY_STORE`; SQLite default) with first-start seeding (Phase 1, §20) |
 | 4 | **Tenant-scoped tool namespace** | flat global `src/tools/` | ownership tags + grant overlay (Phase 3) |
 | 5 | **Per-tenant execution isolation** | shared process; optional subprocess sandbox | out of scope (§9) |
 
@@ -140,8 +142,14 @@ New plugin modules (mirroring the existing single-purpose layout):
 | Module | Responsibility |
 |--------|----------------|
 | `plugins/identity.py` | Middleware: build `Principal` from the credential + tenant headers; attach to `request.state.principal`. |
-| `plugins/tenancy.py` | The SQLite store: orgs, workspaces, memberships, role bindings, tool ownership & grants; CRUD + queries. |
+| `plugins/tenancy/` | **The pluggable store package** (§20): the `TenancyStore` interface, a backend registry + factory (`create_store(ctx)`), the built-in backends (`memory`/`json`/`sqlite`/`postgres`), and the first-start seeder. Exposes orgs, workspaces, memberships, role bindings, tool ownership & grants via CRUD + queries — backend-agnostic. |
 | `plugins/rbac.py` | The Policy Decision Point: `require(request, permission, resource=None)`. Wraps/derives from today's `enforce()`. |
+
+> The store is the one component with real backend variability, so it graduates
+> from a single `tenancy.py` module to a small `plugins/tenancy/` package. The PDP
+> (`rbac.py`) and identity middleware depend only on the `TenancyStore` interface —
+> never on a concrete backend — so swapping storage is a config change, not a code
+> change (§20).
 
 **Request flow (RBAC enabled):**
 ```
@@ -162,7 +170,12 @@ request → [ApiKeyMiddleware guards /mcp only]
 `require` short-circuits to the current behavior exactly — **zero change** for
 existing single-tenant deployments.
 
-## 8. Data model (SQLite)
+## 8. Data model (reference schema)
+
+The entities below are the **logical model** the `TenancyStore` interface exposes.
+The SQL is the concrete shape for the relational backends (SQLite / Postgres); the
+`json`/`memory` backends hold the same entities as nested dicts. No caller sees SQL
+— everything goes through the interface (§20).
 
 ```sql
 schema_meta(version INTEGER)                                   -- migrations (§18.3)
@@ -194,10 +207,12 @@ audit(id INTEGER PK, ts, actor_principal TEXT, issuer TEXT, org_id TEXT,
       action TEXT, resource TEXT, decision TEXT, detail TEXT)   -- log allows AND denies
 ```
 
-Single-file, embedded, no new dependency. **Caveat:** SQLite is single-writer /
-single-instance — a multi-replica deployment (e.g. stateless streamable-HTTP,
-doc "transport") needs Postgres. The store is an interface with SQLite and
-Postgres backends; a JSON-file backend suits single-tenant/dev (§18.1).
+**Backend selection is config, not code.** SQLite (single-file, embedded, no new
+dependency) is the **default** and suits single-node deployments; a multi-replica
+deployment (e.g. stateless streamable-HTTP) selects `postgres`; `json`/`memory`
+suit dev and tests. All four implement the same `TenancyStore` interface behind
+`create_store(ctx)`, chosen by `MCP_TENANCY_STORE` — see §20 for the interface,
+registry, and first-start seeding.
 
 ## 9. Security considerations
 
@@ -250,8 +265,15 @@ optional; defaulted from membership.
 
 ```bash
 MCP_RBAC_ENABLED=false           # master switch; false = today's behavior exactly
-MCP_TENANCY_DB=data/tenancy.db   # SQLite path (relative to src/)
-MCP_DEFAULT_ORG=default          # org used to auto-own existing tools on enable
+
+# --- Pluggable tenancy store (§20) -----------------------------------------
+MCP_TENANCY_STORE=sqlite         # memory | json | sqlite | postgres | <dotted.path:Factory>
+MCP_TENANCY_DB=data/tenancy.db   # sqlite: file path (relative to src/); json: file path
+MCP_TENANCY_DSN=                 # postgres: connection string (required for that backend)
+MCP_TENANCY_SEED=true            # on first start, if store is empty seed roles + default org (§20)
+MCP_TENANCY_SEED_FILE=           # optional path to a seed doc overriding the built-in defaults
+
+MCP_DEFAULT_ORG=default          # org used to auto-own existing tools on enable / seed
 MCP_TENANT_HEADER=X-Tenant-Id
 MCP_WORKSPACE_HEADER=X-Workspace-Id
 MCP_JWT_SUBJECT_CLAIM=sub        # hybrid identity mapping
@@ -260,19 +282,24 @@ MCP_JWT_ROLES_CLAIM=roles        # optional JIT-provisioning seed
 MCP_RBAC_JIT_PROVISION=false     # allow claim-seeded first-login binding
 MCP_RBAC_MODE=enforce            # shadow | enforce  (shadow = log decisions, don't block, §19)
 MCP_RBAC_CACHE_TTL_SEC=30        # principal/permission cache TTL (§18.2)
-MCP_TENANCY_DB_BACKEND=sqlite    # sqlite | postgres | json  (§18.1)
 MCP_DEFAULT_MULTI_ORG=deny       # >1 membership & no tenant header → deny | pick-newest (§17.8)
 # API keys become identities when RBAC is on: map named keys → principals
 MCP_API_KEYS_FILE=config/api_keys.json   # {"<key>": {"subject": "...", "org": "..."}} (§17.3)
 ```
 
+`MCP_TENANCY_STORE` replaces the earlier `MCP_TENANCY_DB_BACKEND` name; it also
+accepts a `module.path:Factory` string so a deployment can register a custom
+backend (Redis, DynamoDB, a hosted API) **without patching the server** (§20).
+
 ## 12. Backward compatibility & migration
 
 - **Default off.** `MCP_RBAC_ENABLED=false` → identical to current server.
-- **On first enable:** create a `default` org + `default` workspace; map the
-  existing `MCP_ADMIN_TOKEN` to a `platform_superadmin` service principal; set
-  all existing `src/tools/*` to `owner=default`, `visibility=public`. Existing
-  single-tenant clients keep working; multi-tenancy is additive.
+- **On first enable:** the store's **first-start seeder** (§20) runs — if the
+  store is empty it creates the built-in roles (one row each), a `default` org +
+  `default` workspace, maps the existing `MCP_ADMIN_TOKEN` to a
+  `platform_superadmin` service principal, and sets all existing `src/tools/*` to
+  `owner=default`, `visibility=public`. Existing single-tenant clients keep
+  working; multi-tenancy is additive. Seeding is idempotent and backend-agnostic.
 - The per-route `none|mcp|admin` policies remain valid (adapter over `require`).
 
 ## 13. The one technical unknown (spike before Phase 4)
@@ -290,7 +317,7 @@ can be tenant-filtered at registration time as an interim measure.
 | Phase | Delivers | Risk |
 |-------|----------|------|
 | **0 — Principal propagation** | Keep `AccessToken` claims → `Principal` on `request.state`; `/whoami`. No behavior change. | Low — unblocks all |
-| **1 — Tenancy store & model** | SQLite store; orgs/workspaces/members/roles/grants; admin CRUD; config seeding. | Low |
+| **1 — Tenancy store & model** | `TenancyStore` interface + backend registry/factory; `memory`+`json`+`sqlite` backends (Postgres stub); orgs/workspaces/members/roles/grants; admin CRUD; **first-start seeding** (§20). | Low |
 | **2 — RBAC PDP** | `require(permission)`; adapter maps existing policies; audit gains actor identity. | Med |
 | **3 — Tenant-scoped tools** | Ownership tags + grant overlay; `/tools` & call filtered; onboarding owns tools per tenant. | Med |
 | **4 — Enforce on `/mcp`** | Per-tool RBAC on the MCP protocol path (after the spike). | **High (unknown)** |
@@ -391,9 +418,10 @@ Each item is a real gap in §§1–16; the fix is authoritative.
 
 - **18.1 Horizontal scaling vs SQLite.** SQLite is single-file/single-writer, so
   it **breaks multi-replica** deployments (which the stateless streamable-HTTP
-  transport otherwise enables). Ship a `Store` interface with **SQLite (default,
-  single-node)** and **Postgres (multi-node)** backends; pick via
-  `MCP_TENANCY_DB_BACKEND`. Call this out in ops docs.
+  transport otherwise enables). This is exactly why the store is pluggable: the
+  `TenancyStore` interface ships **SQLite (default, single-node)** and **Postgres
+  (multi-node)** backends, picked via `MCP_TENANCY_STORE` (§20). Call the
+  single-node caveat out in ops docs.
 - **18.2 Performance / caching.** An RBAC decision per request must not hit the
   DB every time. Cache `principal → {roles, permissions, grants}` with a short
   TTL (`MCP_RBAC_CACHE_TTL_SEC`, default 30s) and invalidate on writes. Bound the
@@ -430,5 +458,167 @@ the single most important operational safeguard for a permissions change.
 ### Revised phase notes
 - Add **shadow mode** to **Phase 2** (ship the PDP in shadow first).
 - Add **upstream tenancy (§17.9)** and **basic quotas (§18.4)** to **Phase 3**.
-- Add the **`Store` interface + Postgres backend (§18.1)** as a Phase 1
-  sub-task if multi-replica is a near-term requirement.
+- The **`TenancyStore` interface + backend registry (§20)** is now **core to
+  Phase 1**, not an optional sub-task; the Postgres backend can lag as a stub and
+  land when multi-replica is a near-term requirement, since it's just one more
+  registered backend behind the same interface.
+
+---
+
+## 20. Pluggable tenancy store (plug-and-play)
+
+The store must **not** hard-code SQLite. It follows the same
+strategy/registry/factory shape the rest of `plugins/` already uses (a concrete
+implementation chosen from env, resolved once at startup, consumed only through
+an interface). SQLite is merely the registered **default**.
+
+### 20.1 The interface
+
+`plugins/tenancy/base.py` defines one `Protocol` that every backend implements.
+Nothing above it (the PDP, identity middleware, admin routes) references SQL or a
+concrete class:
+
+```python
+class TenancyStore(Protocol):
+    # lifecycle
+    def init_schema(self) -> None: ...            # create tables/indexes/keyspace; idempotent
+    def schema_version(self) -> int: ...          # for migrations (§18.3)
+    def is_empty(self) -> bool: ...               # drives first-start seeding (§20.4)
+    def close(self) -> None: ...
+
+    # roles (data-driven, §5)
+    def upsert_role(self, role: str, permissions: list[str]) -> None: ...
+    def get_role(self, role: str) -> Role | None: ...
+    def list_roles(self) -> list[Role]: ...
+
+    # orgs / workspaces
+    def create_org(self, org_id: str, name: str, status: str = "active") -> None: ...
+    def get_org(self, org_id: str) -> Org | None: ...
+    def create_workspace(self, org_id: str, ws_id: str, name: str) -> None: ...
+
+    # principals & membership  (keyed on principal_id = f(issuer, subject), §17.1)
+    def upsert_principal(self, issuer: str, subject: str, kind: str = "user") -> str: ...
+    def bind_role(self, principal_id: str, org_id: str, role: str,
+                  workspace_id: str | None = None) -> None: ...
+    def memberships_for(self, principal_id: str) -> list[Membership]: ...
+
+    # tools & grants
+    def set_tool_ownership(self, tool_name: str, owner_org: str, *,
+                           owner_workspace: str | None, created_by: str,
+                           visibility: str, tags: list[str]) -> None: ...
+    def add_grant(self, scope_type: str, scope_id: str, effect: str,
+                  match_type: str, match_value: str) -> None: ...
+    def grants_for(self, principal_id: str, org_id: str,
+                   workspace_id: str | None) -> list[Grant]: ...
+
+    # audit
+    def record_audit(self, actor_principal: str, action: str, resource: str,
+                     decision: str, detail: str = "") -> None: ...
+```
+
+The interface is deliberately **coarse** — it exposes the operations the PDP and
+admin routes need, not raw rows — so a non-SQL backend (Redis, DynamoDB, a hosted
+API) can implement it without pretending to be a relational DB. Return types are
+small dataclasses (`Role`, `Org`, `Membership`, `Grant`, …), never driver cursors.
+
+### 20.2 The registry + factory
+
+`plugins/tenancy/__init__.py` holds a name → constructor registry and a single
+factory. This mirrors how the server already resolves a strategy from config:
+
+```python
+_BACKENDS: dict[str, Callable[[AppContext], TenancyStore]] = {}
+
+def register_backend(name: str, ctor: Callable[[AppContext], TenancyStore]) -> None:
+    _BACKENDS[name.lower()] = ctor
+
+def create_store(ctx: AppContext) -> TenancyStore:
+    spec = ctx.tenancy_store            # from MCP_TENANCY_STORE
+    if ":" in spec:                     # "package.module:Factory" → custom backend
+        store = _load_dotted(spec)(ctx)
+    else:
+        try:
+            store = _BACKENDS[spec.lower()](ctx)
+        except KeyError:
+            raise ConfigError(f"unknown MCP_TENANCY_STORE={spec!r}; "
+                              f"known: {sorted(_BACKENDS)}")
+    store.init_schema()
+    maybe_seed(ctx, store)              # §20.4
+    return store
+
+# built-ins register themselves on import
+register_backend("memory",   lambda ctx: MemoryStore())
+register_backend("json",     lambda ctx: JsonStore(ctx.tenancy_db))
+register_backend("sqlite",   lambda ctx: SqliteStore(ctx.tenancy_db))
+register_backend("postgres", lambda ctx: PostgresStore(ctx.tenancy_dsn))
+```
+
+`create_store(ctx)` is called once during app lifespan (like `UpstreamRegistry`
+today) and the resulting instance is stashed on `AppContext`/`app.state` for the
+PDP and routes. **Swapping storage is a one-line env change**; adding a backend is
+a `register_backend` call — no edits to any consumer.
+
+### 20.3 Built-in backends
+
+| Backend (`MCP_TENANCY_STORE`) | Module | Use case | Dependency |
+|---|---|---|---|
+| `memory` | `tenancy/memory.py` | tests, ephemeral dev; not persisted | none |
+| `json` | `tenancy/json_store.py` | single-tenant / small; human-readable file, atomic `0600` writes (reuses the `upstreams.json` discipline) | none |
+| `sqlite` *(default)* | `tenancy/sqlite_store.py` | single-node production | stdlib `sqlite3` |
+| `postgres` | `tenancy/postgres_store.py` | multi-replica / HA | `psycopg` (soft import; only if selected) |
+| custom | `module.path:Factory` | Redis/DynamoDB/hosted API | supplied by the deployment |
+
+The Postgres dependency stays **soft** — imported only when that backend is
+selected — so the default install adds nothing (consistent with the "no new hard
+dependency" rule and the existing soft-import pattern for the agentic framework).
+
+### 20.4 First-start seeding
+
+On startup, after `init_schema()`, `maybe_seed(ctx, store)` runs — **backend
+agnostic**, driven entirely through the interface:
+
+```python
+def maybe_seed(ctx, store):
+    if not ctx.tenancy_seed or not store.is_empty():
+        return                                   # idempotent: only seed a fresh store
+    seed = load_seed(ctx.tenancy_seed_file) or DEFAULT_SEED
+    for role, perms in seed["roles"].items():    # one row per built-in role (§5)
+        store.upsert_role(role, perms)
+    store.create_org(ctx.default_org, ctx.default_org)      # 'default' org …
+    store.create_workspace(ctx.default_org, "default", "default")   # … + workspace
+    if ctx.admin_token:                          # bootstrap superadmin (§17.15)
+        pid = store.upsert_principal(issuer="local", subject="admin-token",
+                                     kind="service")
+        store.bind_role(pid, ctx.default_org, "platform_superadmin")
+    store.record_audit("system", "seed", "tenancy", "seeded", detail=str(list(seed["roles"])))
+```
+
+`DEFAULT_SEED` ships **one entry per built-in role** from the §5 matrix
+(`platform_superadmin`, `org_admin`, `developer`, `agent_consumer`) with their
+default permission sets. Properties:
+
+- **Idempotent & safe:** guarded by `is_empty()` — a restart, or enabling on an
+  existing store, never re-seeds or clobbers operator changes.
+- **Overridable:** `MCP_TENANCY_SEED_FILE` points at a JSON/YAML doc to replace
+  `DEFAULT_SEED` (custom roles, extra orgs) without touching code.
+- **Disable-able:** `MCP_TENANCY_SEED=false` for deployments that provision the
+  store out-of-band (e.g. Terraform/migrations against Postgres).
+- **Bootstraps the chicken-and-egg admin (§17.15):** the first
+  `platform_superadmin` binding comes from seeding, not from an API call.
+
+### 20.5 Contract test (one suite, every backend)
+
+Because all backends share the interface, a **single parametrized test suite**
+runs against every registered backend (`memory`/`json`/`sqlite`, and `postgres`
+in CI when a DSN is present). It asserts identical semantics — grant deny-override
+(§17.13), workspace-scoped resolution (§17.12), `is_empty()`/seed idempotency,
+`(issuer,subject)` uniqueness (§17.1). This is what makes the store genuinely
+plug-and-play: correctness is defined by the interface, not by any one backend.
+
+### 20.6 Config validation (extends §18.6)
+
+`validate_context` rejects: an unknown `MCP_TENANCY_STORE`; `postgres` without
+`MCP_TENANCY_DSN`; `sqlite`/`json` with an unwritable path; a `module:Factory`
+string that fails to import or doesn't satisfy the `TenancyStore` protocol; and
+`MCP_RBAC_ENABLED=true` with `MCP_AUTH_TYPE=none` (no identity to bind). Fail fast
+at startup, never mid-request.
