@@ -337,20 +337,25 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                     except Exception as exc:
                         log.debug("Verifier error: %s", exc)
 
-                # Fallback to PyJWKClient verification if needed
+                # Fallback to PyJWKClient verification if needed. Asymmetric
+                # algorithms only — HS256 with a JWKS public key would allow a
+                # key-confusion attack (§9, M3). Audience is verified whenever an
+                # expected audience is configured.
                 if not claims:
                     jwks_url = getattr(app_state, "jwks_url", "")
                     if jwks_url:
                         try:
                             import jwt
                             from jwt import PyJWKClient
+                            expected_aud = getattr(app_state, "jwt_audience", None) or None
                             jwk_client = PyJWKClient(jwks_url, headers={"User-Agent": "MCP-Server/1.0"})
                             signing_key = jwk_client.get_signing_key_from_jwt(bearer_token)
                             claims = jwt.decode(
                                 bearer_token,
                                 signing_key.key,
-                                algorithms=["ES256", "RS256", "HS256"],
-                                options={"verify_aud": False},
+                                algorithms=["ES256", "RS256"],
+                                audience=expected_aud,
+                                options={"verify_aud": expected_aud is not None},
                             )
                         except Exception as exc:
                             log.debug("PyJWKClient fallback error: %s", exc)

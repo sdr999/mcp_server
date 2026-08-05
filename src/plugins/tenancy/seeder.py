@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from plugins.identity import BUILTIN_ROLE_PERMISSIONS, derive_principal_id
+from plugins.identity import BUILTIN_ROLE_PERMISSIONS
 
 if TYPE_CHECKING:
     from .base import TenancyStore
@@ -26,13 +26,21 @@ async def seed_tenancy_store_if_empty(store: TenancyStore, ctx) -> None:
     if not getattr(ctx, "tenancy_seed", True):
         return
 
+    # NOTE: SEED_LOCK serializes concurrent seeding within one process. It does
+    # NOT cover multi-replica cold starts (§21.1); the store writes below are
+    # idempotent create-if-absent, so a lost cross-process race degrades to a
+    # no-op. A backend-level lock (pg advisory / Mongo sentinel) is future work.
     async with SEED_LOCK:
-        # 1. Seed Built-in Roles
+        # 1. Seed built-in roles; optionally reconcile drifted perms (§21.5).
+        reconcile = getattr(ctx, "tenancy_reconcile_roles", False)
         for role_name, perms in BUILTIN_ROLES.items():
             existing = await store.get_role(role_name)
             if not existing:
                 await store.save_role(role_name, perms)
                 log.info("Seeded built-in role: %s", role_name)
+            elif reconcile and set(existing.permissions) != set(perms):
+                await store.save_role(role_name, perms)
+                log.info("Reconciled built-in role perms: %s", role_name)
 
         # 2. Seed Default Org & Workspace
         default_org_id = getattr(ctx, "default_org", "default") or "default"
@@ -46,13 +54,16 @@ async def seed_tenancy_store_if_empty(store: TenancyStore, ctx) -> None:
             await store.create_workspace("default", org_id=default_org_id, name="Default Workspace")
             log.info("Seeded default workspace in org: %s", default_org_id)
 
-        # 3. Bind Superadmin Principal if configured
+        # 3. Superadmin bootstrap (M5). We do NOT bind a principal here: at seed
+        # time only the email is known, but principals are keyed on (issuer, JWT
+        # subject) — the subject is the IdP's user id, not the email, so a binding
+        # derived from the email could never match resolve_principal() at runtime.
+        # Superadmin is instead granted by the identity middleware when the
+        # verified token's email claim equals MCP_SUPERADMIN_EMAIL, and via the
+        # MCP_ADMIN_TOKEN bootstrap. (No hardcoded issuer default here either.)
         superadmin_email = getattr(ctx, "superadmin_email", "") or ""
-        jwt_issuer = getattr(ctx, "jwt_issuer", "") or "https://bplpycqmizyztxqwglgb.supabase.co/auth/v1"
         if superadmin_email:
-            pid = derive_principal_id(jwt_issuer, superadmin_email)
-            await store.bind_member(pid, org_id=default_org_id, role="platform_superadmin")
-            log.info("Seeded superadmin principal for email %s -> %s", superadmin_email, pid[:12])
+            log.info("Superadmin bootstrap: email-claim match for %s (granted at auth time)", superadmin_email)
 
         # 4. Tag existing platform tools in tools_dir as public
         tools_dir = getattr(ctx, "tools_dir", None)

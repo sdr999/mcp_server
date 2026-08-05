@@ -35,6 +35,13 @@ class JsonTenancyStore(TenancyStore):
                 except Exception:
                     pass
 
+    async def is_empty(self) -> bool:
+        async with self._lock:
+            return not self._orgs and not self._roles
+
+    async def close(self) -> None:
+        return None
+
     def _to_dict(self) -> dict:
         return {
             "orgs": {k: {"org_id": v.org_id, "name": v.name, "status": v.status, "created_at": v.created_at, "settings": v.settings} for k, v in self._orgs.items()},
@@ -141,9 +148,10 @@ class JsonTenancyStore(TenancyStore):
         async with self._lock:
             return self._workspaces.get(workspace_id)
 
-    async def list_workspaces(self, org_id: str) -> List[Workspace]:
+    async def list_workspaces(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Workspace]:
         async with self._lock:
-            return [w for w in self._workspaces.values() if w.org_id == org_id]
+            items = [w for w in self._workspaces.values() if w.org_id == org_id]
+            return items[offset : offset + limit]
 
     async def delete_workspace(self, workspace_id: str) -> bool:
         async with self._lock:
@@ -175,9 +183,10 @@ class JsonTenancyStore(TenancyStore):
         async with self._lock:
             return [m for m in self._memberships if m.principal_id == principal_id]
 
-    async def list_org_members(self, org_id: str) -> List[Membership]:
+    async def list_org_members(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Membership]:
         async with self._lock:
-            return [m for m in self._memberships if m.org_id == org_id]
+            items = [m for m in self._memberships if m.org_id == org_id]
+            return items[offset : offset + limit]
 
     async def remove_member(
         self,
@@ -207,9 +216,9 @@ class JsonTenancyStore(TenancyStore):
         async with self._lock:
             return self._roles.get(role_name)
 
-    async def list_roles(self) -> List[Role]:
+    async def list_roles(self, limit: int = 100, offset: int = 0) -> List[Role]:
         async with self._lock:
-            return list(self._roles.values())
+            return list(self._roles.values())[offset : offset + limit]
 
     async def save_role(self, role_name: str, permissions: List[str]) -> Role:
         async with self._lock:
@@ -267,14 +276,15 @@ class JsonTenancyStore(TenancyStore):
             await self._save_to_disk()
             return grant
 
-    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None) -> List[ToolGrant]:
+    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None,
+                               limit: int = 500, offset: int = 0) -> List[ToolGrant]:
         async with self._lock:
             res = self._tool_grants
             if scope_type:
                 res = [g for g in res if g.scope_type == scope_type]
             if scope_id:
                 res = [g for g in res if g.scope_id == scope_id]
-            return res
+            return res[offset : offset + limit]
 
     async def log_audit(
         self,

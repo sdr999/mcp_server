@@ -22,6 +22,16 @@ class ABACEvaluator:
     """Attribute-Based Access Control Engine:
     - Evaluates dynamic context attributes (trusted tags, workspace scoping, time bounds).
     - Supports wildcard tool matchers: exact, prefix, glob.
+
+    Terminology note (M8, reconciling with design §17.6): here ``trusted_tags`` is a
+    **required-attributes** gate — the caller must *possess* these tags (via their
+    principal metadata) to use the tool. This is a different mechanism from the
+    design's §17.6 "trusted tag namespace", which concerns which tags an *admin*
+    may reference when authoring tag-scoped grants to prevent self-grant
+    escalation. That escalation vector is independently closed in this
+    implementation because grant creation is admin-only (the /admin/orgs/*
+    endpoints require MCP_ADMIN_TOKEN), so a Developer cannot author a grant that
+    references a tag they set on their own onboarded tool.
     """
 
     @staticmethod

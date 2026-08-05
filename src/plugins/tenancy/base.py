@@ -19,6 +19,18 @@ class TenancyStore(ABC):
         pass
 
     @abstractmethod
+    async def is_empty(self) -> bool:
+        """True when the store holds no orgs and no roles (a fresh store).
+
+        Drives first-start seeding (§20.4) as a cheap early-out.
+        """
+        pass
+
+    async def close(self) -> None:
+        """Release backend resources (connections/pools). No-op by default (§21.2)."""
+        return None
+
+    @abstractmethod
     async def resolve_principal(
         self,
         issuer: str,
@@ -56,7 +68,7 @@ class TenancyStore(ABC):
         pass
 
     @abstractmethod
-    async def list_workspaces(self, org_id: str) -> List[Workspace]:
+    async def list_workspaces(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Workspace]:
         pass
 
     @abstractmethod
@@ -79,7 +91,7 @@ class TenancyStore(ABC):
         pass
 
     @abstractmethod
-    async def list_org_members(self, org_id: str) -> List[Membership]:
+    async def list_org_members(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Membership]:
         pass
 
     @abstractmethod
@@ -98,7 +110,7 @@ class TenancyStore(ABC):
         pass
 
     @abstractmethod
-    async def list_roles(self) -> List[Role]:
+    async def list_roles(self, limit: int = 100, offset: int = 0) -> List[Role]:
         pass
 
     @abstractmethod
@@ -134,7 +146,8 @@ class TenancyStore(ABC):
         pass
 
     @abstractmethod
-    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None) -> List[ToolGrant]:
+    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None,
+                               limit: int = 500, offset: int = 0) -> List[ToolGrant]:
         pass
 
     # --- Audit Trail ---

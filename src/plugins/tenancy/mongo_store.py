@@ -60,6 +60,17 @@ class MongoTenancyStore(TenancyStore):
             db["audit"].create_index([("ts", -1)]),
         )
 
+    async def is_empty(self) -> bool:
+        db = self._get_db()
+        return (await db["organizations"].estimated_document_count() == 0
+                and await db["roles"].estimated_document_count() == 0)
+
+    async def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+            self._db = None
+
     async def resolve_principal(
         self,
         issuer: str,
@@ -142,10 +153,10 @@ class MongoTenancyStore(TenancyStore):
             return None
         return Workspace(workspace_id=doc["workspace_id"], org_id=doc["org_id"], name=doc["name"], created_at=doc.get("created_at", 0.0))
 
-    async def list_workspaces(self, org_id: str) -> List[Workspace]:
+    async def list_workspaces(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Workspace]:
         db = self._get_db()
-        cursor = db["workspaces"].find({"org_id": org_id})
-        rows = await cursor.to_list(length=100)
+        cursor = db["workspaces"].find({"org_id": org_id}).skip(offset).limit(limit)
+        rows = await cursor.to_list(length=limit)
         return [Workspace(workspace_id=r["workspace_id"], org_id=r["org_id"], name=r["name"], created_at=r.get("created_at", 0.0)) for r in rows]
 
     async def delete_workspace(self, workspace_id: str) -> bool:
@@ -172,10 +183,10 @@ class MongoTenancyStore(TenancyStore):
         rows = await cursor.to_list(length=100)
         return [Membership(principal_id=r["principal_id"], org_id=r["org_id"], role=r["role"], workspace_id=r.get("workspace_id") or None) for r in rows]
 
-    async def list_org_members(self, org_id: str) -> List[Membership]:
+    async def list_org_members(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Membership]:
         db = self._get_db()
-        cursor = db["memberships"].find({"org_id": org_id})
-        rows = await cursor.to_list(length=500)
+        cursor = db["memberships"].find({"org_id": org_id}).skip(offset).limit(limit)
+        rows = await cursor.to_list(length=limit)
         return [Membership(principal_id=r["principal_id"], org_id=r["org_id"], role=r["role"], workspace_id=r.get("workspace_id") or None) for r in rows]
 
     async def remove_member(
@@ -201,10 +212,10 @@ class MongoTenancyStore(TenancyStore):
             return None
         return Role(role=doc["role"], permissions=doc.get("permissions", []))
 
-    async def list_roles(self) -> List[Role]:
+    async def list_roles(self, limit: int = 100, offset: int = 0) -> List[Role]:
         db = self._get_db()
-        cursor = db["roles"].find()
-        rows = await cursor.to_list(length=100)
+        cursor = db["roles"].find().skip(offset).limit(limit)
+        rows = await cursor.to_list(length=limit)
         return [Role(role=r["role"], permissions=r.get("permissions", [])) for r in rows]
 
     async def save_role(self, role_name: str, permissions: List[str]) -> Role:
@@ -284,15 +295,16 @@ class MongoTenancyStore(TenancyStore):
             created_at=now,
         )
 
-    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None) -> List[ToolGrant]:
+    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None,
+                               limit: int = 500, offset: int = 0) -> List[ToolGrant]:
         db = self._get_db()
         query = {}
         if scope_type:
             query["scope_type"] = scope_type
         if scope_id:
             query["scope_id"] = scope_id
-        cursor = db["tool_grants"].find(query)
-        rows = await cursor.to_list(length=500)
+        cursor = db["tool_grants"].find(query).skip(offset).limit(limit)
+        rows = await cursor.to_list(length=limit)
         return [
             ToolGrant(
                 id=str(r["_id"]),

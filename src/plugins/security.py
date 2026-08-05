@@ -191,10 +191,20 @@ async def enforce(request, policy: str):
                         log.warning("shadow audit write failed: %s", exc)
                 return None
             METRICS.inc("mcp_authz_denials_total")
-            return JSONResponse(
-                {"error": eval_res.reason, "decision": eval_res.decision},
-                status_code=403,
+            # §17.7: don't let error codes confirm another tenant's tools exist.
+            # For a specific tool the caller may not see, answer 404 with the same
+            # body an unknown tool returns; the real reason is logged server-side
+            # only. Non-resource denials (e.g. list) stay 403 but without leaking
+            # the internal decision label.
+            log.info(
+                "RBAC deny: principal=%s action=%s resource=%s decision=%s reason=%s",
+                principal.principal_id[:12], action, resource, eval_res.decision, eval_res.reason,
             )
+            if action in ("tool:call", "tool:manage") and resource:
+                return JSONResponse(
+                    {"error": f"unknown or disabled tool {resource!r}"}, status_code=404
+                )
+            return JSONResponse({"error": "forbidden"}, status_code=403)
 
 
     return None

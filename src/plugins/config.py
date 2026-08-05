@@ -105,6 +105,7 @@ class AppContext:
     rbac_cache_ttl: float = 30.0
     rbac_cache_size: int = 10000
     tenancy_seed: bool = True
+    tenancy_reconcile_roles: bool = False  # re-sync built-in role perms on boot (§21.5)
     default_org: str = "default"
 
 
@@ -281,6 +282,7 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         rbac_cache_ttl=float(env.get("MCP_RBAC_CACHE_TTL_SEC", "30")),
         rbac_cache_size=int(env.get("MCP_RBAC_CACHE_MAX_SIZE", "10000")),
         tenancy_seed=env.get("MCP_TENANCY_SEED", "true").lower() == "true",
+        tenancy_reconcile_roles=env.get("MCP_TENANCY_RECONCILE_ROLES", "false").lower() == "true",
         default_org=env.get("MCP_DEFAULT_ORG", "default"),
         rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
         rbac_mode=env.get("MCP_RBAC_MODE", "enforce").lower(),

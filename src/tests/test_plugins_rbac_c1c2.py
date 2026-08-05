@@ -223,8 +223,10 @@ def test_shadow_mode_does_not_block_a_would_deny():
 
 
 def test_enforce_mode_blocks_a_deny():
+    # Enforce mode blocks. For a tool:call the response is 404 (existence
+    # non-disclosure, §17.7/M2), not 403 — the path is /tools/x/call.
     res = asyncio.run(enforce(_fake_request("enforce", _member_principal()), "mcp"))
-    assert res is not None and res.status_code == 403
+    assert res is not None and res.status_code == 404
 
 
 # --------------------------------------------------------------------------
@@ -287,3 +289,39 @@ def test_seeder_and_identity_share_one_matrix():
     assert set(BUILTIN_ROLES) == set(BUILTIN_ROLE_PERMISSIONS)
     for role, perms in BUILTIN_ROLE_PERMISSIONS.items():
         assert set(BUILTIN_ROLES[role]) == perms
+
+
+# --------------------------------------------------------------------------
+# M1 — backend registry + fail-fast on unknown; M6 — is_empty + pagination.
+# --------------------------------------------------------------------------
+
+def test_backend_factory_registry_and_fail_fast():
+    from plugins.tenancy import create_tenancy_store, MemoryTenancyStore
+
+    ctx = types.SimpleNamespace(tenancy_store="memory")
+    assert isinstance(create_tenancy_store(ctx), MemoryTenancyStore)
+
+    with pytest.raises(RuntimeError):  # unknown backend must fail fast, not fall back
+        create_tenancy_store(types.SimpleNamespace(tenancy_store="oracle"))
+
+    with pytest.raises(RuntimeError):  # malformed custom spec
+        create_tenancy_store(types.SimpleNamespace(tenancy_store="not.a:real:factory"))
+
+
+def test_is_empty_and_pagination():
+    async def _run():
+        store = MemoryTenancyStore()
+        assert await store.is_empty() is True
+        await store.create_org("a", "A")
+        assert await store.is_empty() is False
+
+        for i in range(5):
+            await store.create_org(f"o{i}", f"O{i}")
+        page = await store.list_orgs(limit=2, offset=1)
+        assert len(page) == 2
+
+        for i in range(3):
+            await store.save_role(f"r{i}", ["tool:list"])
+        assert len(await store.list_roles(limit=2)) == 2
+
+    asyncio.run(_run())

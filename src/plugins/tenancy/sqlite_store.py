@@ -145,6 +145,19 @@ class SqliteTenancyStore(TenancyStore):
 
         await asyncio.to_thread(_run_init)
 
+    async def is_empty(self) -> bool:
+        def _run():
+            with self._get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT (SELECT COUNT(*) FROM organizations) + (SELECT COUNT(*) FROM roles) AS n")
+                return cur.fetchone()["n"] == 0
+        return await asyncio.to_thread(_run)
+
+    async def close(self) -> None:
+        # Connections are opened per-operation and closed in _get_conn(); nothing
+        # persistent to release.
+        return None
+
     async def resolve_principal(
         self,
         issuer: str,
@@ -283,11 +296,11 @@ class SqliteTenancyStore(TenancyStore):
 
         return await asyncio.to_thread(_run)
 
-    async def list_workspaces(self, org_id: str) -> List[Workspace]:
+    async def list_workspaces(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Workspace]:
         def _run():
             with self._get_conn() as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT workspace_id, org_id, name, created_at FROM workspaces WHERE org_id = ?", (org_id,))
+                cur.execute("SELECT workspace_id, org_id, name, created_at FROM workspaces WHERE org_id = ? LIMIT ? OFFSET ?", (org_id, limit, offset))
                 rows = cur.fetchall()
                 return [Workspace(workspace_id=r["workspace_id"], org_id=r["org_id"], name=r["name"], created_at=r["created_at"]) for r in rows]
 
@@ -343,11 +356,11 @@ class SqliteTenancyStore(TenancyStore):
 
         return await asyncio.to_thread(_run)
 
-    async def list_org_members(self, org_id: str) -> List[Membership]:
+    async def list_org_members(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Membership]:
         def _run():
             with self._get_conn() as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT principal_id, org_id, role, workspace_id FROM memberships WHERE org_id = ?", (org_id,))
+                cur.execute("SELECT principal_id, org_id, role, workspace_id FROM memberships WHERE org_id = ? LIMIT ? OFFSET ?", (org_id, limit, offset))
                 rows = cur.fetchall()
                 return [
                     Membership(
@@ -398,11 +411,11 @@ class SqliteTenancyStore(TenancyStore):
 
         return await asyncio.to_thread(_run)
 
-    async def list_roles(self) -> List[Role]:
+    async def list_roles(self, limit: int = 100, offset: int = 0) -> List[Role]:
         def _run():
             with self._get_conn() as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT role, permissions_json FROM roles")
+                cur.execute("SELECT role, permissions_json FROM roles LIMIT ? OFFSET ?", (limit, offset))
                 rows = cur.fetchall()
                 return [Role(role=r["role"], permissions=json.loads(r["permissions_json"])) for r in rows]
 
@@ -494,7 +507,8 @@ class SqliteTenancyStore(TenancyStore):
 
         return await asyncio.to_thread(_run)
 
-    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None) -> List[ToolGrant]:
+    async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None,
+                               limit: int = 500, offset: int = 0) -> List[ToolGrant]:
         def _run():
             with self._get_conn() as conn:
                 cur = conn.cursor()
@@ -509,6 +523,8 @@ class SqliteTenancyStore(TenancyStore):
                     params.append(scope_id)
                 if where_clauses:
                     query += " WHERE " + " AND ".join(where_clauses)
+                query += " LIMIT ? OFFSET ?"
+                params.extend([limit, offset])
                 cur.execute(query, params)
                 rows = cur.fetchall()
                 return [

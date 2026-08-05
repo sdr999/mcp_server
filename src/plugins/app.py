@@ -132,6 +132,7 @@ def build_app(ctx):
     app.state.workspace_header = ctx.workspace_header
     app.state.jwks_url = ctx.jwks_url
     app.state.jwt_issuer = ctx.jwt_issuer
+    app.state.jwt_audience = ctx.jwt_audience
     app.state.jwt_algorithm = ctx.jwt_algorithm
 
 
@@ -212,6 +213,9 @@ def build_app(ctx):
             # must be suppressed explicitly or it escapes the lifespan on shutdown.
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await worker
+            # Release tenancy store resources (DB connections / pools, §21.2).
+            with contextlib.suppress(Exception):
+                await tenancy_store.close()
 
     app.router.lifespan_context = lifespan
     return app, mcp

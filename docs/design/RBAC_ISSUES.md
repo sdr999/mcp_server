@@ -49,21 +49,36 @@ fixed. Severity: 🔴 Critical · 🟠 High · 🟡 Medium.
 
 ## 🟡 Medium
 
-- [ ] **M1 — Factory is if/elif, not the registry/`module:Factory` pattern; unknown
+- [x] **M1 — Factory is if/elif, not the registry/`module:Factory` pattern; unknown
   backend falls back to sqlite instead of fail-fast.** (§20.2, §20.6) — `tenancy/__init__.py`
-- [ ] **M2 — 403 vs 404 existence disclosure** on deny (leaks tool existence + decision
-  codes). (§17.7) — `security.py:enforce`
-- [ ] **M3 — Weakened JWT validation:** `verify_aud=False` and `HS256` allowed alongside
-  `RS256/ES256`. (§9) — `identity.py`
-- [ ] **M4 — Seed lock is in-process `asyncio.Lock`, not a backend-level lock;** seeding
-  never reconciles existing role perms. (§21.1, §21.5) — `tenancy/seeder.py`
-- [ ] **M5 — Hardcoded Supabase issuer default;** seeder binds superadmin by email while
-  `resolve_principal` keys on `sub`. (§12) — `tenancy/seeder.py`
-- [ ] **M6 — Interface drift:** no `is_empty()`, no `close()`/pool lifecycle, no migration
-  method; pagination only on `list_orgs`. (§20.1, §21.11) — `tenancy/base.py`
-- [ ] **M7 — Committed runtime artifacts:** `src/data/tenancy.db`, `src/logs/mcp_server.json.log`.
-- [ ] **M8 — Unplanned ABAC** reinterprets `trusted_tags`; phase labels don't match §14.
-  (§17.6) — `rbac/abac.py`
+  _Fix: `register_backend()` registry + `create_tenancy_store()` resolving a
+  `module.path:Factory` custom spec; unknown backend now raises `RuntimeError`._
+- [x] **M2 — 403 vs 404 existence disclosure** on deny. (§17.7) — `security.py:enforce`
+  _Fix: a denied `tool:call`/`tool:manage` returns **404** with the same body as an
+  unknown tool; other denials return a generic **403 "forbidden"** (no decision
+  label). Real reason is logged server-side only._
+- [x] **M3 — Weakened JWT validation.** (§9) — `identity.py`
+  _Fix: PyJWKClient fallback drops `HS256` (asymmetric `ES256`/`RS256` only) and
+  verifies audience when `MCP_JWT_AUDIENCE` is configured (now on `app.state`)._
+- [x] **M4 — Seed lock + role reconcile.** (§21.1, §21.5) — `tenancy/seeder.py`
+  _Fix: `MCP_TENANCY_RECONCILE_ROLES` re-syncs drifted built-in role perms on boot;
+  seed writes are idempotent create-if-absent. Backend-level distributed lock
+  (multi-replica) is documented as deferred (§21.1)._
+- [x] **M5 — Hardcoded Supabase issuer + broken superadmin binding.** (§12) — `tenancy/seeder.py`
+  _Fix: removed the hardcoded issuer default and the email-keyed superadmin binding
+  (it could never match `resolve_principal`, which keys on the JWT `sub`); superadmin
+  is granted via the email-claim match in the middleware + the admin-token bootstrap._
+- [x] **M6 — Interface drift.** (§20.1, §21.11) — `tenancy/base.py` + 4 backends
+  _Fix: added `is_empty()` and `close()` (wired into lifespan shutdown) and
+  `limit`/`offset` pagination on `list_workspaces`/`list_org_members`/`list_roles`/
+  `list_tool_grants` across all four backends._
+- [x] **M7 — Committed runtime artifacts.**
+  _Fix: `git rm --cached` `src/data/tenancy.db` + `src/logs/`; added `.gitignore` rules._
+- [x] **M8 — ABAC `trusted_tags` reinterpretation.** (§17.6) — `rbac/abac.py`
+  _Fix (clarify, no behavior change): documented that ABAC `trusted_tags` is a
+  required-attributes gate distinct from §17.6's grant-authoring tag namespace, and
+  that the self-grant-escalation vector is closed because grant creation is
+  admin-only (MCP_ADMIN_TOKEN)._
 
 ## Faithful to design (no action)
 
