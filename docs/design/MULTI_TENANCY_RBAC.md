@@ -1,16 +1,17 @@
 # Design: Multi-Tenancy & RBAC for the MCP Tool Server
 
-Status: **Proposed (revised after SDE5 review — see §17–§19)** · Branch: `org`
-· Scope of this doc: design only (no implementation)
+Status: **Proposed (revised after SDE5 + staff-architect review — see §17–§21)**
+· Branch: `org` · Scope of this doc: design only (no implementation)
 
 > **Review note:** §§1–16 are the original proposal. §17 (corner cases), §18
-> (cross-cutting concerns), §19 (safe rollout), and §20 (pluggable store) are the
-> review layer and, where they conflict with an earlier section, **they win** — the
-> most important being: the principal key is `(issuer, subject)` not `subject`
-> (§17.1); onboarded tool names are **tenant-qualified** to survive the flat FastMCP
-> registry (§17.2); and the tenancy store is a **pluggable, env-selected backend**
-> (SQLite is only the *default*), following the repo's plugin pattern, with
-> first-start seeding (§20).
+> (cross-cutting concerns), §19 (safe rollout), §20 (pluggable store), and §21
+> (staff-architect review) are the review layer and, where they conflict with an
+> earlier section, **they win** — the most important being: the principal key is
+> `(issuer, subject)` not `subject` (§17.1); onboarded tool names are
+> **tenant-qualified** to survive the flat FastMCP registry (§17.2); the tenancy
+> store is a **pluggable, env-selected backend** (SQLite is only the *default*)
+> with first-start seeding (§20); and the store interface is **async, read-optimized
+> for the authz hot path, seeded under a lock, and fails closed** (§21).
 
 ## Decisions baked into this design
 
@@ -524,6 +525,13 @@ admin routes need, not raw rows — so a non-SQL backend (Redis, DynamoDB, a hos
 API) can implement it without pretending to be a relational DB. Return types are
 small dataclasses (`Role`, `Org`, `Membership`, `Grant`, …), never driver cursors.
 
+> Signatures above are shown **sync for readability**. The real interface is
+> `async` (the server is async; a sync driver call on the event loop blocks every
+> other request). It also adds one **read-optimized hot-path method** —
+> `resolve_principal(issuer, subject, active_org, active_ws) -> Principal` — that
+> the PDP calls once per request; the granular getters above are for admin CRUD.
+> See §21.2–§21.3.
+
 ### 20.2 The registry + factory
 
 `plugins/tenancy/__init__.py` holds a name → constructor registry and a single
@@ -608,7 +616,9 @@ def maybe_seed(ctx, store):
 default permission sets. Properties:
 
 - **Idempotent & safe:** guarded by `is_empty()` — a restart, or enabling on an
-  existing store, never re-seeds or clobbers operator changes.
+  existing store, never re-seeds or clobbers operator changes. **But `is_empty()`
+  + write is a TOCTOU race across replicas** — see §21.1 for the seed lock that
+  makes concurrent cold starts safe.
 - **Overridable:** `MCP_TENANCY_SEED_FILE` points at a JSON/YAML doc to replace
   `DEFAULT_SEED` (custom roles, extra orgs) without touching code.
 - **Disable-able:** `MCP_TENANCY_SEED=false` for deployments that provision the
@@ -632,3 +642,114 @@ without `MCP_TENANCY_DSN`; `sqlite`/`json` with an unwritable path; a `module:Fa
 string that fails to import or doesn't satisfy the `TenancyStore` protocol; and
 `MCP_RBAC_ENABLED=true` with `MCP_AUTH_TYPE=none` (no identity to bind). Fail fast
 at startup, never mid-request.
+
+---
+
+## 21. Staff-architect review (runtime, reliability & compliance)
+
+§§17–20 got the domain model and the store abstraction right. This layer covers
+the **runtime and operational** gaps that surface at scale — the ones that don't
+show up until there are multiple replicas, a slow DB, real secrets, and auditors.
+Where these conflict with earlier sections, they win.
+
+### Correctness under concurrency
+
+- **21.1 Seeding is a distributed race (TOCTOU).** `is_empty()` then write (§20.4)
+  is safe on one node but **N replicas cold-starting together all observe empty
+  and all seed**, producing duplicate/racing writes. **Fix:** seed under a
+  **mutual-exclusion primitive appropriate to the backend** — SQLite: the write
+  is one transaction on a single file (naturally serialized); Postgres:
+  `pg_advisory_xact_lock(seed_key)` around the check+seed; MongoDB: an
+  `insert_one` of a sentinel `_id="__seed_lock__"` doc whose duplicate-key error
+  means "someone else is seeding". All seed writes are also **idempotent upserts**
+  keyed on natural keys, so a lost race degrades to a no-op, not a conflict.
+
+- **21.2 Don't block the event loop.** The server is async; `sqlite3`/`psycopg`
+  (sync mode)/`pymongo` calls on the request path **stall the whole worker**.
+  **Fix:** the `TenancyStore` interface is `async`. Sync-driver backends run their
+  calls in a bounded thread pool (`asyncio.to_thread` / `run_in_executor`);
+  async-native drivers (`asyncpg`, `motor`) are used directly. Connection **pools
+  are opened in the app lifespan and closed on shutdown** (`close()`), sized per
+  replica; SQLite uses one writer connection + WAL for concurrent readers.
+
+- **21.6 Cross-collection atomicity on MongoDB.** Unlike the relational backends,
+  Mongo has no cheap multi-document transaction outside a replica set. Seeding and
+  `bind_role` touch several collections. **Fix:** require a **replica set** for the
+  Mongo backend (also needed for change-stream cache invalidation, §21.4) and wrap
+  multi-collection writes in a session/transaction; or keep each write
+  single-document and idempotent so partial application self-heals on retry.
+
+### Reliability of the authz path
+
+- **21.3 Read-optimized hot path (avoid N+1).** Authorizing one request must not
+  fan out into `memberships_for` + per-role `get_role` + `grants_for` as separate
+  round-trips. **Fix:** a single `resolve_principal(issuer, subject, active_org,
+  active_ws)` that each backend satisfies in **one query/JOIN (SQL) or one
+  aggregation (Mongo)**, returning the fully-resolved `Principal` (roles ∪ perms ∪
+  compiled grant matcher). The granular getters stay for admin CRUD only. This is
+  what the §18.2 cache stores.
+
+- **21.4 Store outage mid-request → fail closed, serve cache within TTL.** §8 notes
+  the store may be down at *startup*; it can also drop *mid-request*. **Fix:** a
+  cache **hit** within TTL (§18.2) continues to serve (bounded staleness is
+  acceptable and already accepted for revocation, §17.11); a cache **miss** with
+  the store unreachable returns **503, fail-closed** — never fail-open to
+  "allow all". Invalidation is best-effort push (Postgres `LISTEN/NOTIFY`, Mongo
+  change streams) with TTL as the backstop, so a missed invalidation self-corrects.
+
+- **21.5 Role-definition drift.** `is_empty()` seeds **once**; when a later release
+  adds a permission to `developer` in `DEFAULT_SEED`, existing stores **never pick
+  it up** — code and store silently diverge. **Fix:** decide ownership explicitly.
+  Recommended: **built-in roles are code-authoritative** and *reconciled* on boot
+  (upsert the shipped definition, preserving operator-*added* custom roles);
+  **custom** roles are store-authoritative. Gate destructive reconciliation behind
+  a `MCP_TENANCY_RECONCILE_ROLES` flag and record the diff to audit.
+
+### Security & compliance
+
+- **21.7 Secrets at rest need envelope encryption, not just `0600`.** Per-tenant
+  upstream tokens/api-keys (§17.9) now live in the tenancy store; file perms don't
+  protect a Postgres/Mongo dump, a backup, or a replica. **Fix:** application-level
+  **envelope encryption** — encrypt secret fields with a data key wrapped by a KEK
+  from KMS/`MCP_TENANCY_KEK` (or the platform secret manager); the store persists
+  only ciphertext. Redaction on read (existing discipline) still applies. This also
+  scopes blast radius: a store compromise yields ciphertext, not live credentials.
+
+- **21.8 Audit is security evidence — make it tamper-evident and bounded.** Today
+  audit is a table the app freely writes *and could delete*. **Fix:** treat the
+  audit stream as **append-only** (no update/delete grant for any app role; DB
+  perms enforce it) and mirror it to an **external sink** (stdout/JSON for the
+  platform log pipeline) so a store compromise can't erase history. Add a
+  **retention/rotation** policy; hash-chain entries (`prev_hash`) if tamper-evidence
+  is required.
+
+- **21.9 PII & right-to-erasure.** `principals.subject`/`display_name` and audit
+  actors are **personal data** (GDPR/CCPA). **Fix:** a documented **erasure path**
+  (delete/anonymize a principal and pseudonymize its audit actor to a retained
+  `principal_id` hash, preserving the security trail without the PII), a
+  data-subject **export**, and a stated audit-retention window. Keep `subject`
+  out of `/metrics` labels (use `org` only, §18.5) to avoid high-cardinality PII
+  leakage into the metrics store.
+
+- **21.10 `principal_id` derivation must be collision-free.** `sha256(issuer|subject)`
+  with a plain `|` separator collides if a value contains `|`. **Fix:** hash a
+  **length-prefixed or structured** encoding (e.g. `sha256(json.dumps([issuer,
+  subject]))`), and keep the DB `UNIQUE(issuer, subject)` as the real integrity
+  guarantee — the derived id is a convenience key, not the source of uniqueness.
+
+### API hygiene
+
+- **21.11 All list/query surfaces are paginated & bounded.** Admin listings
+  (orgs/members/grants/audit) and internal scans must take `limit`/cursor and cap
+  server-side; an unbounded `list_*` is a latency and memory foot-gun at thousands
+  of orgs. Bake pagination into the interface from Phase 1 so it isn't retrofitted.
+
+### Revised phase & config notes
+- **Phase 1** additionally owns: the async interface + pool lifecycle (§21.2),
+  `resolve_principal` (§21.3), the seed lock (§21.1), pagination (§21.11), and the
+  role-reconcile decision (§21.5).
+- **Phase 2/3** own: fail-closed + cache-serve (§21.4), envelope-encrypted secrets
+  (§21.7), append-only/mirrored audit (§21.8).
+- New config: `MCP_TENANCY_KEK` (or KMS ref, §21.7),
+  `MCP_TENANCY_RECONCILE_ROLES=false` (§21.5), `MCP_AUDIT_SINK=store|stdout|both`
+  and `MCP_AUDIT_RETENTION_DAYS` (§21.8), `MCP_TENANCY_POOL_SIZE` (§21.2).
