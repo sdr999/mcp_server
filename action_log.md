@@ -1,22 +1,35 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-05] Documentation & Sample Payloads Guide Created
+
+### Summary of Documentation Changes
+1. **Dedicated Architecture Guide (`docs/MULTI_TENANCY_RBAC_GUIDE.md`)**:
+   - Created comprehensive technical documentation containing:
+     - Component structure and module references (`src/plugins/tenancy/*`, `src/plugins/rbac/*`).
+     - Architectural diagrams and 5-tier evaluation precedence details.
+     - Complete REST API Sample Payloads (Request & Response JSON) for:
+       - Auth Signup/Signin (`POST /auth/signup`, `POST /auth/signin`)
+       - WhoAmI Identity Inspection (`GET /whoami`)
+       - Organization Management (`POST /admin/orgs`, `GET /admin/orgs`, `DELETE /admin/orgs/{org}`)
+       - Workspace Management (`POST /admin/orgs/{org}/workspaces`, `GET /admin/orgs/{org}/workspaces`)
+       - Member Role Binding (`POST /admin/orgs/{org}/members`, `GET /admin/orgs/{org}/members`)
+       - Dynamic Tool Grants (`POST /admin/orgs/{org}/tool-grants`, `GET /admin/orgs/{org}/tool-grants`)
+       - Tenant Catalog Scoping (`GET /tools`)
+     - Code Walkthrough snippets (`PolicyEvaluator` logic and MongoDB Motor async pool).
+2. **Environment Configuration Templates**:
+   - Created root [`.env.example`](file:///d:/python/mcp_server/.env.example) and [`src/config/.env.example`](file:///d:/python/mcp_server/src/config/.env.example).
+3. **Documentation Index**:
+   - Updated [`docs/README.md`](file:///d:/python/mcp_server/docs/README.md) and [`docs/MCP_AUTH_GUIDE.md`](file:///d:/python/mcp_server/docs/MCP_AUTH_GUIDE.md) to cross-reference the new guide.
+
+---
+
 ## [2026-08-05] Phase 5 Implementation Complete: Production Hardening, Audit Trail & Metrics
 
 ### Summary of Phase 5 Changes
-1. **Asynchronous Audit Logger (`src/plugins/tenancy/audit.py`)**:
-   - Created `AsyncAuditLogger` non-blocking background queue worker.
-   - Flushes audit events (`AuditEntry`) to `logs/audit.log` (JSONL format) and the persistent `TenancyStore` database.
-
-2. **Prometheus Security Metrics (`src/plugins/observability.py` & `src/plugins/security.py`)**:
-   - Declared security authorization metrics: `mcp_authz_evaluations_total` and `mcp_authz_denials_total`.
-   - Instrumented security middleware `enforce(...)` to increment metrics on policy evaluation and denials.
-
-3. **OpenAPI Specification Updates (`openapi/openapi.yaml`)**:
-   - Added `Onboarding & Admin` tag and `/admin/orgs` REST path schema definitions.
-
-4. **Automated Test Suite (`src/tests/test_plugins_phase5.py`)**:
-   - Added tests covering background audit queue processing, Prometheus metrics scraping, and OpenAPI specification schema verification.
-   - Verified **173/173 tests passing** (100% pass rate).
+1. `AsyncAuditLogger` non-blocking background queue worker writing to `logs/audit.log` (JSONL) & DB.
+2. Prometheus security metrics `mcp_authz_evaluations_total` and `mcp_authz_denials_total` at `GET /metrics`.
+3. OpenAPI Specification updates in `openapi/openapi.yaml`.
+4. Automated Test Suite (173/173 passing).
 
 ---
 
