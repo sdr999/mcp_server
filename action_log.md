@@ -1,5 +1,76 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-05] Staff Review of the Implementation + Full Findings Remediation
+
+Reviewed the merged Phase 1–3 implementation against the design doc
+(`docs/design/MULTI_TENANCY_RBAC.md`) and fixed every finding. Review artifacts:
+`docs/design/IMPLEMENTATION_REVIEW.md` (narrative) and
+`docs/design/RBAC_ISSUES.md` (trackable checklist). New regression tests in
+`src/tests/test_plugins_rbac_c1c2.py` (14 cases). Full suite: **189 passed**
+with no env vars required.
+
+### 🔴 Critical
+- **C1 — Tenant-header anti-spoofing.** Tenant isolation was enforced against the
+  self-asserted `X-Tenant-Id` header, not store membership (`resolve_principal`
+  was never called, and itself trusted the header). Added
+  `identity.select_tenant_context()` (honors a tenant header only for member
+  orgs; non-members → default org); routed all four backends' `resolve_principal`
+  through it; `IdentityMiddleware` now overlays store-resolved org/roles/perms
+  from the verified `(issuer, subject)` when RBAC is on; anonymous pinned to
+  `default`. Store-failure now logged at WARNING (reaches the file handler).
+- **C2 — Deny-override grant precedence.** Evaluator returned on the first
+  matching grant; now scans all matching grants and any `deny` wins.
+  `_grant_applies_to()` also stops an unknown `scope_type` from matching everyone
+  and handles `role`/`principal` scopes.
+
+### 🟠 High
+- **H1 — One role→permission source of truth.** Added the canonical
+  `BUILTIN_ROLE_PERMISSIONS` matrix in `identity.py`; `permissions_for_roles()`
+  derives from it; the seeder seeds from the same matrix (no drift; asserted by
+  test). Store stays runtime-authoritative via `resolve_principal`.
+- **H2 — Grant `match_type` vocabulary.** Evaluator now supports
+  `name`/`tag`/`owner`/`all` (tag/owner/all were dead code) with legacy
+  `exact`/`prefix`/`glob` aliases; ownership resolved once and reused.
+- **H3 — Least-privilege default role.** `DEFAULT_ROLE = "agent_consumer"`; a bare
+  signed token no longer inherits `tool:onboard`/`tool:manage`; unknown roles get
+  no permissions.
+- **H4 — Shadow mode.** `MCP_RBAC_MODE=shadow|enforce` (+ validation). Shadow logs
+  a would-deny (WARNING → file), writes a `shadow_deny` audit row, increments
+  `mcp_authz_shadow_denials_total`, and proceeds. Also wired the missing
+  `MCP_RBAC_ENABLED` / `MCP_RBAC_MODE` env parsing.
+- **H5 — Cache invalidation on writes.** `_invalidate_rbac_cache()` wired into
+  `bind_member` (principal-scoped), `delete_org` (org-scoped), `add_tool_grant`
+  (full clear); decision-cache TTL default 300s → 30s.
+
+### 🟡 Medium
+- **M1** backend registry: `register_backend()` + `module.path:Factory` custom
+  specs; unknown `MCP_TENANCY_STORE` fails fast instead of falling back to sqlite.
+- **M2** existence non-disclosure: denied `tool:call`/`tool:manage` → 404 (unknown-
+  tool body); other denials → generic 403; reason logged server-side only.
+- **M3** JWT hardening: PyJWKClient fallback drops HS256 (ES256/RS256 only) and
+  verifies audience when `MCP_JWT_AUDIENCE` is set (now on `app.state`).
+- **M4** `MCP_TENANCY_RECONCILE_ROLES` re-syncs drifted built-in role perms on
+  boot; seed-lock scope documented (backend-level lock deferred, §21.1).
+- **M5** removed the hardcoded Supabase issuer default and the email-keyed
+  superadmin binding (could never match `resolve_principal`, which keys on `sub`);
+  superadmin via email-claim match + admin-token bootstrap.
+- **M6** interface: `is_empty()`, `close()` (wired into lifespan shutdown), and
+  `limit`/`offset` pagination on the four `list_*` methods across all backends.
+- **M7** untracked runtime artifacts (`src/data/*.db`, `src/logs/`) + `.gitignore`.
+- **M8** documented that ABAC `trusted_tags` is a required-attributes gate (grant
+  creation is admin-only, so the §17.6 self-grant vector is closed).
+
+### CI / test-environment fixes
+- **fastapi hard-dependency removed** — `plugins/auth_service.py` now imports
+  `HTTPException`/`status` from Starlette (same interface), so
+  `tests/test_plugins_identity.py` collects without fastapi installed.
+- **`src/tests/conftest.py`** sets `MCP_ADMIN_TOKEN` at collection time (via
+  `setdefault`) so the admin/tenancy REST tests run without a hand-set env var.
+- Updated `test_whoami_*` to assert the C1-secure behavior (anonymous ignores
+  tenant headers) instead of the old header-echo.
+
+---
+
 ## [2026-08-05] Documentation & Sample Payloads Guide Created
 
 ### Summary of Documentation Changes

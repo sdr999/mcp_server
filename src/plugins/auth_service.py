@@ -14,7 +14,10 @@ import logging
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import HTTPException, status
+# Use Starlette's HTTPException + status constants (same interface as FastAPI's)
+# so this Starlette-based server does not hard-depend on fastapi (test-collect fix).
+from starlette import status
+from starlette.exceptions import HTTPException
 
 log = logging.getLogger("MCP_logger")
 

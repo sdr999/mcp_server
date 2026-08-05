@@ -113,8 +113,10 @@ def test_whoami_endpoint_admin_token():
     assert "platform_superadmin" in data["roles"]
 
 
-def test_whoami_tenant_and_workspace_headers():
-    """Test GET /whoami propagates sanitized X-Tenant-Id and X-Workspace-Id."""
+def test_whoami_anonymous_ignores_tenant_headers():
+    """An unauthenticated caller must NOT be able to assert a tenant via headers
+    (C1 anti-spoofing, §9/§17.8). Anonymous is pinned to the default org
+    regardless of X-Tenant-Id / X-Workspace-Id."""
     ctx = build_context([])
     app, _ = build_app(ctx)
     client = TestClient(app)
@@ -125,5 +127,5 @@ def test_whoami_tenant_and_workspace_headers():
     })
     assert res.status_code == 200
     data = res.json()
-    assert data["org_id"] == "acme-corp"
-    assert data["workspace_id"] == "engineering-prod"
+    assert data["org_id"] == "default"
+    assert data["workspace_id"] == "default"
