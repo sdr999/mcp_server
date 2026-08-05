@@ -88,7 +88,7 @@ class AppContext:
     upstream_timeout: float = 30.0
     upstream_allow_runtime: bool = True             # admin add/remove at runtime
 
-    # --- Supabase & Multi-Tenancy / RBAC (Phase 0) ---
+    # --- Supabase & Multi-Tenancy / RBAC (Phase 0 & 1) ---
     supabase_url: str = ""
     supabase_key: str = ""
     supabase_jwt_kid: str = ""
@@ -97,6 +97,18 @@ class AppContext:
     tenant_header: str = "X-Tenant-Id"
     workspace_header: str = "X-Workspace-Id"
     api_keys_file: Optional[Path] = None
+    tenancy_store: str = "sqlite"
+    tenancy_db_path: Optional[Path] = None
+    tenancy_dsn: str = ""
+    tenancy_db_name: str = "mcp_tenancy"
+    rbac_cache_ttl: float = 300.0
+    rbac_cache_size: int = 10000
+    tenancy_seed: bool = True
+    default_org: str = "default"
+
+
+
+
 
 
 
@@ -260,11 +272,19 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         supabase_key=env.get("SUPABASE_KEY") or env.get("SUPABASE_PUBLISHABLE_KEY") or "",
         supabase_jwt_kid=env.get("SUPABASE_JWT_KID", ""),
         superadmin_email=env.get("MCP_SUPERADMIN_EMAIL", ""),
-        rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
-        tenant_header=env.get("MCP_TENANT_HEADER", "X-Tenant-Id"),
-        workspace_header=env.get("MCP_WORKSPACE_HEADER", "X-Workspace-Id"),
         api_keys_file=(base_dir / p if (p := env.get("MCP_API_KEYS_FILE")) else None),
+        tenancy_store=env.get("MCP_TENANCY_STORE", "sqlite").lower(),
+        tenancy_db_path=(base_dir / p if (p := env.get("MCP_TENANCY_DB")) else (base_dir / "data" / "tenancy.db")),
+        tenancy_dsn=env.get("MCP_TENANCY_DSN") or env.get("MONGODB_URI") or "",
+        tenancy_db_name=env.get("MCP_TENANCY_DB_NAME") or env.get("DB_NAME") or "mcp_tenancy",
+        rbac_cache_ttl=float(env.get("MCP_RBAC_CACHE_TTL_SEC", "300")),
+        rbac_cache_size=int(env.get("MCP_RBAC_CACHE_MAX_SIZE", "10000")),
+        tenancy_seed=env.get("MCP_TENANCY_SEED", "true").lower() == "true",
+        default_org=env.get("MCP_DEFAULT_ORG", "default"),
     )
+
+
+
 
 
 

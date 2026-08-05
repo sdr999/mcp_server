@@ -131,25 +131,47 @@ async def _jwt_ok(request) -> bool:
 
 
 async def enforce(request, policy: str):
-    """Apply a per-route auth policy. Returns a 401/503 JSONResponse when denied,
-    else None.
-
-    - ``"none"``  → open.
-    - ``"admin"`` → requires ``MCP_ADMIN_TOKEN`` (same gate as ``/admin/*``).
-    - ``"mcp"``   → requires the MCP credential for the active ``MCP_AUTH_TYPE``:
-      nothing in ``none`` mode, the api key in ``api_key`` mode, a valid JWT in
-      ``bearer_jwt`` mode.
-    """
+    """Apply a per-route auth policy. Returns a 401/403/503 JSONResponse when denied, else None."""
     if policy == "none":
         return None
     if policy == "admin":
         return admin_denied(request)
+
     mode = getattr(request.app.state, "auth_type", "none")
-    if mode == "api_key":
-        return None if _api_key_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
-    if mode == "bearer_jwt":
-        return None if await _jwt_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return None                               # none mode: open
+    if mode == "api_key" and not _api_key_ok(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if mode == "bearer_jwt" and not await _jwt_ok(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    # Phase 2: RBAC Policy Engine Check if enabled
+    rbac_enabled = getattr(request.app.state, "rbac_enabled", False)
+    evaluator = getattr(request.app.state, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+
+    if rbac_enabled and evaluator and principal:
+        path = request.url.path
+        if "/call" in path:
+            action = "tool:call"
+            resource = request.path_params.get("name", "")
+        elif "/tools" in path:
+            action = "tool:list"
+            resource = ""
+        elif "/upstreams" in path:
+            action = "upstream:call"
+            resource = request.path_params.get("server", "")
+        else:
+            action = "tool:call"
+            resource = ""
+
+        eval_res = await evaluator.evaluate(principal, action, resource)
+        if not eval_res.allowed:
+            return JSONResponse(
+                {"error": eval_res.reason, "decision": eval_res.decision},
+                status_code=403,
+            )
+
+    return None
+
 
 
 async def read_guard(request):

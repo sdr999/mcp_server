@@ -775,6 +775,122 @@ async def _auth_forgot_password(request):
     return JSONResponse(res, status_code=200)
 
 
+async def _admin_create_org(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    org_id = (body.get("org_id") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not org_id or not name:
+        return JSONResponse({"error": "org_id and name are required"}, status_code=400)
+    org = await store.create_org(org_id, name, settings=body.get("settings"))
+    return JSONResponse({"org_id": org.org_id, "name": org.name, "status": org.status, "created_at": org.created_at}, status_code=201)
+
+
+async def _admin_list_orgs(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    orgs = await store.list_orgs()
+    return JSONResponse([{"org_id": o.org_id, "name": o.name, "status": o.status, "created_at": o.created_at} for o in orgs])
+
+
+async def _admin_delete_org(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    ok = await store.delete_org(org_id)
+    if not ok:
+        return JSONResponse({"error": "Organization not found"}, status_code=404)
+    return JSONResponse({"message": f"Organization {org_id} deleted successfully"})
+
+
+async def _admin_create_workspace(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    workspace_id = (body.get("workspace_id") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not workspace_id or not name or not org_id:
+        return JSONResponse({"error": "workspace_id, org_id, and name are required"}, status_code=400)
+    ws = await store.create_workspace(workspace_id, org_id, name)
+    return JSONResponse({"workspace_id": ws.workspace_id, "org_id": ws.org_id, "name": ws.name, "created_at": ws.created_at}, status_code=201)
+
+
+async def _admin_list_workspaces(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    wss = await store.list_workspaces(org_id)
+    return JSONResponse([{"workspace_id": w.workspace_id, "org_id": w.org_id, "name": w.name, "created_at": w.created_at} for w in wss])
+
+
+async def _admin_bind_member(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    principal_id = (body.get("principal_id") or body.get("subject") or "").strip()
+    role = (body.get("role") or "").strip()
+    workspace_id = body.get("workspace_id")
+    if not principal_id or not role or not org_id:
+        return JSONResponse({"error": "principal_id, org_id, and role are required"}, status_code=400)
+    mem = await store.bind_member(principal_id, org_id, role, workspace_id)
+    return JSONResponse({"principal_id": mem.principal_id, "org_id": mem.org_id, "role": mem.role, "workspace_id": mem.workspace_id}, status_code=201)
+
+
+async def _admin_list_members(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    mems = await store.list_org_members(org_id)
+    return JSONResponse([{"principal_id": m.principal_id, "org_id": m.org_id, "role": m.role, "workspace_id": m.workspace_id} for m in mems])
+
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
@@ -822,6 +938,15 @@ def feature_routes() -> List[Route]:
         Route("/mcp/upstreams/{server}/tools/{name}/call", _upstream_tool_call, methods=["POST"]),
         Route("/admin/mcp/upstreams", _admin_upstream_add, methods=["POST"]),
         Route("/admin/mcp/upstreams/{server}/remove", _admin_upstream_remove, methods=["POST"]),
+        # Admin Tenancy & RBAC (Phase 1)
+        Route("/admin/orgs", _admin_create_org, methods=["POST"]),
+        Route("/admin/orgs", _admin_list_orgs, methods=["GET"]),
+        Route("/admin/orgs/{org}", _admin_delete_org, methods=["DELETE"]),
+        Route("/admin/orgs/{org}/workspaces", _admin_create_workspace, methods=["POST"]),
+        Route("/admin/orgs/{org}/workspaces", _admin_list_workspaces, methods=["GET"]),
+        Route("/admin/orgs/{org}/members", _admin_bind_member, methods=["POST"]),
+        Route("/admin/orgs/{org}/members", _admin_list_members, methods=["GET"]),
     ]
+
 
 

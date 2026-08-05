@@ -162,6 +162,19 @@ def build_app(ctx):
     register_metrics(loader, app)
 
 
+    # --- Tenancy Store & RBAC Engine (Phase 1 & 2) ---
+    from .tenancy import create_tenancy_store
+    from .tenancy.seeder import seed_tenancy_store_if_empty
+    from .rbac import DecisionCache, PolicyEvaluator
+
+    tenancy_store = create_tenancy_store(ctx)
+    app.state.tenancy_store = tenancy_store
+
+    rbac_cache = DecisionCache(maxsize=getattr(ctx, "rbac_cache_size", 10000), ttl_sec=getattr(ctx, "rbac_cache_ttl", 300.0))
+    policy_evaluator = PolicyEvaluator(store=tenancy_store, cache=rbac_cache)
+    app.state.policy_evaluator = policy_evaluator
+
+
     original_lifespan = app.router.lifespan_context
     stop_event = threading.Event()
 
@@ -170,16 +183,19 @@ def build_app(ctx):
         loop = asyncio.get_running_loop()
 
         async def _bootstrap():
+            # Initialize tenancy DB and first-start self-seeding
+            try:
+                await tenancy_store.init_db()
+                await seed_tenancy_store_if_empty(tenancy_store, ctx)
+            except Exception as exc:
+                log.error("Failed to initialize or seed tenancy store: %s", exc)
+
             # Runs as a background task so the server accepts requests immediately:
-            # /healthz is live at once and /readyz reports 503 until the initial
-            # load finishes, then 200. Imports are off-loop (bounded by timeout);
-            # registration is on-loop.
             await initial_load(loader, ctx.import_timeout)
             app_.state.ready = True
             log.info("Initial tool load complete (source=local): %s", loader.stats())
-            # Same task continues as the reload drain -- load-then-drain is
-            # sequential, so there is no race on the registry.
             await _reload_drain(loader, reload_q, mcp, ctx.import_timeout, loader_lock)
+
 
         worker = loop.create_task(_bootstrap())
         watcher.start()
