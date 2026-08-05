@@ -1,0 +1,47 @@
+{
+  "name": "get_info6",
+  "status": "onboarded",
+  "requested_at": 1785907876.1371975,
+  "requirements": [],
+  "risk_reports": [],
+  "hints": [],
+  "original_source": "def get_name() -> str:\n    return \"somu6\"\n\n# Main MCP Tool (Exposed to clients)\ndef get_info6(user_id: int) -> dict:\n    name = get_name()\n    return {\"user_id\": user_id, \"user_name\": name, \"status\": \"active\"}\n",
+  "auto_healed": true,
+  "fixes_applied": [
+    "Auto-inserted '@tool(description=\"MCP tool function get_info6\")' decorator above function 'get_info6'.",
+    "Added missing 'from tools_sdk import tool' import at top of file."
+  ],
+  "tool_manifest": {
+    "mechanism": "decorator",
+    "tools": [
+      {
+        "name": "get_info6",
+        "description": "MCP tool function get_info6",
+        "mechanism": "decorator",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "user_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "user_id"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "not_exposed": [
+      {
+        "function": "get_name",
+        "reason": "not decorated with @tool"
+      }
+    ],
+    "warnings": []
+  },
+  "installed": [],
+  "registered_tools": [
+    "get_info6"
+  ]
+}

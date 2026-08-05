@@ -297,7 +297,67 @@ MCP_TOOL_SOURCE=local python multiple_mcp_main.py --config <b64-path>
 
 ---
 
-## 9. Runtime behavior notes
+## 10. Production Observability System & Log Exposure API
+
+The server features a production-grade observability system (`src/plugins/observability.py`) built around the three core signals of observability: **Metrics**, **Traces**, and **Logs**.
+
+### Core Observability Architecture
+
+1. **OpenTelemetry W3C Trace Context Propagation**:
+   - Extracts incoming `traceparent` or `X-Trace-ID` HTTP headers and propagates trace IDs across async request handlers and sandboxed subprocess execution (`src/tool_runner.py`).
+2. **Structured Single-Line JSON Logging (`StructuredJsonFormatter`)**:
+   - Emits structured JSON logs to `logs/mcp_server.json.log` with ISO-8601 timestamps, log level, trace_id, span_id, duration_ms, and exception stack traces.
+3. **Secret Masking Filter (`SecretMaskingFilter`)**:
+   - Automatically redacts Authorization headers, bearer tokens, admin tokens, passwords, and sensitive keys from log output.
+4. **Health Probe Log Sampler (`ProbeLogSampler`)**:
+   - Suppresses noise by sampling 200 OK `/healthz` and `/readyz` probe logs at INFO level.
+5. **Log File Rotation (`RotatingFileHandler`)**:
+   - Rotates log files at 20MB with 5 retained backups.
+
+### Log Exposure API Endpoints
+
+#### `GET /admin/logs` & `GET /admin/logs/{log_category}`
+
+Exposes structured server logs and onboarding audit logs over HTTP (requires Admin Token authorization).
+
+**Query Parameters:**
+- `type` / `{log_category}`: `"server"` (default), `"audit"`, or `"all"`.
+- `limit`: Maximum log records to return (default: 100, max: 1000).
+- `level`: Filter by log level (`INFO`, `WARNING`, `ERROR`).
+- `trace_id`: Filter logs by OpenTelemetry Trace ID.
+- `search`: Substring search across log messages.
+
+**Sample Request:**
+```bash
+curl -s -H "Authorization: Bearer mysecretadmin" \
+  "http://localhost:8000/admin/logs?type=server&level=ERROR"
+```
+
+**Sample Response (`200 OK`):**
+```json
+{
+  "log_type": "server",
+  "count": 1,
+  "logs": [
+    {
+      "timestamp": "2026-08-05T08:57:00.123Z",
+      "level": "ERROR",
+      "service": "mcp-tool-server",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "event": "tool_call_failed",
+      "module": "plugins.routes",
+      "message": "Tool 'calculator' failed to execute",
+      "exception": ["ZeroDivisionError: division by zero"],
+      "log_type": "server"
+    }
+  ]
+}
+```
+
+---
+
+## 11. Runtime behavior notes
 
 - **Client notifications:** on a reload the server makes a best-effort attempt to
   push `notifications/tools/list_changed` to connected sessions. FastMCP 3.4.2
@@ -308,3 +368,4 @@ MCP_TOOL_SOURCE=local python multiple_mcp_main.py --config <b64-path>
   Imports run off-loop, bounded by the import timeout.
 - **Hot-reload:** the poller mirrors the share atomically (`*.tmp` → `os.replace`);
   the watcher also catches local edits. Deletes unregister the tool.
+

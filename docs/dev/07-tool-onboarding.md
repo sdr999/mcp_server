@@ -235,6 +235,24 @@ def _audit(self, action, name, result, detail=""):
 pre-check, source ≤ 1 MiB (`413`), ≤ 50 requirements (`400`), and maps
 `OnboardingConflict → 409`, `ValueError → 400`, disabled `→ 503`.
 
+## Self-Healing Engine (`plugins/auto_healer.py`)
+
+The `AutoHealer` class performs AST-driven and line-token-preserving code mutations to automatically resolve onboarding failures:
+
+```python
+healer = AutoHealer()
+result = healer.heal_source(source, name="my_tool", requirements=["pyyaml"])
+```
+
+1. **Line-Token Preservation**: Modifies lines at precise AST `lineno` indexes, leaving user comments, docstrings, and formatting intact.
+2. **Auto-Fixes**:
+   - Inserts `from tools_sdk import tool` at top of file.
+   - Auto-extracts function docstring and inserts `@tool(description="...")`.
+   - Auto-infers PyPI dependencies from imports (`yaml` ➔ `pyyaml`, `PIL` ➔ `pillow`, `cv2` ➔ `opencv-python`).
+   - Auto-annotates untyped function parameters (`x` ➔ `x: str`).
+   - Fixes missing trailing colons on `def` lines.
+3. **One-Click Revert**: `OnboardingManager.revert(name)` restores the original submitted Python code (`original_source`) and re-evaluates loading.
+
 ## Gotchas / design notes
 
 - Importing the submitted module runs its top-level code (bounded by the import
@@ -243,3 +261,4 @@ pre-check, source ≤ 1 MiB (`413`), ≤ 50 requirements (`400`), and maps
 - The exposure policy lives here (the untrusted boundary), never in the shared
   loader — the trusted local dir keeps legacy support.
 - Full config table and examples: `MCP_TOOL_ONBOARDING.md`.
+

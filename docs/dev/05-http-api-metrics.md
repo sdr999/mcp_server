@@ -32,12 +32,18 @@ def feature_routes() -> List[Route]:
 |----------|------|---------|
 | `GET /healthz` | open | liveness — process is up |
 | `GET /readyz` | open | readiness — `200` only after initial load, else `503` |
+| `GET /docs`, `/swagger` | open | Interactive Swagger UI API Documentation |
+| `GET /openapi.yaml`, `/openapi.json` | open | OpenAPI 3.0 Specifications |
 | `GET /status` | MCP cred | `{ready, auth, source:"local", stats}` |
 | `GET /tools` | MCP cred | tool catalog `[{name, module, description, tags}]` |
 | `POST /tools/{name}/call` | MCP cred | execute a tool — the HTTP equivalent of an MCP `tools/call` |
 | `GET /metrics` | MCP cred | Prometheus text |
+| `GET /admin/logs[/{category}]` | admin | Server & Audit log streaming API (`server`, `audit`, `all`) |
+| `POST /admin/tools/validate_source` | admin | Dry-run validation & Self-Healing Auto-Fix Proposal |
+| `POST /admin/tools/{name}/revert` | admin | Revert auto-healed tool to original source code |
 | `POST /admin/resync` | admin | no-op `409` (no remote source; watcher covers edits) |
 | `POST /admin/reload/{name}` | admin | reload the module owning a tool |
+
 | `POST /admin/tool/{name}/disable\|enable` | admin | toggle a tool across reloads |
 | `POST /admin/tools/onboard` | admin | submit a tool (doc 07) |
 | `GET /admin/tools/pending[/{name}]` | admin | list / detail (incl. source + manifest) |

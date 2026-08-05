@@ -283,7 +283,8 @@ class OnboardingManager:
         return record
 
     async def onboard(self, name: str, source: str, requirements: Optional[List[str]] = None,
-                       *, overwrite: bool = False) -> dict:
+                       *, overwrite: bool = False, auto_heal: bool = False) -> dict:
+
         if not self.enabled:
             raise ValueError("tool onboarding is disabled (MCP_TOOL_ONBOARD_ENABLED=false)")
         if self.loader.verifier is not None and getattr(self.loader.verifier, "require", False):
@@ -294,7 +295,17 @@ class OnboardingManager:
                              "(MCP_REQUIRE_SIGNED_TOOLS=true); publish via the signed manifest instead")
         if not _NAME_RE.match(name or ""):
             raise ValueError("invalid tool name: must match ^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-        val = self.validate_source(source, requirements)
+
+        original_source = source
+        from .auto_healer import AutoHealer
+        healer = AutoHealer()
+        healed = healer.heal_source(source, name=name, requirements=requirements)
+
+        if auto_heal and healed.has_autofix and healed.syntax_ok:
+            source = healed.corrected_source
+            requirements = healed.suggested_requirements
+
+        val = self.validate_source(source, requirements, name=name)
         if not val["syntax_ok"]:
             err_detail = val['hints'][0] if val['hints'] else 'invalid syntax'
             raise ValueError(f"tool source validation failed: {err_detail}")
@@ -324,7 +335,11 @@ class OnboardingManager:
             "requirements": [spec for spec, _ in specs_with_origin],
             "risk_reports": [asdict(r) for r in reports],
             "hints": val.get("hints", []),
+            "original_source": original_source,
+            "auto_healed": healed.has_autofix if auto_heal else False,
+            "fixes_applied": healed.fixes_applied if auto_heal else [],
         }
+
 
 
         if not self.autoinstall and needs_install:
@@ -374,11 +389,14 @@ class OnboardingManager:
                               f"tool failed to load: {failure or 'source registered no tools'}")
 
         record["registered_tools"] = registered
+        with contextlib.suppress(Exception):
+            (self.tools_dir / f"{name}.meta.json").write_text(json.dumps(record, default=str, indent=2), encoding="utf-8")
         METRICS.inc("mcp_tool_onboards_total", result="onboarded")
         self._audit("onboard", name, "onboarded", f"tools={registered}")
         log.info("Tool %r onboarded (%d dependency install(s), tools: %s)",
                  name, len(install_specs), registered)
         return record
+
 
     @staticmethod
     def _tool_params(tool) -> dict:
@@ -518,41 +536,113 @@ class OnboardingManager:
         log.info("Pending tool %r rejected and discarded", name)
         return True
 
-    def validate_source(self, source: str, requirements: Optional[List[str]] = None) -> dict:
-        """Dry-run validation: check syntax, detect imports, risk assess dependencies,
-        and find tools declared in source without modifying disk or server state."""
+    def validate_source(self, source: str, requirements: Optional[List[str]] = None, name: Optional[str] = None) -> dict:
+        """Dry-run validation & auto-fix proposal generation."""
+        from .auto_healer import AutoHealer
+        healer = AutoHealer()
+        healed = healer.heal_source(source, name=name, requirements=requirements)
+
         result = {
-            "syntax_ok": False,
+            "syntax_ok": healed.syntax_ok,
+            "has_autofix": healed.has_autofix,
+            "original_source": healed.original_source,
+            "corrected_source": healed.corrected_source if healed.has_autofix else None,
+            "suggested_requirements": healed.suggested_requirements,
+            "autofix_summary": healed.fixes_applied,
             "tools_found": [],
             "detected_imports": [],
             "risk_reports": [],
             "hints": [],
         }
-        try:
-            tree = ast.parse(source)
-            result["syntax_ok"] = True
-        except SyntaxError as exc:
-            result["hints"].append(f"Syntax error on line {exc.lineno}: {exc.msg}")
+
+        if not healed.syntax_ok:
+            try:
+                ast.parse(source)
+            except SyntaxError as exc:
+                result["hints"].append(f"Syntax error on line {exc.lineno}: {exc.msg}")
             return result
 
-        top_funcs = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
-        result["tools_found"] = top_funcs
+        try:
+            tree = ast.parse(healed.corrected_source)
+            top_funcs = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+            result["tools_found"] = top_funcs
+        except Exception:
+            pass
 
-        specs_with_origin = self._build_specs(source, requirements or [])
+        specs_with_origin = self._build_specs(healed.corrected_source, healed.suggested_requirements)
         reports = self._assess_specs(specs_with_origin)
         result["detected_imports"] = [spec for spec, _ in specs_with_origin]
         result["risk_reports"] = [asdict(r) for r in reports]
 
-        if "@tool" in source and "tools_sdk" not in source:
+        if "@tool" in healed.corrected_source and "tools_sdk" not in healed.corrected_source:
             result["hints"].append(
                 "Found '@tool' decorator in code but 'from tools_sdk import tool' is missing. "
                 "Add 'from tools_sdk import tool' at the top of your file."
             )
-        elif "@tool" not in source and "TOOLS" not in source and "def register(" not in source:
+        elif "@tool" not in healed.corrected_source and "TOOLS" not in healed.corrected_source and "def register(" not in healed.corrected_source:
             result["hints"].append(
                 "No explicit @tool decorator or TOOLS list found. "
                 "Set MCP_TOOL_ONBOARD_REQUIRE_EXPLICIT=false or add @tool() above your main function."
             )
         return result
+
+    async def revert(self, name: str) -> dict:
+        """Revert an auto-healed tool back to its exact original submitted source code."""
+        meta_path = self.tools_dir / f"{name}.meta.json"
+        original_source = None
+        requirements = []
+
+        if meta_path.exists():
+            with contextlib.suppress(Exception):
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                original_source = meta.get("original_source")
+                requirements = meta.get("requirements", [])
+
+        if not original_source:
+            pending = self.get_pending(name)
+            if pending:
+                original_source = pending.get("original_source")
+                requirements = pending.get("requirements", [])
+
+        if not original_source:
+            raise KeyError(f"no original source record found for tool {name!r} to revert")
+
+        live_file = self.tools_dir / f"{name}.py"
+        live_file.write_text(original_source, encoding="utf-8")
+
+        registered, failure, manifest = await self._write_live(name, original_source)
+        record = {
+            "name": name,
+            "status": "onboarded" if (registered and not failure) else "reverted_to_original",
+            "source": original_source,
+            "requirements": requirements,
+            "auto_healed": False,
+            "fixes_applied": [],
+            "registered_tools": registered,
+            "failure_reason": failure if not registered else None,
+        }
+        with contextlib.suppress(Exception):
+            meta_path.write_text(json.dumps(record, default=str, indent=2), encoding="utf-8")
+        self._audit("revert", name, record["status"])
+        return record
+
+    async def auto_patch_tool(self, name: str) -> dict:
+        """Inspect a tool's code, apply AST auto-healing patches, and re-onboard."""
+        live_file = self.tools_dir / f"{name}.py"
+        if not live_file.exists():
+            raise KeyError(f"no tool named {name!r} found to patch")
+
+        source = live_file.read_text(encoding="utf-8")
+        from .auto_healer import AutoHealer
+        healer = AutoHealer()
+        healed = healer.heal_source(source, name=name)
+
+        if not healed.has_autofix:
+            return {"name": name, "patched": False, "message": "No auto-patch required; source is already fully healed."}
+
+        return await self.onboard(name, healed.corrected_source, healed.suggested_requirements, overwrite=True, auto_heal=True)
+
+
+
 
 

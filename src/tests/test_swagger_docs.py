@@ -76,14 +76,17 @@ def test_onboard_calls_validation_internally(tmp_path):
     tools_dir = tmp_path / "tools"
     tools_dir.mkdir()
     (tools_dir / "__init__.py").write_text("")
-    pkg_parent = str(tools_dir.parent.resolve())
+    pkg_parent = str(tmp_path.resolve())
+    sys.modules.pop("tools", None)
     if pkg_parent not in sys.path:
         sys.path.insert(0, pkg_parent)
 
-    ctx = build_context([], base_dir=SRC_DIR)
+    ctx = build_context([], base_dir=tmp_path)
     ctx.tools_dir = tools_dir
     ctx.admin_token = "admintoken"
     app, _mcp = build_app(ctx)
+
+
     client = TestClient(app)
 
     headers = {"Authorization": "Bearer admintoken"}
@@ -113,8 +116,5 @@ def test_onboard_calls_validation_internally(tmp_path):
     }
     resp_miss = client.post("/admin/tools/validate_source", json=payload_missing_import, headers=headers)
     assert resp_miss.status_code == 200
-    assert any("from tools_sdk import tool" in h for h in resp_miss.json()["hints"])
-
-
-
-
+    summaries_and_hints = resp_miss.json().get("autofix_summary", []) + resp_miss.json().get("hints", [])
+    assert any("from tools_sdk import tool" in msg for msg in summaries_and_hints)

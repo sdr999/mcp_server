@@ -28,18 +28,28 @@ This document tracks all execution steps taken to analyze the MCP tool server, u
 | 2026-08-05T08:56:47 | ACT-017 | App Integration | Wired `TraceCorrelationMiddleware` and `setup_observability()` into `src/plugins/app.py` and `src/tool_runner.py` with `RotatingFileHandler` support (`logs/mcp_server.json.log`). | COMPLETED |
 | 2026-08-05T08:57:15 | ACT-018 | Observability Test Suite | Created `src/tests/test_observability.py`. Executed full test suite (`46 passed in 7.68s`). | COMPLETED |
 | 2026-08-05T09:07:44 | ACT-019 | Log Exposure Endpoints | Implemented `GET /admin/logs` and `GET /admin/logs/{log_category}` in `routes.py` with level, trace ID, and search filtering. Documented in `openapi.yaml`. Test suite passing (`47 passed`). | COMPLETED |
+| 2026-08-05T10:20:11 | ACT-020 | Self-Healing Engine | Built `src/plugins/auto_healer.py` featuring comment-preserving line-token rewriting for missing `from tools_sdk import tool` imports, docstring-to-description `@tool` decorator auto-insertion, PyPI dependency inference (`yaml` ➔ `pyyaml`, `PIL` ➔ `pillow`, `cv2` ➔ `opencv-python`), untyped parameter auto-annotation, and missing colon syntax fix. Added `POST /admin/tools/{name}/revert` endpoint. Verified unit tests (`52 passed`). | COMPLETED |
+| 2026-08-05T11:16:45 | ACT-021 | Advanced Self-Healing Suite | Added unbound standard library symbol auto-imports (`Path` ➔ `from pathlib import Path`, `List` ➔ `from typing import List`, `json`, `re`, `math`, `asyncio`), automatic input type coercion (`"42"` ➔ `42`, `"true"` ➔ `True`, `"3.14"` ➔ `3.14`), one-click proposal acceptance endpoint (`POST /admin/tools/onboard/accept_proposal`), and auto-patch endpoint (`POST /admin/tools/{name}/auto_patch`). Added test suite (`src/tests/test_advanced_auto_healer.py`). All unit tests passing (`55 passed`). | COMPLETED |
 
 ---
 
 ## Key Output Artifacts & Endpoints
 - **Swagger UI Page**: `http://localhost:8000/docs` (or `/swagger`)
+- **Self-Healing Dry-Run API**: `POST /admin/tools/validate_source` (returns `corrected_source`, `suggested_requirements`, `autofix_summary`)
+- **Auto-Healed Onboarding API**: `POST /admin/tools/onboard` (`auto_heal`: true)
+- **One-Click Proposal Acceptance API**: `POST /admin/tools/onboard/accept_proposal`
+- **One-Click Tool Reversion API**: `POST /admin/tools/{name}/revert`
+- **Tool Auto-Patch API**: `POST /admin/tools/{name}/auto_patch`
 - **Log Exposure API**: `GET /admin/logs?type=server` (or `audit` / `all`) & `GET /admin/logs/{log_category}`
 - **OpenAPI JSON Spec**: `http://localhost:8000/openapi.json`
 - **OpenAPI YAML Spec**: `http://localhost:8000/openapi.yaml`
+- **Auto-Healer Module**: [`src/plugins/auto_healer.py`](file:///d:/python/mcp_server/src/plugins/auto_healer.py)
 - **Specification File**: [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml)
 - **Observability Module**: [`src/plugins/observability.py`](file:///d:/python/mcp_server/src/plugins/observability.py)
 - **Plugin Routes File**: [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py)
 - **Monolith Server File**: [`src/multiple_mcp_main.py`](file:///d:/python/mcp_server/src/multiple_mcp_main.py)
-- **Test Suite**: [`src/tests/test_observability.py`](file:///d:/python/mcp_server/src/tests/test_observability.py)
+- **Advanced Test Suite**: [`src/tests/test_advanced_auto_healer.py`](file:///d:/python/mcp_server/src/tests/test_advanced_auto_healer.py)
+
+
 
 

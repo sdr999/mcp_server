@@ -362,6 +362,10 @@ paths:
                   type: boolean
                   description: Whether to overwrite an existing tool file
                   default: false
+                auto_heal:
+                  type: boolean
+                  description: Whether to auto-apply code fixes (missing @tool, missing imports, inferred requirements)
+                  default: true
       responses:
         '201':
           description: Tool successfully onboarded and loaded immediately
@@ -378,8 +382,8 @@ paths:
     post:
       tags:
         - Onboarding & Admin
-      summary: Dry-run validate tool source code
-      description: Dry-run validation endpoint to check Python source code syntax, detect imports, risk-assess requirements, and preview tools without modifying server state or disk.
+      summary: Dry-run validate tool source code & generate Auto-Fix Proposal
+      description: Dry-run validation endpoint to check Python source code syntax, detect imports, risk-assess requirements, and generate a Self-Healing Auto-Fix Proposal without modifying server state or disk.
       operationId: validateToolSource
       security:
         - AdminTokenAuth: []
@@ -392,6 +396,9 @@ paths:
               required:
                 - source
               properties:
+                name:
+                  type: string
+                  description: Target tool name for decorator matching
                 source:
                   type: string
                   description: Python source code to validate
@@ -408,7 +415,7 @@ paths:
                   example: []
       responses:
         '200':
-          description: Dry-run validation result
+          description: Dry-run validation & Auto-Fix Proposal result
           content:
             application/json:
               schema:
@@ -416,6 +423,20 @@ paths:
                 properties:
                   syntax_ok:
                     type: boolean
+                  has_autofix:
+                    type: boolean
+                  original_source:
+                    type: string
+                  corrected_source:
+                    type: string
+                  suggested_requirements:
+                    type: array
+                    items:
+                      type: string
+                  autofix_summary:
+                    type: array
+                    items:
+                      type: string
                   tools_found:
                     type: array
                     items:
@@ -433,7 +454,84 @@ paths:
                     items:
                       type: string
 
+  /admin/tools/{name}/revert:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Revert an auto-healed tool to its original source code
+      description: Reverts an auto-healed live or pending tool back to the exact original Python source code submitted prior to self-healing.
+      operationId: revertTool
+      security:
+        - AdminTokenAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: Tool name to revert
+      responses:
+        '200':
+          description: Tool successfully reverted to original source code
+        '404':
+          description: Tool or original source record not found
+
+  /admin/tools/onboard/accept_proposal:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: One-Click Accept Auto-Fix Proposal and Onboard
+      description: Accepts a dry-run proposal, applies all auto-healing fixes, and onboards the tool in a single request.
+      operationId: acceptProposalAndOnboard
+      security:
+        - AdminTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - source
+              properties:
+                name:
+                  type: string
+                source:
+                  type: string
+                requirements:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Proposal accepted and tool onboarded
+
+  /admin/tools/{name}/auto_patch:
+    post:
+      tags:
+        - Onboarding & Admin
+      summary: Auto-patch a tool experiencing runtime or syntax issues
+      description: Scans a tool's source code, applies AST auto-healing patches, and re-onboards the tool cleanly.
+      operationId: autoPatchTool
+      security:
+        - AdminTokenAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: Tool name to auto-patch
+      responses:
+        '200':
+          description: Tool successfully patched and re-loaded
+        '404':
+          description: Tool not found
+
+
   /admin/tools/pending:
+
 
     get:
       tags:

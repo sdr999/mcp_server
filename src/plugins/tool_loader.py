@@ -155,8 +155,19 @@ class ToolLoader:
         return self._name_owner.get(name) or self._disabled.get(name)
 
     def _import(self, module_name: str):
+        parent_dir = str(self.tools_dir.parent.resolve())
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        top_pkg = module_name.split(".")[0]
+        if top_pkg in sys.modules:
+            mod = sys.modules[top_pkg]
+            mod_file = getattr(mod, "__file__", None)
+            if mod_file and not str(Path(mod_file).resolve()).startswith(parent_dir):
+                sys.modules.pop(top_pkg, None)
         sys.modules.pop(module_name, None)  # force a fresh import on reload
         return importlib.import_module(module_name)
+
+
 
     # -- resolution ---------------------------------------------------------
     def _make_wrapper(self, original, tool_name: str):
@@ -175,6 +186,21 @@ class ToolLoader:
         async def wrapper(**kwargs):
             start = time.perf_counter()
             METRICS.inc("mcp_tool_calls_total", tool=tool_name)
+
+            # Self-Healing Input Type Coercion (convert string arguments to int/bool/float if typed)
+            with contextlib.suppress(Exception):
+                sig = inspect.signature(original)
+                for p_name, param in sig.parameters.items():
+                    if p_name in kwargs and isinstance(kwargs[p_name], str):
+                        val_str = kwargs[p_name]
+                        target_type = param.annotation
+                        if target_type in (int, "int") and re.match(r"^-?\d+$", val_str):
+                            kwargs[p_name] = int(val_str)
+                        elif target_type in (bool, "bool") and val_str.lower() in ("true", "false", "1", "0"):
+                            kwargs[p_name] = val_str.lower() in ("true", "1")
+                        elif target_type in (float, "float") and re.match(r"^-?\d+(\.\d+)?$", val_str):
+                            kwargs[p_name] = float(val_str)
+
             try:
                 if sandbox:
                     return await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
@@ -182,6 +208,7 @@ class ToolLoader:
                 if inspect.isawaitable(result):
                     result = await result
                 return result
+
             except Exception:
                 METRICS.inc("mcp_tool_errors_total", tool=tool_name)
                 raise

@@ -266,9 +266,10 @@ async def _admin_tools_onboard(request):
     source = body.get("source")
     requirements = body.get("requirements") or []
     overwrite = bool(body.get("overwrite", False))
+    auto_heal = bool(body.get("auto_heal", True))
     if not isinstance(name, str) or not isinstance(source, str) or not isinstance(requirements, list):
         return JSONResponse(
-            {"error": "expected {\"name\": str, \"source\": str, \"requirements\"?: [str, ...], \"overwrite\"?: bool}"},
+            {"error": "expected {\"name\": str, \"source\": str, \"requirements\"?: [str, ...], \"overwrite\"?: bool, \"auto_heal\"?: bool}"},
             status_code=400,
         )
     if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
@@ -277,7 +278,7 @@ async def _admin_tools_onboard(request):
         return JSONResponse({"error": f"too many requirements (max {MAX_REQUIREMENTS})"}, status_code=400)
 
     try:
-        record = await st.onboarding.onboard(name, source, requirements, overwrite=overwrite)
+        record = await st.onboarding.onboard(name, source, requirements, overwrite=overwrite, auto_heal=auto_heal)
     except OnboardingConflict as exc:
         return JSONResponse({"error": str(exc), "hint": "Set 'overwrite': true in your JSON request body to replace an existing tool."}, status_code=409)
     except ValueError as exc:
@@ -295,12 +296,71 @@ async def _admin_tools_validate_source(request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+    name = body.get("name")
     source = body.get("source")
     requirements = body.get("requirements") or []
     if not isinstance(source, str) or not isinstance(requirements, list):
         return JSONResponse({"error": "expected {\"source\": str, \"requirements\"?: [str, ...]}"}, status_code=400)
-    res = st.onboarding.validate_source(source, requirements)
+    res = st.onboarding.validate_source(source, requirements, name=name)
     return JSONResponse(res)
+
+
+async def _admin_tools_revert(request):
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    name = request.path_params["name"]
+    try:
+        record = await st.onboarding.revert(name)
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(record)
+    except KeyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+async def _admin_tools_accept_proposal(request):
+
+    """Accept a dry-run proposal and onboard the tool immediately."""
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+    name = body.get("name")
+    source = body.get("source")
+    requirements = body.get("requirements") or []
+    overwrite = bool(body.get("overwrite", True))
+    if not isinstance(name, str) or not isinstance(source, str):
+        return JSONResponse({"error": "expected {\"name\": str, \"source\": str}"}, status_code=400)
+
+    try:
+        record = await st.onboarding.onboard(name, source, requirements, overwrite=overwrite, auto_heal=True)
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(record, status_code=201)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+async def _admin_tools_auto_patch(request):
+    """Auto-patch a tool that experienced a runtime error or syntax issue."""
+    if (denied := admin_denied(request)) is not None:
+        return denied
+    st = request.app.state
+    name = request.path_params["name"]
+    try:
+        record = await st.onboarding.auto_patch_tool(name)
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(record)
+    except KeyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
 
 
 
@@ -519,8 +579,13 @@ def feature_routes() -> List[Route]:
         Route("/admin/tool/{name}/disable", _admin_disable, methods=["POST"]),
         Route("/admin/tool/{name}/enable", _admin_enable, methods=["POST"]),
         Route("/admin/tools/onboard", _admin_tools_onboard, methods=["POST"]),
+        Route("/admin/tools/onboard/accept_proposal", _admin_tools_accept_proposal, methods=["POST"]),
         Route("/admin/tools/validate_source", _admin_tools_validate_source, methods=["POST"]),
+        Route("/admin/tools/{name}/revert", _admin_tools_revert, methods=["POST"]),
+        Route("/admin/tools/{name}/auto_patch", _admin_tools_auto_patch, methods=["POST"]),
         Route("/admin/tools/pending", _admin_tools_pending_list, methods=["GET"]),
+
+
 
         Route("/admin/tools/pending/{name}", _admin_tools_pending_detail, methods=["GET"]),
         Route("/admin/tools/pending/{name}/approve", _admin_tools_pending_approve, methods=["POST"]),

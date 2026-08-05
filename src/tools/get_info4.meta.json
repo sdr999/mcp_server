@@ -1,0 +1,46 @@
+{
+  "name": "get_info4",
+  "status": "onboarded",
+  "requested_at": 1785907710.622597,
+  "requirements": [],
+  "risk_reports": [],
+  "hints": [],
+  "original_source": "from tools_sdk import tool\n\n# Helper function (NOT exposed to clients)\ndef get_name() -> str:\n    return \"somu4\"\n\n# Main MCP Tool (Exposed to clients)\ndef get_info4(user_id: int) -> dict:\n    name = get_name()\n    return {\"user_id\": user_id, \"user_name\": name, \"status\": \"active\"}\n",
+  "auto_healed": true,
+  "fixes_applied": [
+    "Auto-inserted '@tool(description=\"MCP tool function get_info4\")' decorator above function 'get_info4'."
+  ],
+  "tool_manifest": {
+    "mechanism": "decorator",
+    "tools": [
+      {
+        "name": "get_info4",
+        "description": "MCP tool function get_info4",
+        "mechanism": "decorator",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "user_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "user_id"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "not_exposed": [
+      {
+        "function": "get_name",
+        "reason": "not decorated with @tool"
+      }
+    ],
+    "warnings": []
+  },
+  "installed": [],
+  "registered_tools": [
+    "get_info4"
+  ]
+}

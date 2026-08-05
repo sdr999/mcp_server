@@ -210,6 +210,75 @@ curl -s "${ADM[@]}" -X POST $BASE/admin/tools/pending/typo_tool/reject
 curl -s "${ADM[@]}" -X POST $BASE/admin/tools/pending/typo_tool/approve
 ```
 
+## Self-Healing Tool Onboarding Engine
+
+The server includes an automated **Self-Healing Engine** (`src/plugins/auto_healer.py`) that analyzes submitted tool source code, identifies fixable code or dependency issues, and generates an **Auto-Fix Proposal** with corrected source code and PyPI requirements.
+
+### Self-Healing Capabilities
+
+1. **Comment & Formatting Preservation (Line-Token Rewriting)**:
+   - Uses line-token AST position rewriting (`lineno`) instead of standard `ast.unparse`. All user comments, docstring formatting, and code style are preserved 100%.
+2. **Missing Import Insertion**:
+   - Automatically prepends `from tools_sdk import tool` at line 1 if `@tool` is used or added.
+3. **Docstring ➔ Tool Description Auto-Extraction**:
+   - Parses function docstrings (e.g. `"""Calculates account balance."""`) and auto-populates `@tool(description="Calculates account balance.")` above target functions.
+4. **PyPI Dependency Auto-Inference**:
+   - Maps imported modules to PyPI distributions (`yaml` ➔ `pyyaml`, `PIL` ➔ `pillow`, `cv2` ➔ `opencv-python`, `requests` ➔ `requests`, `dotenv` ➔ `python-dotenv`, `fitz` ➔ `pymupdf`, `docx` ➔ `python-docx`, `pptx` ➔ `python-pptx`, `git` ➔ `gitpython`, `dns` ➔ `dnspython`).
+5. **Untyped Parameter Auto-Annotation**:
+   - Auto-annotates untyped parameters (`arg` ➔ `arg: str`) to ensure FastMCP schema generation succeeds.
+6. **Missing Colon Syntax Fix**:
+   - Fixes common syntax errors on function definition lines missing trailing colons (`def func()`).
+
+### Self-Healing Endpoints
+
+#### 1. Dry-Run Auto-Fix Proposal (`POST /admin/tools/validate_source`)
+Submit source code and optional target `name` to receive a full dry-run analysis and proposal without modifying server state:
+
+```json
+POST /admin/tools/validate_source
+{
+  "name": "get_balance",
+  "source": "# Calculate balance\ndef get_balance(user_id: int) -> dict:\n    \"\"\"Calculates account balance.\"\"\"\n    return {'user_id': user_id, 'balance': 100.0}"
+}
+```
+
+**Response (`200 OK`)**:
+```json
+{
+  "syntax_ok": true,
+  "has_autofix": true,
+  "original_source": "...",
+  "corrected_source": "from tools_sdk import tool\n\n# Calculate balance\n@tool(description=\"Calculates account balance.\")\ndef get_balance(user_id: int) -> dict:\n    \"\"\"Calculates account balance.\"\"\"\n    return {'user_id': user_id, 'balance': 100.0}",
+  "suggested_requirements": [],
+  "autofix_summary": [
+    "Auto-inserted '@tool(description=\"Calculates account balance.\")' decorator above function 'get_balance'.",
+    "Added missing 'from tools_sdk import tool' import at top of file."
+  ],
+  "tools_found": ["get_balance"]
+}
+```
+
+#### 2. Auto-Healed Onboarding (`POST /admin/tools/onboard`)
+Passing `"auto_heal": true` (default in HTTP API) automatically applies `corrected_source` and `suggested_requirements` during onboarding:
+
+```json
+POST /admin/tools/onboard
+{
+  "name": "get_balance",
+  "source": "def get_balance(user_id: int) -> dict:\n    return {'balance': 100.0}",
+  "auto_heal": true
+}
+```
+
+#### 3. One-Click Tool Reversion (`POST /admin/tools/{name}/revert`)
+Reverts an auto-healed tool back to the exact original Python source code submitted prior to self-healing:
+
+```bash
+POST /admin/tools/get_balance/revert
+```
+
+---
+
 ## What this does *not* do
 
 * It does not sandbox tool **imports** — a submitted module's top-level code
@@ -227,3 +296,4 @@ curl -s "${ADM[@]}" -X POST $BASE/admin/tools/pending/typo_tool/approve
 * `pip install` still runs in the same Python environment as the server
   (there's no per-tool virtualenv). Treat the admin token accordingly — it
   is equivalent to code-execution access on the host.
+

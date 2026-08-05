@@ -23,3 +23,8 @@
 {"ts": 1785901007.0916085, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
 {"ts": 1785901044.0125976, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
 {"ts": 1785901058.0994592, "action": "onboard", "name": "good_tool", "result": "onboarded", "detail": "tools=['good_tool']"}
+{"ts": 1785905236.9817908, "action": "onboard", "name": "good_tool", "result": "pending", "detail": "tool failed to load: import error: No module named 'tools.good_tool'"}
+{"ts": 1785905264.671711, "action": "onboard", "name": "good_tool", "result": "pending", "detail": "tool failed to load: import error: No module named 'tools.good_tool'"}
+{"ts": 1785907710.6403232, "action": "onboard", "name": "get_info4", "result": "onboarded", "detail": "tools=['get_info4']"}
+{"ts": 1785907823.401018, "action": "onboard", "name": "get_info5", "result": "onboarded", "detail": "tools=['get_info5']"}
+{"ts": 1785907876.158646, "action": "onboard", "name": "get_info6", "result": "onboarded", "detail": "tools=['get_info6']"}
