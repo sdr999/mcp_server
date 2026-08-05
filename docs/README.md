@@ -60,6 +60,13 @@ for the overview, then:
 | 08 | [CLI & Sandbox](dev/08-cli-and-sandbox.md) | `--validate`/`--sign`, the subprocess sandbox |
 | 09 | [Federation](dev/09-federation.md) | list/call tools on remote MCP servers |
 
+### Design proposals
+
+- **[design/MULTI_TENANCY_RBAC.md](design/MULTI_TENANCY_RBAC.md)** — proposed
+  Organizations / Workspaces / Roles (Admin, Developer, Agent Consumer) and
+  tenant-scoped tool access. Readiness check, domain model, phased rollout.
+  *Status: proposed (design only).*
+
 ### Project history
 
 - **[ACTION_LOG.md](ACTION_LOG.md)** — chronological record of the refactor,
