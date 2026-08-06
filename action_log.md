@@ -1,5 +1,47 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-06] Migrate the web layer from Starlette to FastAPI (branch `fastapi-mcp`)
+
+Replaced the Starlette top-level app with **FastAPI** (wrapper approach; FastAPI
+is the server, `build_app` updated in place). Branched from latest `main`.
+
+### Design
+- The top-level app is now `FastAPI(...)`. The FastMCP protocol app
+  (`mcp.http_app(...)`) is built as a **sub-app and mounted at "/"** (added last
+  so explicit routes + auto-docs win), preserving `/mcp` (streamable HTTP) and
+  `/sse` + `/messages` (SSE). FastMCP can only emit a Starlette ASGI app, so it is
+  mounted, not rewritten.
+- The FastMCP **session-manager lifespan** is entered explicitly inside our
+  lifespan (`mcp_app.router.lifespan_context`), because Starlette does not run a
+  mounted sub-app's lifespan automatically. The background tool load/reload loop,
+  tenancy init/seed, and shutdown `close()` are unchanged.
+- Existing Starlette-style handlers (`async def h(request)`) and all middleware
+  are **reused as-is**. A helper `_as_request_endpoint()` wraps each handler so
+  FastAPI injects the `Request` (via annotation) and lists the route in the
+  generated schema, instead of mistaking `request` for a query param.
+- **Auto docs:** FastAPI serves Swagger UI at `/docs`, ReDoc at `/redoc`, and the
+  generated schema at `/openapi.json`. The hand-built docs routes are skipped;
+  `/swagger` now redirects to `/docs` and `/openapi.yaml` is serialized from the
+  generated schema (both kept for back-compat).
+
+### Dependencies
+- The pinned `fastapi~=0.109.0` (+ `starlette~=0.35`) was **incompatible** with
+  the FastMCP stack (FastMCP/sse-starlette need Starlette >=1.3, which old FastAPI
+  forbids). Bumped `requirements.txt` to `fastapi>=0.141,<1.0`, `starlette>=1.3`,
+  `uvicorn[standard]~=0.51`. Verified the full stack imports and runs together.
+
+### Tests
+- `test_main_server`: `_paths()` now recurses into mounted sub-apps so the
+  protocol endpoints (`/mcp`, `/sse`, `/messages`) are visible.
+- `test_swagger_docs`: assert FastAPI-generated schema (OpenAPI 3.1.x) and the
+  generated `/openapi.yaml`; `/docs` + `/swagger` still return Swagger UI.
+- Full suite: **212 passed**. (The single `test_telemetry_bootstrap_lifecycle`
+  failure is pre-existing on `main` — an OTel/env issue — and unrelated to this
+  migration; confirmed by running it with these changes stashed.)
+
+---
+
+
 ## [2026-08-05] Staff Review of the Implementation + Full Findings Remediation
 
 Reviewed the merged Phase 1–3 implementation against the design doc

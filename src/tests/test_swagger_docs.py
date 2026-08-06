@@ -35,21 +35,21 @@ def test_swagger_ui_and_openapi_endpoints(tmp_path):
     assert resp_swagger.status_code == 200
     assert "Swagger UI" in resp_swagger.text
 
-    # Test /openapi.json endpoint
+    # Test /openapi.json endpoint (now FastAPI-generated: OpenAPI 3.1.x)
     resp_json = client.get("/openapi.json")
     assert resp_json.status_code == 200
     data = resp_json.json()
-    assert data.get("openapi") == "3.0.3"
+    assert str(data.get("openapi", "")).startswith("3.")
     assert "paths" in data
     assert "/healthz" in data["paths"]
     assert "/tools" in data["paths"]
     assert "/tools/{name}/call" in data["paths"]
     assert "/admin/tools/onboard" in data["paths"]
 
-    # Test /openapi.yaml endpoint
+    # Test /openapi.yaml endpoint (serialized from the FastAPI-generated schema)
     resp_yaml = client.get("/openapi.yaml")
     assert resp_yaml.status_code == 200
-    assert "openapi: \"3.0.3\"" in resp_yaml.text or "openapi: 3.0.3" in resp_yaml.text
+    assert "openapi:" in resp_yaml.text
 
 
 def test_validate_source_endpoint(tmp_path):

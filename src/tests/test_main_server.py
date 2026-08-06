@@ -432,7 +432,17 @@ def test_read_auth_none_opens_status_in_api_key_mode(tmp_path):
 
 # ---- configurable MCP transport --------------------------------------------
 def _paths(app):
-    return [getattr(r, "path", None) for r in app.router.routes]
+    # The FastMCP protocol app is a mounted sub-app now, so recurse into mounts
+    # to surface the protocol endpoints (/mcp, /sse, /messages).
+    paths = []
+    for r in app.router.routes:
+        p = getattr(r, "path", None)
+        if p:
+            paths.append(p)
+        sub = getattr(r, "app", None)
+        if sub is not None and hasattr(sub, "router"):
+            paths.extend(getattr(sr, "path", None) for sr in sub.router.routes)
+    return paths
 
 
 def test_default_transport_is_http_and_mounts_mcp(tmp_path):

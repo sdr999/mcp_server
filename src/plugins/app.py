@@ -1,4 +1,11 @@
-"""Assembles the FastMCP ASGI app from the plugin components.
+"""Assembles the server as a **FastAPI** app from the plugin components.
+
+The top-level application is FastAPI (a Starlette subclass); the FastMCP protocol
+app is built via ``mcp.http_app(...)`` and **mounted** at "/" so it keeps serving
+the protocol endpoints (``/mcp`` for streamable HTTP, or ``/sse`` + ``/messages``
+for SSE). FastAPI provides auto Swagger UI at ``/docs`` and a generated schema at
+``/openapi.json``. The FastMCP session-manager lifespan is entered explicitly
+inside our lifespan (mounted sub-app lifespans do not run automatically).
 
 No remote tool source (Azure or otherwise): tools are always served from a
 local directory. A background task performs the initial load, then drains a
@@ -13,6 +20,11 @@ import logging
 import queue
 import threading
 
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import RedirectResponse, Response
+from starlette.routing import Mount, Route
+
 from . import dependency_risk as risk
 from .notifications import notify_tools_changed
 from .observability import TraceCorrelationMiddleware, setup_observability
@@ -25,6 +37,36 @@ from .upstreams import UpstreamRegistry
 from .watcher import ToolDirectoryWatcher
 
 log = logging.getLogger("MCP_logger")
+
+# FastAPI owns these paths (auto Swagger UI + generated schema); the hand-built
+# equivalents in feature_routes() are skipped so they don't clash.
+_FASTAPI_OWNED_DOCS = {"/docs", "/redoc", "/openapi.json", "/swagger", "/openapi.yaml"}
+_HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"}
+
+
+def _as_request_endpoint(endpoint):
+    """Wrap a Starlette-style ``async def h(request)`` handler so FastAPI injects
+    the Request (via the annotation) and includes the route in its OpenAPI schema,
+    instead of mistaking the unannotated ``request`` param for a query field."""
+    async def _endpoint(request: Request):
+        return await endpoint(request)
+    _endpoint.__name__ = getattr(endpoint, "__name__", "endpoint")
+    _endpoint.__doc__ = getattr(endpoint, "__doc__", None)
+    return _endpoint
+
+
+def _register_routes(app: FastAPI, routes) -> None:
+    """Attach Starlette Route objects to a FastAPI app. Plain routes become
+    documented API routes (auto /docs); Mounts/others are appended as-is. The
+    hand-built docs routes are skipped in favour of FastAPI's own."""
+    for r in routes:
+        if isinstance(r, Route):
+            if r.path in _FASTAPI_OWNED_DOCS:
+                continue
+            methods = sorted((set(r.methods or {"GET"})) & _HTTP_METHODS) or ["GET"]
+            app.add_api_route(r.path, _as_request_endpoint(r.endpoint), methods=methods, name=r.name)
+        else:
+            app.router.routes.append(r)
 
 
 
@@ -94,11 +136,26 @@ def build_app(ctx):
     # streamable-HTTP transport only.
     transport = ctx.mcp_transport
     if transport == "sse":
-        app = mcp.http_app(transport="sse")
+        mcp_app = mcp.http_app(transport="sse")
         protocol_prefixes = ("/sse", "/messages")
     else:
-        app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
+        mcp_app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
         protocol_prefixes = ("/mcp",)
+
+    # Top-level app is now **FastAPI** (a Starlette subclass). The FastMCP
+    # protocol app (``mcp_app``) is mounted at "/" at the end so it keeps serving
+    # the protocol endpoints (/mcp or /sse + /messages); its session-manager
+    # lifespan is entered explicitly inside our lifespan below (mounted sub-app
+    # lifespans do not run automatically). FastAPI provides auto /docs +
+    # /openapi.json from the routes registered via _register_routes().
+    app = FastAPI(
+        title="MCP Tool Server",
+        version="1.0.0",
+        description="Secure, plugin-based MCP tool server (FastAPI).",
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+    )
     # --- Phase 3 Reliability & Telemetry Setup ---
     from .reliability import (
         CircuitBreakerRegistry,
@@ -135,10 +192,20 @@ def build_app(ctx):
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
                            protected_prefixes=protocol_prefixes)
-    for route in feature_routes():
-        app.router.routes.append(route)
-    for route in dashboard_routes():
-        app.router.routes.append(route)
+    _register_routes(app, feature_routes())
+    _register_routes(app, dashboard_routes())
+
+    # Back-compat convenience endpoints backed by FastAPI's generated schema.
+    async def _swagger_alias(request: Request):
+        return RedirectResponse(url="/docs")
+
+    async def _openapi_yaml(request: Request):
+        import yaml
+        return Response(yaml.safe_dump(request.app.openapi(), sort_keys=False),
+                        media_type="application/yaml")
+
+    app.add_api_route("/swagger", _swagger_alias, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/openapi.yaml", _openapi_yaml, methods=["GET"], include_in_schema=False)
 
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
     setup_observability(app=app, log_file=log_file_path)
@@ -206,7 +273,9 @@ def build_app(ctx):
     policy_evaluator = PolicyEvaluator(store=tenancy_store, cache=rbac_cache)
     app.state.policy_evaluator = policy_evaluator
 
-    original_lifespan = app.router.lifespan_context
+    # The FastMCP session-manager lifespan lives on the mounted sub-app; enter it
+    # explicitly (mounted sub-app lifespans are not run by Starlette otherwise).
+    original_lifespan = mcp_app.router.lifespan_context
     stop_event = threading.Event()
 
     @contextlib.asynccontextmanager
@@ -253,5 +322,9 @@ def build_app(ctx):
                 await tenancy_store.close()
 
     app.router.lifespan_context = lifespan
+
+    # Mount the FastMCP protocol app LAST so explicit FastAPI routes (and auto
+    # /docs) win; this catch-all handles /mcp (or /sse + /messages).
+    app.router.routes.append(Mount("/", app=mcp_app))
     return app, mcp
 
