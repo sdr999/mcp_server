@@ -34,8 +34,8 @@ async def test_async_audit_logger_queue_flushing():
             detail="Test audit log",
         )
 
-        # Allow worker loop to process queue
-        await asyncio.sleep(0.1)
+        # Wait deterministically for worker loop to process queue
+        await logger._queue.join()
         await logger.stop()
 
         # Verify JSONL file content

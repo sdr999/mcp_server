@@ -17,6 +17,7 @@ import importlib
 import inspect
 import json
 import logging
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from fastmcp.tools import FunctionTool
 
 from metrics import METRICS
 from tools_sdk import TOOL_MARKER
+from .sandbox import ContainerPool, SandboxConfig
 from .signing import ToolVerifier
 
 log = logging.getLogger("MCP_logger")
@@ -82,33 +84,31 @@ class _LoadPlan:
     resolution: Optional[ResolutionReport] = None
 
 
+_GLOBAL_CONTAINER_POOL: Optional[ContainerPool] = None
+
+
+def _get_sandbox_pool(engine: str = "auto") -> ContainerPool:
+    global _GLOBAL_CONTAINER_POOL
+    if _GLOBAL_CONTAINER_POOL is None:
+        cfg = SandboxConfig(sandbox_engine=engine)
+        _GLOBAL_CONTAINER_POOL = ContainerPool(cfg)
+        _GLOBAL_CONTAINER_POOL.start()
+    return _GLOBAL_CONTAINER_POOL
+
+
 async def _run_sandboxed(runner: str, module_name: str, qualname: str, args: dict,
-                          syspath: List[str], timeout: float, limits: dict):
-    """Execute one tool call in a separate process, bounded by a timeout. Raises
-    on failure/timeout so FastMCP returns an error result to the client."""
-    request = json.dumps({
-        "syspath": syspath, "module": module_name, "qualname": qualname,
-        "args": args, "limits": limits or {},
-    }).encode()
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, runner,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+                          syspath: List[str], timeout: float, limits: dict, engine: str = "auto"):
+    """Execute tool call inside Phase 2 Sandbox Pool Engine."""
+    pool = _get_sandbox_pool(engine)
+    cfg = SandboxConfig(
+        timeout_seconds=timeout,
+        memory_limit_mb=limits.get("mem_mb", 128) if limits else 128,
+        sandbox_engine=engine,
     )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(request), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
-        raise RuntimeError(f"tool execution exceeded {timeout}s and was killed")
-    if not out:
-        raise RuntimeError(f"sandboxed tool produced no result: {err.decode(errors='replace')[:200]}")
-    payload = json.loads(out.decode().strip())
-    if not payload.get("ok"):
-        raise RuntimeError(payload.get("error", "sandboxed tool failed"))
-    return payload["result"]
+    res = await pool.execute(Path(runner), module_name, qualname, args, syspath, cfg)
+    if not res.ok:
+        raise RuntimeError(res.error or "Sandboxed tool execution failed")
+    return res.result
 
 
 class ToolLoader:
@@ -134,6 +134,10 @@ class ToolLoader:
         self._failures: Dict[str, str] = {}             # module -> failure reason
         self._disabled: Dict[str, str] = {}             # disabled tool name -> owning module
         self._changed = False
+
+    def _provider(self):
+        """Return the target FastMCP provider for tool registration/unregistration."""
+        return getattr(self.mcp, "local_provider", self.mcp)
 
     # -- path/module helpers ------------------------------------------------
     def module_name_for_path(self, file_path: Path) -> Optional[str]:
@@ -323,9 +327,10 @@ class ToolLoader:
     # -- (un)register -------------------------------------------------------
     def unload_module(self, module_name: str) -> None:
         for name in self._module_tools.pop(module_name, []):
-            with contextlib.suppress(Exception):
-                provider = getattr(self.mcp, "local_provider", self.mcp)
-                provider.remove_tool(name)
+            try:
+                self._provider().remove_tool(name)
+            except Exception as exc:
+                log.debug("Could not remove tool %s from provider: %s", name, exc)
             if self._name_owner.get(name) == module_name:
                 self._name_owner.pop(name, None)
             self._tool_info.pop(name, None)
@@ -403,7 +408,7 @@ class ToolLoader:
                 )
                 continue
             try:
-                self.mcp.add_tool(tool_obj)
+                self._provider().add_tool(tool_obj)
                 self._name_owner[name] = module_name
                 self._tools[name] = tool_obj            # keep a ref for direct calls
                 self._tool_info[name] = {
@@ -479,9 +484,10 @@ class ToolLoader:
         if description and hasattr(tool_obj, "description"):
             tool_obj.description = description
 
-        with contextlib.suppress(Exception):
-            provider = getattr(self.mcp, "local_provider", self.mcp)
-            provider.add_tool(tool_obj)
+        try:
+            self._provider().add_tool(tool_obj)
+        except Exception as exc:
+            log.debug("Could not add external tool %s to provider: %s", name, exc)
 
         self._name_owner[name] = module_name
         self._tools[name] = tool_obj
@@ -500,9 +506,10 @@ class ToolLoader:
 
     def unregister_external_tool(self, name: str, module_name: str = "openapi") -> bool:
         """Unregister an external tool from FastMCP and loader registries."""
-        with contextlib.suppress(Exception):
-            provider = getattr(self.mcp, "local_provider", self.mcp)
-            provider.remove_tool(name)
+        try:
+            self._provider().remove_tool(name)
+        except Exception as exc:
+            log.debug("Could not unregister external tool %s: %s", name, exc)
         if self._name_owner.get(name) == module_name:
             self._name_owner.pop(name, None)
         self._tool_info.pop(name, None)
@@ -519,9 +526,10 @@ class ToolLoader:
         if not module and name not in self._disabled:
             return False
         self._disabled[name] = module or self._disabled.get(name, "")
-        with contextlib.suppress(Exception):
-            provider = getattr(self.mcp, "local_provider", self.mcp)
-            provider.remove_tool(name)
+        try:
+            self._provider().remove_tool(name)
+        except Exception as exc:
+            log.debug("Could not disable tool %s: %s", name, exc)
         if module and name in self._module_tools.get(module, []):
             self._module_tools[module].remove(name)
         self._name_owner.pop(name, None)
@@ -539,16 +547,17 @@ class ToolLoader:
         return module
 
     def stats(self) -> dict:
+        module_tools_copy = dict(self._module_tools)
         return {
-            "loaded_modules": len([m for m, v in self._module_tools.items() if v]),
-            "total_tools": sum(len(v) for v in self._module_tools.values()),
+            "loaded_modules": len([m for m, v in module_tools_copy.items() if v]),
+            "total_tools": sum(len(v) for v in module_tools_copy.values()),
             "failed_modules": len(self._failures),
             "disabled_tools": len(self._disabled),
             "failures": dict(self._failures),
         }
 
     def catalog(self) -> List[dict]:
-        return sorted(self._tool_info.values(), key=lambda t: t["name"])
+        return sorted(list(self._tool_info.values()), key=lambda t: t["name"])
 
     def pop_changed(self) -> bool:
         changed, self._changed = self._changed, False

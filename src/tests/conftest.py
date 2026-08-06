@@ -8,5 +8,13 @@ builds an AppContext) so the admin suite runs without a hand-set env var.
 ``setdefault`` means a value already present in the environment always wins.
 """
 import os
+import pytest
 
 os.environ.setdefault("MCP_ADMIN_TOKEN", "mysecretadmin")
+
+
+@pytest.fixture
+def anyio_backend():
+    """Ensure anyio tests run exclusively on the asyncio backend (matching the codebase)."""
+    return "asyncio"
+

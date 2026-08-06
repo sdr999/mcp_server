@@ -58,6 +58,7 @@ class AppContext:
     manifest_name: str
     signing_key: Optional[str]
     jwt_algorithm: str = "ES256"
+    sandbox_engine: str = "auto"
     onboard_enabled: bool = True
 
 
@@ -246,6 +247,7 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         sandbox_timeout=float(env.get("MCP_SANDBOX_TIMEOUT_SEC", DEFAULT_SANDBOX_TIMEOUT)),
         sandbox_mem_mb=int(env.get("MCP_SANDBOX_MEM_MB", "0")),
         sandbox_cpu_sec=int(env.get("MCP_SANDBOX_CPU_SEC", "0")),
+        sandbox_engine=env.get("MCP_SANDBOX_ENGINE", "auto").lower(),
         admin_token=env.get("MCP_ADMIN_TOKEN", ""),
         require_signed=env.get("MCP_REQUIRE_SIGNED_TOOLS", "false").lower() == "true",
         manifest_name=env.get("MCP_TOOL_MANIFEST", DEFAULT_MANIFEST),
