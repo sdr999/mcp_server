@@ -65,6 +65,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(self._protected):
             provided = request.headers.get(self._header, "")
             if not hmac.compare_digest(provided, self._value):
+                request.state.auth_failure_reason = "Invalid API Key header"
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
@@ -72,7 +73,10 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 def _api_key_ok(request) -> bool:
     st = request.app.state
     provided = request.headers.get(getattr(st, "api_key_header", "authorization"), "")
-    return hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
+    ok = hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
+    if not ok:
+        request.state.auth_failure_reason = "Invalid API Key header"
+    return ok
 
 
 async def _jwt_ok(request) -> bool:
@@ -83,10 +87,12 @@ async def _jwt_ok(request) -> bool:
 
     verifier = getattr(request.app.state, "jwt_verifier", None)
     if verifier is None:
+        request.state.auth_failure_reason = "bearer_jwt mode active but JWT verifier not configured"
         return False                          # bearer_jwt configured but no verifier → fail closed
     authz = request.headers.get("authorization", "")
     token = authz[7:].strip() if authz.lower().startswith("bearer ") else ""
     if not token:
+        request.state.auth_failure_reason = "Missing or malformed Authorization Bearer token"
         return False
 
 
@@ -102,6 +108,7 @@ async def _jwt_ok(request) -> bool:
     # 2. Verify via FastMCP / PyJWKClient verifier
     verified_token = await verifier.verify_token(token)
     if verified_token is None:
+        request.state.auth_failure_reason = "Invalid or expired JWT token signature/claims"
         return False
 
     # Extract claims
@@ -146,8 +153,10 @@ async def enforce(request, policy: str):
 
     mode = getattr(request.app.state, "auth_type", "none")
     if mode == "api_key" and not _api_key_ok(request):
+        request.state.auth_failure_reason = getattr(request.state, "auth_failure_reason", "Invalid API key")
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if mode == "bearer_jwt" and not await _jwt_ok(request):
+        request.state.auth_failure_reason = getattr(request.state, "auth_failure_reason", "Invalid or missing JWT token")
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     # Phase 2: RBAC Policy Engine Check if enabled
@@ -207,6 +216,7 @@ async def enforce(request, policy: str):
                 "RBAC deny: principal=%s action=%s resource=%s decision=%s reason=%s",
                 principal.principal_id[:12], action, resource, eval_res.decision, eval_res.reason,
             )
+            request.state.auth_failure_reason = f"RBAC permission denied: {eval_res.reason}"
             if action in ("tool:call", "tool:manage") and resource:
                 return JSONResponse(
                     {"error": f"unknown or disabled tool {resource!r}"}, status_code=404
@@ -249,10 +259,14 @@ async def admin_denied(request):
         admin_perms = {"platform:admin", "org:admin", "admin:all", "member:manage"}
         if "platform_superadmin" in principal.roles or any(p in principal.permissions for p in admin_perms):
             return None
+        request.state.auth_failure_reason = "Insufficient admin role/permissions"
         return JSONResponse({"error": "forbidden"}, status_code=403)
 
     if not token:
+        request.state.auth_failure_reason = "Admin API disabled (MCP_ADMIN_TOKEN unset)"
         return JSONResponse({"error": "admin API disabled (set MCP_ADMIN_TOKEN)"}, status_code=503)
+
+    request.state.auth_failure_reason = "Invalid admin token"
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 

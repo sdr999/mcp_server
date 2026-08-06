@@ -121,6 +121,12 @@ def build_app(ctx):
     app.state.circuit_breakers = circuit_breakers
     app.state.alert_manager = alert_manager
 
+    # Unauthorized Access Logger
+    from .unauthorized_logger import UnauthorizedLogger, UnauthorizedLoggingMiddleware
+    unauthorized_log_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "unauthorized_access.json.log"
+    unauthorized_logger = UnauthorizedLogger(unauthorized_log_path)
+    app.add_middleware(UnauthorizedLoggingMiddleware, logger=unauthorized_logger)
+
     # Middleware LIFO ordering (C2 fix): ReliabilityMiddleware registered FIRST -> runs innermost (after IdentityMiddleware)
     app.add_middleware(ReliabilityMiddleware, rate_limiter_registry=rate_limiter_registry)
     app.add_middleware(TraceCorrelationMiddleware)
@@ -137,6 +143,8 @@ def build_app(ctx):
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
     setup_observability(app=app, log_file=log_file_path)
     app.state.log_file_path = log_file_path
+    app.state.unauthorized_log_path = unauthorized_log_path
+    app.state.unauthorized_logger = unauthorized_logger
 
     app.state.ready = False
     app.state.loader = loader

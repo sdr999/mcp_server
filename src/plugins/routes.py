@@ -701,6 +701,9 @@ async def _admin_logs(request):
         else:
             audit_path = Path(audit_path)
         files_to_read.append(("audit", audit_path))
+    if log_type in {"unauthorized", "all"}:
+        unauth_path = getattr(st, "unauthorized_log_path", None) or (logs_dir / "unauthorized_access.json.log")
+        files_to_read.append(("unauthorized", unauth_path))
 
 
 
