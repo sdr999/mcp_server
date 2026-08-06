@@ -231,11 +231,13 @@ async def admin_denied(request):
     """
     token = getattr(request.app.state, "admin_token", "")
     authz = request.headers.get("authorization", "")
-    provided = authz[7:].strip() if authz.lower().startswith("bearer ") else request.headers.get("x-admin-token", "").strip()
+    provided = (authz[7:].strip() if authz.lower().startswith("bearer ") else request.headers.get("x-admin-token", "").strip()) or request.query_params.get("token", "").strip()
+
 
     # 1. Match static MCP_ADMIN_TOKEN
     if token and provided and hmac.compare_digest(provided, token):
         return None
+
 
     # 2. Check principal attached by IdentityMiddleware
     principal = getattr(request.state, "principal", None)

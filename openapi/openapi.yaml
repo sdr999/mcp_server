@@ -51,9 +51,12 @@ tags:
     description: Liveness, readiness, status, and metrics
   - name: Federation
     description: Upstream MCP server federation
+  - name: Observability & Dashboard
+    description: Live reliability metrics, OpenTelemetry status, and SSE dashboard stream
 
 
 paths:
+
   /whoami:
     get:
       tags:
@@ -551,7 +554,74 @@ paths:
                     items:
                       type: object
 
+  /admin/dashboard:
+    get:
+      tags:
+        - Observability & Dashboard
+      summary: Serve Live Admin Reliability Dashboard UI
+      description: Returns the dark-themed single-page HTML dashboard for real-time monitoring of tool stats, circuit breakers, and rate limits. Supports ?format=json.
+      operationId: getAdminDashboard
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: HTML Dashboard Page or Key-Value JSON summary (if format=json)
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized — Invalid or missing Bearer Admin Token
+
+  /admin/dashboard/json:
+    get:
+      tags:
+        - Observability & Dashboard
+      summary: Retrieve Key-Value System Reliability Summary JSON
+      description: Returns a flat key-value JSON summary of server status, tool count, loaded/failed modules, SSE clients, rate limits, and circuit breakers.
+      operationId: getAdminDashboardJson
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Key-Value System Reliability dictionary
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized — Invalid or missing Bearer Admin Token
+
+
+  /admin/dashboard/stream:
+    get:
+      tags:
+        - Observability & Dashboard
+      summary: Stream Real-Time Telemetry & Circuit Breaker Events (SSE)
+      description: Server-Sent Events (SSE) stream pushing metrics, tool counts, and circuit breaker status updates every 2 seconds. Capped at 10 concurrent streams.
+      operationId: streamAdminDashboardMetrics
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: EventStream SSE payload stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized — Invalid or missing Bearer Admin Token
+        '429':
+          description: Connection Limit Exceeded — Max 10 active SSE streams reached
+
   /admin/tools/onboard:
+
 
     post:
       tags:

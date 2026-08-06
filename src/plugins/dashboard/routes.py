@@ -1,0 +1,106 @@
+"""Dashboard HTTP, JSON Key-Value Summary, and EventSource SSE streaming endpoints."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import List, Set
+
+from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
+from starlette.routing import Route
+
+from .templates import DASHBOARD_HTML
+from ..security import admin_denied
+
+log = logging.getLogger("MCP_logger")
+
+MAX_SSE_CLIENTS = 10
+_active_sse_clients: Set[asyncio.Queue] = set()
+
+
+def _build_dashboard_summary(request) -> dict:
+    st = request.app.state
+    loader = getattr(st, "loader", None)
+    stats = loader.stats() if loader else {}
+    cb_registry = getattr(st, "circuit_breakers", None)
+    cb_stats = cb_registry.all_stats() if cb_registry else {}
+
+    rate_limiter = getattr(st, "rate_limiters", None)
+    default_rpm = getattr(getattr(rate_limiter, "default_config", None), "max_requests_per_minute", 600) if rate_limiter else 600
+
+    from metrics import METRICS
+    registered_tools = [t["name"] for t in loader.catalog()] if loader else []
+    tool_metrics = METRICS.get_tool_stats(registered_tools) if hasattr(METRICS, "get_tool_stats") else {}
+
+    return {
+        "server_status": "READY" if getattr(st, "ready", False) else "LOADING",
+        "ready": bool(getattr(st, "ready", False)),
+        "total_tools": stats.get("total_tools", 0),
+        "loaded_modules": stats.get("loaded_modules", 0),
+        "failed_modules": stats.get("failed_modules", 0),
+        "disabled_tools": stats.get("disabled_tools", 0),
+        "active_sse_clients": len(_active_sse_clients),
+        "rate_limit_default_rpm": default_rpm,
+        "auth_mode": getattr(st, "auth_type", "none"),
+        "mcp_transport": getattr(st, "mcp_transport", "http"),
+        "circuit_breakers": cb_stats,
+        "tool_metrics": tool_metrics,
+    }
+
+
+
+async def dashboard_html_handler(request):
+    if denied := await admin_denied(request):
+        return denied
+    if request.query_params.get("format") == "json" or "application/json" in request.headers.get("accept", ""):
+        return JSONResponse(_build_dashboard_summary(request))
+    return HTMLResponse(DASHBOARD_HTML)
+
+
+async def dashboard_json_handler(request):
+    if denied := await admin_denied(request):
+        return denied
+    return JSONResponse(_build_dashboard_summary(request))
+
+
+async def dashboard_sse_handler(request):
+    if denied := await admin_denied(request):
+        return denied
+
+    if len(_active_sse_clients) >= MAX_SSE_CLIENTS:
+        return JSONResponse(
+            {"error": "Too Many Connections", "message": "Max 10 active SSE dashboard clients allowed."},
+            status_code=429,
+        )
+
+    client_queue: asyncio.Queue = asyncio.Queue()
+    _active_sse_clients.add(client_queue)
+
+    async def event_generator():
+        try:
+            while True:
+                payload = _build_dashboard_summary(request)
+                yield f"data: {json.dumps(payload)}\n\n"
+                await asyncio.sleep(2.0)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _active_sse_clients.discard(client_queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def dashboard_routes() -> List[Route]:
+    return [
+        Route("/admin/dashboard", endpoint=dashboard_html_handler, methods=["GET"]),
+        Route("/admin/dashboard/json", endpoint=dashboard_json_handler, methods=["GET"]),
+        Route("/admin/dashboard/stream", endpoint=dashboard_sse_handler, methods=["GET"]),
+    ]

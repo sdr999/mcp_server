@@ -188,6 +188,7 @@ class ToolLoader:
 
         @functools.wraps(original)
         async def wrapper(**kwargs):
+            from .telemetry import tool_execution_span
             start = time.perf_counter()
             METRICS.inc("mcp_tool_calls_total", tool=tool_name)
 
@@ -205,21 +206,23 @@ class ToolLoader:
                         elif target_type in (float, "float") and re.match(r"^-?\d+(\.\d+)?$", val_str):
                             kwargs[p_name] = float(val_str)
 
-            try:
-                if sandbox:
-                    return await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
-                result = original(**kwargs)
-                if inspect.isawaitable(result):
-                    result = await result
-                return result
+            with tool_execution_span(tool_name, sandbox_engine="docker" if sandbox else "none"):
+                try:
+                    if sandbox:
+                        return await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
+                    result = original(**kwargs)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    return result
 
-            except Exception:
-                METRICS.inc("mcp_tool_errors_total", tool=tool_name)
-                raise
-            finally:
-                METRICS.observe("mcp_tool_duration_seconds", time.perf_counter() - start, tool=tool_name)
+                except Exception:
+                    METRICS.inc("mcp_tool_errors_total", tool=tool_name)
+                    raise
+                finally:
+                    METRICS.observe("mcp_tool_duration_seconds", time.perf_counter() - start, tool=tool_name)
 
         return wrapper
+
 
     def _to_tool(self, obj, explicit_name: Optional[str]) -> Tuple[str, FunctionTool]:
         if isinstance(obj, FunctionTool):

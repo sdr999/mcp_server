@@ -1,91 +1,20 @@
-"""Minimal, dependency-free Prometheus metrics registry.
+"""Metrics compatibility shim.
 
-Supports counters, scrape-time gauges (backed by a callable), and simple
-summaries (``_sum`` / ``_count``). ``render()`` produces Prometheus text format.
-Kept in-house to avoid adding prometheus_client as a dependency.
+Delegates calls to OTel metrics when available and configured, or legacy in-memory
+Prometheus registry otherwise. Maintains 100% backward compatibility for existing code.
 """
 from __future__ import annotations
 
-import threading
-from collections import defaultdict
-from typing import Callable, Dict, Tuple
+from legacy_metrics import LegacyMetrics
 
+try:
+    from plugins.telemetry import HAS_OTEL
+    if HAS_OTEL:
+        from plugins.telemetry.metrics import OTelMetricsShim
+        METRICS = OTelMetricsShim()
+    else:
+        METRICS = LegacyMetrics()
+except Exception:
+    METRICS = LegacyMetrics()
 
-def _label_key(labels: dict) -> Tuple[Tuple[str, str], ...]:
-    return tuple(sorted((str(k), str(v)) for k, v in (labels or {}).items()))
-
-
-def _fmt_labels(key: Tuple[Tuple[str, str], ...]) -> str:
-    if not key:
-        return ""
-    inner = ",".join(f'{k}="{_escape(v)}"' for k, v in key)
-    return "{" + inner + "}"
-
-
-def _escape(v: str) -> str:
-    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-
-
-class Metrics:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._counters: Dict[Tuple[str, tuple], float] = defaultdict(float)
-        self._sum: Dict[Tuple[str, tuple], float] = defaultdict(float)
-        self._count: Dict[Tuple[str, tuple], float] = defaultdict(float)
-        self._gauges: Dict[str, Tuple[str, Callable[[], float]]] = {}
-        self._help: Dict[str, str] = {}
-
-    def declare(self, name: str, help_text: str) -> None:
-        self._help[name] = help_text
-
-    def inc(self, name: str, value: float = 1.0, **labels) -> None:
-        with self._lock:
-            self._counters[(name, _label_key(labels))] += value
-
-    def observe(self, name: str, value: float, **labels) -> None:
-        with self._lock:
-            key = (name, _label_key(labels))
-            self._sum[key] += value
-            self._count[key] += 1
-
-    def gauge(self, name: str, fn: Callable[[], float], help_text: str = "") -> None:
-        self._gauges[name] = (help_text, fn)
-
-    def render(self) -> str:
-        lines = []
-        emitted_help = set()
-
-        def _help_type(metric: str, mtype: str):
-            if metric in emitted_help:
-                return
-            emitted_help.add(metric)
-            if self._help.get(metric):
-                lines.append(f"# HELP {metric} {self._help[metric]}")
-            lines.append(f"# TYPE {metric} {mtype}")
-
-        with self._lock:
-            for (name, key), value in sorted(self._counters.items()):
-                _help_type(name, "counter")
-                lines.append(f"{name}{_fmt_labels(key)} {value}")
-            for name, (help_text, fn) in sorted(self._gauges.items()):
-                if help_text:
-                    self._help.setdefault(name, help_text)
-                _help_type(name, "gauge")
-                try:
-                    lines.append(f"{name} {float(fn())}")
-                except Exception:
-                    pass
-            summaries = set(k[0] for k in self._sum)
-            for name in sorted(summaries):
-                _help_type(name, "summary")
-                for (n, key), s in sorted(self._sum.items()):
-                    if n != name:
-                        continue
-                    lbl = _fmt_labels(key)
-                    lines.append(f"{name}_sum{lbl} {s}")
-                    lines.append(f"{name}_count{lbl} {self._count[(n, key)]}")
-        return "\n".join(lines) + "\n"
-
-
-# Process-wide singleton.
-METRICS = Metrics()
+__all__ = ["METRICS", "LegacyMetrics"]

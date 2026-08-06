@@ -95,8 +95,10 @@ class AppContext:
     supabase_jwt_kid: str = ""
     superadmin_email: str = ""
     rbac_enabled: bool = False
-    rbac_mode: str = "enforce"  # shadow | enforce (§19 safe rollout)
+    rbac_mode: str = "enforce"
+
     tenant_header: str = "X-Tenant-Id"
+
     workspace_header: str = "X-Workspace-Id"
     api_keys_file: Optional[Path] = None
     tenancy_store: str = "sqlite"
@@ -106,16 +108,23 @@ class AppContext:
     rbac_cache_ttl: float = 30.0
     rbac_cache_size: int = 10000
     tenancy_seed: bool = True
-    tenancy_reconcile_roles: bool = False  # re-sync built-in role perms on boot (§21.5)
+    tenancy_reconcile_roles: bool = False
     default_org: str = "default"
 
 
 
+    # --- Phase 3 Telemetry & Reliability ---
+    otel_enabled: bool = True
 
 
-
-
-
+    otel_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "mcp-server"
+    rate_limit_enabled: bool = True
+    rate_limit_default_rpm: int = 600
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_recovery_sec: float = 30.0
+    alert_webhook_url: Optional[str] = None
 def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Secure, plugin-based MCP tool server")
     p.add_argument(
@@ -288,6 +297,15 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         default_org=env.get("MCP_DEFAULT_ORG", "default"),
         rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
         rbac_mode=env.get("MCP_RBAC_MODE", "enforce").lower(),
+        otel_enabled=env.get("MCP_OTEL_ENABLED", "true").lower() == "true",
+        otel_endpoint=env.get("MCP_OTEL_ENDPOINT", "http://localhost:4317"),
+        otel_service_name=env.get("MCP_OTEL_SERVICE_NAME", "mcp-server"),
+        rate_limit_enabled=env.get("MCP_RATE_LIMIT_ENABLED", "true").lower() == "true",
+        rate_limit_default_rpm=int(env.get("MCP_RATE_LIMIT_DEFAULT_RPM", "600")),
+        circuit_breaker_enabled=env.get("MCP_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
+        circuit_breaker_threshold=int(env.get("MCP_CIRCUIT_BREAKER_THRESHOLD", "5")),
+        circuit_breaker_recovery_sec=float(env.get("MCP_CIRCUIT_BREAKER_RECOVERY_SEC", "30")),
+        alert_webhook_url=env.get("MCP_ALERT_WEBHOOK_URL") or None,
     )
 
 
