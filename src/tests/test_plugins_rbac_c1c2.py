@@ -325,3 +325,43 @@ def test_is_empty_and_pagination():
         assert len(await store.list_roles(limit=2)) == 2
 
     asyncio.run(_run())
+
+
+def test_admin_denied_accepts_superadmin_jwt():
+    from plugins.security import admin_denied
+    from starlette.testclient import TestClient
+    from plugins.config import build_context
+    from plugins.app import build_app
+
+    async def _run():
+        ctx = build_context([])
+        app, _ = build_app(ctx)
+
+        # Mock request with superadmin principal attached to state
+        req = types.SimpleNamespace(
+            app=app,
+            headers={"authorization": "Bearer dummy_jwt"},
+            url=types.SimpleNamespace(path="/admin/orgs"),
+            state=types.SimpleNamespace(
+                principal=Principal(
+                    principal_id="pid_admin",
+                    issuer="https://supabase.co/auth/v1",
+                    subject="sub_admin",
+                    roles=["platform_superadmin"],
+                    permissions=["platform:admin", "org:admin"],
+                )
+            ),
+        )
+
+        # When bearer_jwt mode & verified principal has platform_superadmin role, admin_denied returns None
+        app.state.auth_type = "bearer_jwt"
+        async def mock_verify(token):
+            return types.SimpleNamespace(claims={"email": "oooosomu9@gmail.com"}, subject="sub_admin")
+        app.state.jwt_verifier = types.SimpleNamespace(verify_token=mock_verify)
+        assert await admin_denied(req) is None
+
+
+
+    import types
+    asyncio.run(_run())
+

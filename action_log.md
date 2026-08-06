@@ -138,3 +138,50 @@ with no env vars required.
 
 ## [2026-08-05] Phase 0 Implementation Complete
 - Core Identity & Supabase JWT Integration.
+
+---
+
+## [2026-08-06] Final Audit, Environment Template & Documentation Synchronization
+
+### Summary of Actions
+1. **Remediation & Security Verification**:
+   - Conducted deep architectural review of commits `ff6ae03..c380cf1` covering C1 (Tenant Header Anti-Spoofing), C2 (Deny-Override Grants), H1-H5 (Role Matrix, Vocabulary Sync, Shadow Mode, Cache Invalidation), and M1-M8.
+   - Executed full test suite (`pytest src/tests`): **189 / 189 tests passed** (100% pass rate).
+
+2. **Environment Configuration Templates**:
+   - Created root [`.env.example`](file:///d:/python/mcp_server/.env.example) and [`src/config/.env.example`](file:///d:/python/mcp_server/src/config/.env.example) with all configuration variables across Phases 0-5.
+   - Synchronized active runtime environment [`src/config/.env`](file:///d:/python/mcp_server/src/config/.env).
+
+3. **Enterprise Documentation Guide**:
+   - Created [`docs/MULTI_TENANCY_RBAC_GUIDE.md`](file:///d:/python/mcp_server/docs/MULTI_TENANCY_RBAC_GUIDE.md) containing component maps, 5-tier evaluation flow diagrams, code walkthroughs, and sample HTTP payloads (Request/Response JSON for Auth, Admin CRUD, Tool Grants, and Scoped Catalog).
+   - Cross-referenced in [`docs/README.md`](file:///d:/python/mcp_server/docs/README.md) and [`docs/MCP_AUTH_GUIDE.md`](file:///d:/python/mcp_server/docs/MCP_AUTH_GUIDE.md).
+
+4. **Swagger UI Tag Order Update**:
+   - Reordered tags in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml) to place `Authentication & Identity` at the top of Swagger UI.
+
+5. **Admin Route Authorization Dual-Mode Support**:
+   - Updated `admin_denied` in [`src/plugins/security.py`](file:///d:/python/mcp_server/src/plugins/security.py) and [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py) so that `/admin/*` endpoints authorize either static `MCP_ADMIN_TOKEN` (`mysecretadmin`) OR a verified Supabase JWT Bearer token possessing `platform_superadmin` / `platform:admin` / `org:admin` permissions.
+   - Directly checks `request.state.principal` attached by `IdentityMiddleware` for zero-latency JWT validation.
+
+6. **Swagger UI Security Schemes & Secured Lock Icon Alignment**:
+   - Added explicit `security:` requirements (`AdminTokenAuth` & `BearerAuth`) to `/admin/orgs` (GET/POST) in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml).
+   - Added `/mcp` FastMCP Streamable Endpoint with `GET`, `POST`, and `DELETE` operations secured with `BearerAuth` & `ApiKeyAuth` requirements in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml) and [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py).
+   - Filtered duplicate `HEAD` methods out of OpenAPI auto-discovery in [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py) for a clean Swagger UI.
+   - Updated `_jwt_ok` fast-path in [`src/plugins/security.py`](file:///d:/python/mcp_server/src/plugins/security.py) to immediately recognize principal objects resolved by `IdentityMiddleware`.
+   - Updated Federation endpoints (`/mcp/upstreams`, `/admin/mcp/upstreams`) to require `BearerAuth`, `AdminTokenAuth`, and `ApiKeyAuth`, removing unauthenticated `- {}` overrides.
+7. **Standalone Package Creation, Multi-Framework Usage & Wheel Build**:
+   - Packaged the Multi-Tenancy RBAC authorization framework as a standalone Python package in [`packages/mcp_tenancy_rbac/`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/).
+   - Built standalone Wheel binary distribution [`packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0-py3-none-any.whl`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0-py3-none-any.whl) (38.6 KB) and Source Tarball [`packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0.tar.gz`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0.tar.gz) (30.6 KB).
+   - Created comprehensive multi-framework usage guide in [`docs/PACKAGE_USAGE_GUIDE.md`](file:///d:/python/mcp_server/docs/PACKAGE_USAGE_GUIDE.md) featuring explicit production-ready integration examples for FastAPI, gRPC/Background Workers, Flask/Django, and FastMCP.
+   - Installed in editable mode (`pip install -e ./packages/mcp_tenancy_rbac`) and verified 100% test pass rate (190/190 passing).
+
+
+
+
+
+
+
+
+
+
+

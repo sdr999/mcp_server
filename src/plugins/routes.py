@@ -106,8 +106,9 @@ def _load_openapi_spec(request=None) -> dict:
             tag = "System"
             if openapi_path.startswith("/auth") or openapi_path == "/whoami":
                 tag = "Authentication & Identity"
-            elif openapi_path.startswith("/tools"):
+            elif openapi_path.startswith("/tools") or openapi_path == "/mcp" or openapi_path.startswith("/mcp"):
                 tag = "Tools"
+
             elif openapi_path.startswith("/admin"):
                 tag = "Onboarding & Admin"
             elif openapi_path.startswith("/mcp/upstreams"):
@@ -115,17 +116,25 @@ def _load_openapi_spec(request=None) -> dict:
 
             for method in methods:
                 m_lower = method.lower()
+                if m_lower == "head":
+                    continue
                 if m_lower not in spec["paths"][openapi_path]:
+
                     op_id = f"auto_{m_lower}_{openapi_path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}"
+                    sec = [{"AdminTokenAuth": []}, {"BearerAuth": []}] if tag == "Onboarding & Admin" else (
+                        [{"BearerAuth": []}] if tag in ("Authentication & Identity", "Tools", "Federation") else []
+                    )
                     spec["paths"][openapi_path][m_lower] = {
                         "tags": [tag],
                         "summary": f"{method.upper()} {openapi_path}",
                         "description": f"Auto-discovered route for {method.upper()} {openapi_path}",
                         "operationId": op_id,
+                        "security": sec,
                         "responses": {
                             "200": {"description": "Successful operation"}
                         },
                     }
+
 
     return spec
 
@@ -268,7 +277,8 @@ def register_metrics(loader, app) -> None:
 
 
 async def _admin_resync(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     # No remote tool source: nothing to sync, the filesystem watcher already
     # picks up local edits. Kept for parity with the admin API shape.
@@ -276,7 +286,8 @@ async def _admin_resync(request):
 
 
 async def _admin_reload(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -289,7 +300,8 @@ async def _admin_reload(request):
 
 
 async def _admin_disable(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -300,7 +312,8 @@ async def _admin_disable(request):
 
 
 async def _admin_enable(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -313,7 +326,8 @@ async def _admin_enable(request):
 
 # -- tool onboarding: the replacement for the removed Azure sync path -------
 async def _admin_tools_onboard(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.onboarding.enabled:
@@ -357,7 +371,8 @@ async def _admin_tools_onboard(request):
 
 
 async def _admin_tools_validate_source(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     try:
@@ -374,7 +389,8 @@ async def _admin_tools_validate_source(request):
 
 
 async def _admin_tools_revert(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -391,7 +407,8 @@ async def _admin_tools_revert(request):
 async def _admin_tools_accept_proposal(request):
 
     """Accept a dry-run proposal and onboard the tool immediately."""
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     try:
@@ -415,7 +432,8 @@ async def _admin_tools_accept_proposal(request):
 
 async def _admin_tools_auto_patch(request):
     """Auto-patch a tool that experienced a runtime error or syntax issue."""
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -433,13 +451,15 @@ async def _admin_tools_auto_patch(request):
 
 
 async def _admin_tools_pending_list(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     return JSONResponse({"pending": request.app.state.onboarding.list_pending()})
 
 
 async def _admin_tools_pending_detail(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     name = request.path_params["name"]
     detail = request.app.state.onboarding.get_pending_detail(name)
@@ -449,7 +469,8 @@ async def _admin_tools_pending_detail(request):
 
 
 async def _admin_tools_pending_approve(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -464,7 +485,8 @@ async def _admin_tools_pending_approve(request):
 
 
 async def _admin_tools_pending_reject(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     name = request.path_params["name"]
     if not request.app.state.onboarding.reject(name):
@@ -526,7 +548,8 @@ async def _upstream_tool_call(request):
 
 
 async def _admin_upstream_add(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.upstreams.allow_runtime:
@@ -558,7 +581,8 @@ async def _admin_upstream_add(request):
 
 
 async def _admin_upstream_remove(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.upstreams.allow_runtime:
@@ -571,7 +595,8 @@ async def _admin_upstream_remove(request):
 
 # -- OpenAPI Plugin management endpoints ------------------------------------
 async def _admin_openapi_register(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -610,7 +635,8 @@ async def _admin_openapi_register(request):
 
 
 async def _admin_openapi_specs(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -628,7 +654,8 @@ async def _admin_openapi_specs(request):
 
 
 async def _admin_openapi_remove(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -643,7 +670,8 @@ async def _admin_openapi_remove(request):
 
 
 async def _admin_logs(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     category_param = request.path_params.get("log_category")

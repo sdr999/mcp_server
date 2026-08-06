@@ -321,3 +321,37 @@ via the legacy filename-match fallback. Solved as a small architecture change.
 | `5e255bf` | Tool exposure policy + manifest: explicit opt-in for onboarded tools. |
 
 Pushed to `origin/claude/mcp-plugin-components-refactor-za9z1p`.
+
+---
+
+## Phase 7 — Multi-Tenancy & RBAC Architecture (Phases 0 - 5)
+
+**Commits:** `ff6ae03..c380cf1`
+
+### Summary of Completed Deliverables
+
+1. **Phase 0 — Core Identity & Supabase JWT Integration**:
+   - Supabase JWT parsing, JWKS key rotation, `Principal` context builder, SuperAdmin binding for `oooosomu9@gmail.com`.
+
+2. **Phase 1 — Pluggable Tenancy Store**:
+   - Implemented `TenancyStore` ABC with backends: `SqliteTenancyStore`, `MongoTenancyStore` (Motor async pool referencing *hire-pilot*), `MemoryTenancyStore`, `JsonTenancyStore`, and `seed_tenancy_store_if_empty`.
+
+3. **Phase 2 — Hierarchical RBAC Policy Engine**:
+   - Implemented 5-tier evaluation engine (`PolicyEvaluator`) and thread-safe LRU decision cache (`DecisionCache`).
+
+4. **Phase 3 — Tenant & Workspace Catalog Scoping**:
+   - Implemented `filter_tools_for_principal` filtering local and remote upstream tool listings.
+
+5. **Phase 4 — Dynamic Tool Grants & ABAC Rules**:
+   - Implemented `ABACEvaluator` supporting `{name, tag, owner, all}` matching, `trusted_tags`, and workspace environment constraints.
+
+6. **Phase 5 — Production Hardening, Audit Trail & Security Metrics**:
+   - Implemented `AsyncAuditLogger` (writing to `logs/audit.log` & DB), Prometheus security metrics, and OpenAPI specs.
+
+7. **Security Remediations (Commits `ff6ae03..c380cf1`)**:
+   - **C1**: Tenant Header Anti-Spoofing (`identity.select_tenant_context()`).
+   - **C2**: Deny-Override Grants in `PolicyEvaluator`.
+   - **H1-H5, M1-M8**: Canonical role matrix, vocabulary synchronization, shadow mode, cache invalidation, existence non-disclosure.
+
+- Full test suite: **189 tests passing** (100% pass rate).
+

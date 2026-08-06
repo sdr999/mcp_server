@@ -41,19 +41,17 @@ servers:
 
 
 tags:
-  - name: Onboarding & Admin
-    description: Administration, onboarding, and multi-tenancy management endpoints
-  - name: System
-
-    description: Liveness, readiness, status, and metrics
   - name: Authentication & Identity
     description: Supabase Auth endpoints (sign up, sign in, token refresh, password recovery) and identity inspection
   - name: Tools
     description: Tool catalog and execution
   - name: Onboarding & Admin
-    description: Dynamic tool onboarding, approval workflow, and server administration
+    description: Administration, onboarding, multi-tenancy management, and proposal approval workflow
+  - name: System
+    description: Liveness, readiness, status, and metrics
   - name: Federation
     description: Upstream MCP server federation
+
 
 paths:
   /whoami:
@@ -166,6 +164,46 @@ paths:
         '200':
           description: Reset email sent if account exists
 
+  /mcp:
+    get:
+      tags:
+        - Tools
+      summary: FastMCP SSE Stream Endpoint
+      description: Establishes a Server-Sent Events (SSE) stream connection for FastMCP protocol notifications.
+      operationId: mcpSseStream
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: EventStream connection opened
+    post:
+      tags:
+        - Tools
+      summary: FastMCP Protocol Streamable Endpoint
+      description: Primary Streamable HTTP / JSON-RPC endpoint for Model Context Protocol (MCP) tool execution and listing.
+      operationId: mcpEndpoint
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: MCP JSON-RPC Response or Event Stream
+    delete:
+      tags:
+        - Tools
+      summary: FastMCP Session Disconnect
+      description: Closes an active FastMCP session.
+      operationId: mcpSessionDisconnect
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Session terminated
+
+
+
   /docs:
     get:
 
@@ -252,8 +290,12 @@ paths:
       tags:
         - Onboarding & Admin
       summary: List Organizations
-      description: Returns list of registered organizations in the tenancy store. Requires admin token.
+      description: Returns list of registered organizations in the tenancy store. Requires admin token or SuperAdmin JWT.
       operationId: adminListOrgs
+      security:
+        - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: List of organizations
@@ -277,9 +319,14 @@ paths:
       tags:
         - Onboarding & Admin
       summary: Create Organization
-      description: Registers a new organization tenant in the store. Requires admin token.
+      description: Registers a new organization tenant in the store. Requires admin token or SuperAdmin JWT.
       operationId: adminCreateOrg
+      security:
+        - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
+
         required: true
         content:
           application/json:
@@ -455,6 +502,8 @@ paths:
       operationId: getAdminLogs
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       parameters:
         - in: query
           name: type
@@ -514,6 +563,8 @@ paths:
       operationId: onboardTool
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
         required: true
         content:
@@ -572,6 +623,8 @@ paths:
       operationId: validateToolSource
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
         required: true
         content:
@@ -648,6 +701,8 @@ paths:
       operationId: revertTool
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       parameters:
         - in: path
           name: name
@@ -670,6 +725,8 @@ paths:
       operationId: acceptProposalAndOnboard
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
         required: true
         content:
@@ -701,6 +758,8 @@ paths:
       operationId: autoPatchTool
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       parameters:
         - in: path
           name: name
@@ -726,6 +785,8 @@ paths:
       operationId: listPendingTools
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: List of pending tools
@@ -745,6 +806,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Pending tool details
@@ -766,6 +829,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Tool approved and registered
@@ -787,6 +852,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Tool submission rejected
@@ -806,6 +873,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Module reloaded
@@ -825,6 +894,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Tool disabled
@@ -844,6 +915,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: Tool enabled
@@ -856,9 +929,8 @@ paths:
       description: List all configured upstream remote MCP servers.
       operationId: listUpstreams
       security:
-        - ApiKeyAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       responses:
         '200':
           description: Upstream servers list
@@ -877,9 +949,8 @@ paths:
           schema:
             type: string
       security:
-        - ApiKeyAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       responses:
         '200':
           description: List of tools from upstream
@@ -903,10 +974,10 @@ paths:
           schema:
             type: string
       security:
-        - ApiKeyAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       requestBody:
+
         required: true
         content:
           application/json:
@@ -961,6 +1032,8 @@ paths:
       operationId: addUpstream
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
         required: true
         content:
@@ -1033,7 +1106,10 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
+
         '200':
           description: Upstream removed
 
@@ -1088,6 +1164,8 @@ paths:
 
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       requestBody:
         required: true
         content:
@@ -1140,6 +1218,8 @@ paths:
       operationId: listOpenAPISpecs
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: List of registered OpenAPI spec collections
@@ -1159,6 +1239,8 @@ paths:
             type: string
       security:
         - AdminTokenAuth: []
+        - BearerAuth: []
+
       responses:
         '200':
           description: OpenAPI spec collection unregistered successfully
