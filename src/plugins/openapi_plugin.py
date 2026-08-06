@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -263,27 +264,22 @@ class OpenAPIToolManager:
         properties = input_schema.get("properties") or {}
         param_names = [p for p in properties.keys() if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", p)]
 
-        async def execute_fn(args: dict) -> dict:
-            return await self.execute_api_call(base_url, operation, auth_config, args)
+        async def openapi_tool_handler(**kwargs):
+            cleaned = {k: v for k, v in kwargs.items() if v is not None}
+            return await self.execute_api_call(base_url, operation, auth_config, cleaned)
 
-        if param_names:
-            params_str = ", ".join(f"{p}=None" for p in param_names)
-            dict_str = ", ".join(f"'{p}': {p}" for p in param_names)
-            code = f"""
-async def openapi_tool_handler({params_str}):
-    kwargs = {{{dict_str}}}
-    cleaned = {{k: v for k, v in kwargs.items() if v is not None}}
-    return await execute_fn(cleaned)
-"""
-        else:
-            code = """
-async def openapi_tool_handler():
-    return await execute_fn({})
-"""
-
-        local_scope = {"execute_fn": execute_fn}
-        exec(code, local_scope)
-        return local_scope["openapi_tool_handler"]
+        params = [
+            inspect.Parameter(
+                name=p,
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=None,
+                annotation=Any,
+            )
+            for p in param_names
+        ]
+        openapi_tool_handler.__signature__ = inspect.Signature(params)
+        openapi_tool_handler.__annotations__ = {p: Any for p in param_names}
+        return openapi_tool_handler
 
 
     async def execute_api_call(

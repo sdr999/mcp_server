@@ -166,33 +166,38 @@ class UpstreamRegistry:
 
     # -- proxied operations ------------------------------------------------
     async def list_tools(self, name: str) -> List[dict]:
+        from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
-        try:
-            async with self._client(spec) as c:
-                tools = await c.list_tools()
-        except Exception as exc:
-            raise UpstreamError(f"could not reach upstream {name!r}: {exc}") from exc
-        return [{"name": t.name, "description": getattr(t, "description", None)} for t in tools]
+        with upstream_call_span(name, url=str(spec.get("url", ""))):
+            try:
+                async with self._client(spec) as c:
+                    tools = await c.list_tools()
+            except Exception as exc:
+                raise UpstreamError(f"could not reach upstream {name!r}: {exc}") from exc
+            return [{"name": t.name, "description": getattr(t, "description", None)} for t in tools]
 
     async def call_tool(self, name: str, tool: str, arguments: Optional[dict]) -> dict:
+        from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
-        try:
-            async with self._client(spec) as c:
-                res = await c.call_tool(tool, arguments or {}, raise_on_error=False)
-        except Exception as exc:
-            raise UpstreamError(f"could not call {tool!r} on upstream {name!r}: {exc}") from exc
-        content = [
-            {"type": getattr(c_, "type", None), "text": getattr(c_, "text", None)}
-            for c_ in (getattr(res, "content", None) or [])
-        ]
-        return {
-            "upstream": name,
-            "tool": tool,
-            "is_error": bool(getattr(res, "is_error", False)),
-            "structured_content": getattr(res, "structured_content", None),
-            "content": content,
-        }
+        with upstream_call_span(f"{name}:{tool}", url=str(spec.get("url", ""))):
+            try:
+                async with self._client(spec) as c:
+                    res = await c.call_tool(tool, arguments or {}, raise_on_error=False)
+            except Exception as exc:
+                raise UpstreamError(f"could not call {tool!r} on upstream {name!r}: {exc}") from exc
+            content = [
+                {"type": getattr(c_, "type", None), "text": getattr(c_, "text", None)}
+                for c_ in (getattr(res, "content", None) or [])
+            ]
+            return {
+                "upstream": name,
+                "tool": tool,
+                "is_error": bool(getattr(res, "is_error", False)),
+                "structured_content": getattr(res, "structured_content", None),
+                "content": content,
+            }
+

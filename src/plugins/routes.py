@@ -69,27 +69,92 @@ async def _swagger_ui(_request):
     return HTMLResponse(SWAGGER_UI_HTML)
 
 
-def _load_openapi_spec() -> dict:
+def _load_openapi_spec(request=None) -> dict:
     spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
-    if not spec_path.exists():
-        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
-    try:
-        import yaml
-        return yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        log.error("Failed to parse openapi.yaml: %s", exc)
-        return {"openapi": "3.0.3", "info": {"title": "MCP Tool Server API", "version": "1.0.0"}, "paths": {}}
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "MCP Tool Server API", "version": "1.0.0"},
+        "paths": {},
+        "tags": [],
+        "components": {"schemas": {}, "securitySchemes": {}},
+    }
+    if spec_path.exists():
+        try:
+            import yaml
+            loaded = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                spec = loaded
+        except Exception as exc:
+            log.error("Failed to parse openapi.yaml: %s", exc)
+
+    if "paths" not in spec or not isinstance(spec["paths"], dict):
+        spec["paths"] = {}
+
+    # Dynamic Route Inspection & Auto-Discovery
+    if request is not None and hasattr(request, "app") and hasattr(request.app, "router"):
+        routes = getattr(request.app.router, "routes", [])
+        for r in routes:
+            path = getattr(r, "path", None)
+            methods = getattr(r, "methods", None)
+            if not path or not methods:
+                continue
+
+            openapi_path = path
+            if openapi_path not in spec["paths"]:
+                spec["paths"][openapi_path] = {}
+
+            tag = "System"
+            if openapi_path.startswith("/auth") or openapi_path == "/whoami":
+                tag = "Authentication & Identity"
+            elif openapi_path.startswith("/tools") or openapi_path == "/mcp" or openapi_path.startswith("/mcp"):
+                tag = "Tools"
+
+            elif openapi_path.startswith("/admin"):
+                tag = "Onboarding & Admin"
+            elif openapi_path.startswith("/mcp/upstreams"):
+                tag = "Federation"
+
+            for method in methods:
+                m_lower = method.lower()
+                if m_lower == "head":
+                    continue
+                if m_lower not in spec["paths"][openapi_path]:
+
+                    op_id = f"auto_{m_lower}_{openapi_path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}"
+                    sec = [{"AdminTokenAuth": []}, {"BearerAuth": []}] if tag == "Onboarding & Admin" else (
+                        [{"BearerAuth": []}] if tag in ("Authentication & Identity", "Tools", "Federation") else []
+                    )
+                    spec["paths"][openapi_path][m_lower] = {
+                        "tags": [tag],
+                        "summary": f"{method.upper()} {openapi_path}",
+                        "description": f"Auto-discovered route for {method.upper()} {openapi_path}",
+                        "operationId": op_id,
+                        "security": sec,
+                        "responses": {
+                            "200": {"description": "Successful operation"}
+                        },
+                    }
 
 
-async def _openapi_json(_request):
-    spec = _load_openapi_spec()
+    return spec
+
+
+async def _openapi_json(request):
+    spec = _load_openapi_spec(request)
     return JSONResponse(spec)
 
 
-async def _openapi_yaml(_request):
-    spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
-    content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
-    return PlainTextResponse(content, media_type="text/yaml")
+async def _openapi_yaml(request):
+    spec = _load_openapi_spec(request)
+    try:
+        import yaml
+        content = yaml.dump(spec, sort_keys=False)
+        return PlainTextResponse(content, media_type="text/yaml")
+    except Exception:
+        spec_path = Path(__file__).resolve().parent.parent.parent / "openapi" / "openapi.yaml"
+        content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+        return PlainTextResponse(content, media_type="text/yaml")
+
 
 
 async def _health(_request):
@@ -119,7 +184,15 @@ async def _tools_catalog(request):
     st = request.app.state
     if (denied := await enforce(request, st.read_auth)) is not None:
         return denied
-    return JSONResponse({"tools": st.loader.catalog()})
+    tools = st.loader.catalog()
+    store = getattr(st, "tenancy_store", None)
+    evaluator = getattr(st, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+    if store is not None:
+        from .tenancy.scoping import filter_tools_for_principal
+        tools = await filter_tools_for_principal(store, evaluator, principal, tools)
+    return JSONResponse({"tools": tools})
+
 
 
 async def _metrics(request):
@@ -188,7 +261,11 @@ def register_metrics(loader, app) -> None:
     METRICS.declare("mcp_tool_duration_seconds", "Tool execution wall-time")
     METRICS.declare("mcp_reloads_total", "Module (re)loads that registered tools")
     METRICS.declare("mcp_load_failures_total", "Module loads that failed or yielded no tools")
+    METRICS.declare("mcp_authz_evaluations_total", "Total authorization policy evaluations")
+    METRICS.declare("mcp_authz_denials_total", "Total authorization policy denials")
+    METRICS.declare("mcp_authz_shadow_denials_total", "Authorization would-denials in shadow mode (§19)")
     METRICS.gauge("mcp_ready", lambda: 1.0 if getattr(app.state, "ready", False) else 0.0,
+
                   "1 once the initial tool load has completed")
     METRICS.gauge("mcp_tools_loaded", lambda: loader.stats()["total_tools"], "Currently registered tools")
     METRICS.gauge("mcp_modules_failed", lambda: loader.stats()["failed_modules"], "Modules currently failing to load")
@@ -200,7 +277,8 @@ def register_metrics(loader, app) -> None:
 
 
 async def _admin_resync(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     # No remote tool source: nothing to sync, the filesystem watcher already
     # picks up local edits. Kept for parity with the admin API shape.
@@ -208,7 +286,8 @@ async def _admin_resync(request):
 
 
 async def _admin_reload(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -221,7 +300,8 @@ async def _admin_reload(request):
 
 
 async def _admin_disable(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -232,7 +312,8 @@ async def _admin_disable(request):
 
 
 async def _admin_enable(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -245,7 +326,8 @@ async def _admin_enable(request):
 
 # -- tool onboarding: the replacement for the removed Azure sync path -------
 async def _admin_tools_onboard(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.onboarding.enabled:
@@ -289,7 +371,8 @@ async def _admin_tools_onboard(request):
 
 
 async def _admin_tools_validate_source(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     try:
@@ -306,7 +389,8 @@ async def _admin_tools_validate_source(request):
 
 
 async def _admin_tools_revert(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -323,7 +407,8 @@ async def _admin_tools_revert(request):
 async def _admin_tools_accept_proposal(request):
 
     """Accept a dry-run proposal and onboard the tool immediately."""
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     try:
@@ -347,7 +432,8 @@ async def _admin_tools_accept_proposal(request):
 
 async def _admin_tools_auto_patch(request):
     """Auto-patch a tool that experienced a runtime error or syntax issue."""
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -365,13 +451,15 @@ async def _admin_tools_auto_patch(request):
 
 
 async def _admin_tools_pending_list(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     return JSONResponse({"pending": request.app.state.onboarding.list_pending()})
 
 
 async def _admin_tools_pending_detail(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     name = request.path_params["name"]
     detail = request.app.state.onboarding.get_pending_detail(name)
@@ -381,7 +469,8 @@ async def _admin_tools_pending_detail(request):
 
 
 async def _admin_tools_pending_approve(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     name = request.path_params["name"]
@@ -396,7 +485,8 @@ async def _admin_tools_pending_approve(request):
 
 
 async def _admin_tools_pending_reject(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     name = request.path_params["name"]
     if not request.app.state.onboarding.reject(name):
@@ -423,7 +513,16 @@ async def _upstream_tools(request):
         return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
     except UpstreamError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
+
+    store = getattr(st, "tenancy_store", None)
+    evaluator = getattr(st, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+    if store is not None:
+        from .tenancy.scoping import filter_tools_for_principal
+        tools = await filter_tools_for_principal(store, evaluator, principal, tools)
+
     return JSONResponse({"upstream": server, "tools": tools})
+
 
 
 async def _upstream_tool_call(request):
@@ -449,7 +548,8 @@ async def _upstream_tool_call(request):
 
 
 async def _admin_upstream_add(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.upstreams.allow_runtime:
@@ -481,7 +581,8 @@ async def _admin_upstream_add(request):
 
 
 async def _admin_upstream_remove(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     if not st.upstreams.allow_runtime:
@@ -494,7 +595,8 @@ async def _admin_upstream_remove(request):
 
 # -- OpenAPI Plugin management endpoints ------------------------------------
 async def _admin_openapi_register(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -533,7 +635,8 @@ async def _admin_openapi_register(request):
 
 
 async def _admin_openapi_specs(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -551,7 +654,8 @@ async def _admin_openapi_specs(request):
 
 
 async def _admin_openapi_remove(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     mgr = getattr(st, "openapi_manager", None)
@@ -566,7 +670,8 @@ async def _admin_openapi_remove(request):
 
 
 async def _admin_logs(request):
-    if (denied := admin_denied(request)) is not None:
+    if (denied := await admin_denied(request)) is not None:
+
         return denied
     st = request.app.state
     category_param = request.path_params.get("log_category")
@@ -596,6 +701,9 @@ async def _admin_logs(request):
         else:
             audit_path = Path(audit_path)
         files_to_read.append(("audit", audit_path))
+    if log_type in {"unauthorized", "all"}:
+        unauth_path = getattr(st, "unauthorized_log_path", None) or (logs_dir / "unauthorized_access.json.log")
+        files_to_read.append(("unauthorized", unauth_path))
 
 
 
@@ -645,10 +753,279 @@ async def _admin_logs(request):
 
 
 
+async def _whoami(request):
+    denied = await enforce(request, "none")
+    if denied:
+        return denied
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        from .identity import create_anonymous_principal
+        principal = create_anonymous_principal()
+    return JSONResponse(principal.to_dict())
+
+
+async def _auth_signup(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured (set SUPABASE_URL and SUPABASE_KEY)"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    password = (body.get("password") or "").strip()
+    metadata = body.get("metadata") or body.get("data")
+    if not email or not password:
+        return JSONResponse({"error": "Email and password are required"}, status_code=400)
+    res = await auth_service.sign_up(email, password, metadata=metadata)
+    return JSONResponse(res, status_code=201)
+
+
+async def _auth_signin(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured (set SUPABASE_URL and SUPABASE_KEY)"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    username = (body.get("username") or body.get("email") or "").strip()
+    password = (body.get("password") or "").strip()
+    if not username or not password:
+        return JSONResponse({"error": "Email/username and password are required"}, status_code=400)
+    res = await auth_service.sign_in(username, password)
+    return JSONResponse(res, status_code=200)
+
+
+async def _auth_refresh(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    refresh_token = (body.get("refresh_token") or "").strip()
+    if not refresh_token:
+        return JSONResponse({"error": "refresh_token is required"}, status_code=400)
+    res = await auth_service.refresh_token(refresh_token)
+    return JSONResponse(res, status_code=200)
+
+
+async def _auth_forgot_password(request):
+    auth_service = getattr(request.app.state, "supabase_auth", None)
+    if not auth_service:
+        return JSONResponse({"error": "Supabase Auth not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    if not email:
+        return JSONResponse({"error": "email is required"}, status_code=400)
+    res = await auth_service.recover_password(email)
+    return JSONResponse(res, status_code=200)
+
+
+def _invalidate_rbac_cache(request, *, principal_id=None, org_id=None, full=False):
+    """Bust cached authorization decisions after a tenancy mutation (§18.2/§21.4).
+
+    A stale decision must not outlive the write that changed it. Membership
+    changes target one principal; grant/role changes are broad (clear all).
+    """
+    evaluator = getattr(request.app.state, "policy_evaluator", None)
+    cache = getattr(evaluator, "cache", None) if evaluator else None
+    if cache is None:
+        return
+    if full or (principal_id is None and org_id is None):
+        cache.clear()
+    else:
+        cache.invalidate(principal_id=principal_id, org_id=org_id)
+
+
+async def _admin_create_org(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    org_id = (body.get("org_id") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not org_id or not name:
+        return JSONResponse({"error": "org_id and name are required"}, status_code=400)
+    org = await store.create_org(org_id, name, settings=body.get("settings"))
+    return JSONResponse({"org_id": org.org_id, "name": org.name, "status": org.status, "created_at": org.created_at}, status_code=201)
+
+
+async def _admin_list_orgs(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    orgs = await store.list_orgs()
+    return JSONResponse([{"org_id": o.org_id, "name": o.name, "status": o.status, "created_at": o.created_at} for o in orgs])
+
+
+async def _admin_delete_org(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    ok = await store.delete_org(org_id)
+    if not ok:
+        return JSONResponse({"error": "Organization not found"}, status_code=404)
+    # Deleting an org cascades memberships -> drop cached decisions for that org.
+    _invalidate_rbac_cache(request, org_id=org_id)
+    return JSONResponse({"message": f"Organization {org_id} deleted successfully"})
+
+
+async def _admin_create_workspace(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    workspace_id = (body.get("workspace_id") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not workspace_id or not name or not org_id:
+        return JSONResponse({"error": "workspace_id, org_id, and name are required"}, status_code=400)
+    ws = await store.create_workspace(workspace_id, org_id, name)
+    return JSONResponse({"workspace_id": ws.workspace_id, "org_id": ws.org_id, "name": ws.name, "created_at": ws.created_at}, status_code=201)
+
+
+async def _admin_list_workspaces(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    wss = await store.list_workspaces(org_id)
+    return JSONResponse([{"workspace_id": w.workspace_id, "org_id": w.org_id, "name": w.name, "created_at": w.created_at} for w in wss])
+
+
+async def _admin_bind_member(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    principal_id = (body.get("principal_id") or body.get("subject") or "").strip()
+    role = (body.get("role") or "").strip()
+    workspace_id = body.get("workspace_id")
+    if not principal_id or not role or not org_id:
+        return JSONResponse({"error": "principal_id, org_id, and role are required"}, status_code=400)
+    mem = await store.bind_member(principal_id, org_id, role, workspace_id)
+    # A role change alters this principal's permissions -> drop their cached decisions.
+    _invalidate_rbac_cache(request, principal_id=principal_id)
+    return JSONResponse({"principal_id": mem.principal_id, "org_id": mem.org_id, "role": mem.role, "workspace_id": mem.workspace_id}, status_code=201)
+
+
+async def _admin_list_members(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    if not org_id:
+        return JSONResponse({"error": "org parameter required"}, status_code=400)
+    mems = await store.list_org_members(org_id)
+    return JSONResponse([{"principal_id": m.principal_id, "org_id": m.org_id, "role": m.role, "workspace_id": m.workspace_id} for m in mems])
+
+
+async def _admin_add_tool_grant(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    scope_type = (body.get("scope_type") or "org").strip()
+    scope_id = (body.get("scope_id") or org_id).strip()
+    effect = (body.get("effect") or "allow").strip()
+    match_type = (body.get("match_type") or "exact").strip()
+    match_value = (body.get("match_value") or "").strip()
+    if not match_value:
+        return JSONResponse({"error": "match_value is required"}, status_code=400)
+    grant = await store.add_tool_grant(scope_type, scope_id, effect, match_type, match_value)
+    # Grants can affect many principals (org/role/tag scope) -> clear all decisions.
+    _invalidate_rbac_cache(request, full=True)
+    return JSONResponse({
+        "id": grant.id,
+        "scope_type": grant.scope_type,
+        "scope_id": grant.scope_id,
+        "effect": grant.effect,
+        "match_type": grant.match_type,
+        "match_value": grant.match_value,
+        "created_at": grant.created_at,
+    }, status_code=201)
+
+
+async def _admin_list_tool_grants(request):
+    denied = await enforce(request, "admin")
+    if denied:
+        return denied
+    store = getattr(request.app.state, "tenancy_store", None)
+    if not store:
+        return JSONResponse({"error": "TenancyStore not initialized"}, status_code=503)
+    org_id = request.path_params.get("org")
+    grants = await store.list_tool_grants(scope_id=org_id)
+    return JSONResponse([{
+        "id": g.id,
+        "scope_type": g.scope_type,
+        "scope_id": g.scope_id,
+        "effect": g.effect,
+        "match_type": g.match_type,
+        "match_value": g.match_value,
+        "created_at": g.created_at,
+    } for g in grants])
+
+
+
+
 def feature_routes() -> List[Route]:
     return [
         Route(HEALTH_PATH, _health, methods=["GET"]),
         Route(READY_PATH, _readyz, methods=["GET"]),
+        Route("/whoami", _whoami, methods=["GET"]),
+        Route("/auth/signup", _auth_signup, methods=["POST"]),
+        Route("/auth/signin", _auth_signin, methods=["POST"]),
+        Route("/auth/refresh", _auth_refresh, methods=["POST"]),
+        Route("/auth/forgot-password", _auth_forgot_password, methods=["POST"]),
         Route("/docs", _swagger_ui, methods=["GET"]),
         Route("/swagger", _swagger_ui, methods=["GET"]),
         Route("/openapi.json", _openapi_json, methods=["GET"]),
@@ -687,5 +1064,18 @@ def feature_routes() -> List[Route]:
         Route("/mcp/upstreams/{server}/tools/{name}/call", _upstream_tool_call, methods=["POST"]),
         Route("/admin/mcp/upstreams", _admin_upstream_add, methods=["POST"]),
         Route("/admin/mcp/upstreams/{server}/remove", _admin_upstream_remove, methods=["POST"]),
+        # Admin Tenancy & RBAC (Phase 1)
+        Route("/admin/orgs", _admin_create_org, methods=["POST"]),
+        Route("/admin/orgs", _admin_list_orgs, methods=["GET"]),
+        Route("/admin/orgs/{org}", _admin_delete_org, methods=["DELETE"]),
+        Route("/admin/orgs/{org}/workspaces", _admin_create_workspace, methods=["POST"]),
+        Route("/admin/orgs/{org}/workspaces", _admin_list_workspaces, methods=["GET"]),
+        Route("/admin/orgs/{org}/members", _admin_bind_member, methods=["POST"]),
+        Route("/admin/orgs/{org}/members", _admin_list_members, methods=["GET"]),
+        Route("/admin/orgs/{org}/tool-grants", _admin_add_tool_grant, methods=["POST"]),
+        Route("/admin/orgs/{org}/tool-grants", _admin_list_tool_grants, methods=["GET"]),
     ]
+
+
+
 

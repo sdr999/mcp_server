@@ -1,67 +1,184 @@
-# Action Log — Swagger UI & OpenAPI Specification Implementation
+# Action Log - Multi-Tenancy & RBAC Implementation
 
-## Executive Summary
-This document tracks all execution steps taken to analyze the MCP tool server, update the OpenAPI specification, build the interactive Swagger UI interface, enable remote MCP federation docs, and verify system integrity via unit testing.
+## [2026-08-05] Staff Review of the Implementation + Full Findings Remediation
+
+Reviewed the merged Phase 1–3 implementation against the design doc
+(`docs/design/MULTI_TENANCY_RBAC.md`) and fixed every finding. Review artifacts:
+`docs/design/IMPLEMENTATION_REVIEW.md` (narrative) and
+`docs/design/RBAC_ISSUES.md` (trackable checklist). New regression tests in
+`src/tests/test_plugins_rbac_c1c2.py` (14 cases). Full suite: **189 passed**
+with no env vars required.
+
+### 🔴 Critical
+- **C1 — Tenant-header anti-spoofing.** Tenant isolation was enforced against the
+  self-asserted `X-Tenant-Id` header, not store membership (`resolve_principal`
+  was never called, and itself trusted the header). Added
+  `identity.select_tenant_context()` (honors a tenant header only for member
+  orgs; non-members → default org); routed all four backends' `resolve_principal`
+  through it; `IdentityMiddleware` now overlays store-resolved org/roles/perms
+  from the verified `(issuer, subject)` when RBAC is on; anonymous pinned to
+  `default`. Store-failure now logged at WARNING (reaches the file handler).
+- **C2 — Deny-override grant precedence.** Evaluator returned on the first
+  matching grant; now scans all matching grants and any `deny` wins.
+  `_grant_applies_to()` also stops an unknown `scope_type` from matching everyone
+  and handles `role`/`principal` scopes.
+
+### 🟠 High
+- **H1 — One role→permission source of truth.** Added the canonical
+  `BUILTIN_ROLE_PERMISSIONS` matrix in `identity.py`; `permissions_for_roles()`
+  derives from it; the seeder seeds from the same matrix (no drift; asserted by
+  test). Store stays runtime-authoritative via `resolve_principal`.
+- **H2 — Grant `match_type` vocabulary.** Evaluator now supports
+  `name`/`tag`/`owner`/`all` (tag/owner/all were dead code) with legacy
+  `exact`/`prefix`/`glob` aliases; ownership resolved once and reused.
+- **H3 — Least-privilege default role.** `DEFAULT_ROLE = "agent_consumer"`; a bare
+  signed token no longer inherits `tool:onboard`/`tool:manage`; unknown roles get
+  no permissions.
+- **H4 — Shadow mode.** `MCP_RBAC_MODE=shadow|enforce` (+ validation). Shadow logs
+  a would-deny (WARNING → file), writes a `shadow_deny` audit row, increments
+  `mcp_authz_shadow_denials_total`, and proceeds. Also wired the missing
+  `MCP_RBAC_ENABLED` / `MCP_RBAC_MODE` env parsing.
+- **H5 — Cache invalidation on writes.** `_invalidate_rbac_cache()` wired into
+  `bind_member` (principal-scoped), `delete_org` (org-scoped), `add_tool_grant`
+  (full clear); decision-cache TTL default 300s → 30s.
+
+### 🟡 Medium
+- **M1** backend registry: `register_backend()` + `module.path:Factory` custom
+  specs; unknown `MCP_TENANCY_STORE` fails fast instead of falling back to sqlite.
+- **M2** existence non-disclosure: denied `tool:call`/`tool:manage` → 404 (unknown-
+  tool body); other denials → generic 403; reason logged server-side only.
+- **M3** JWT hardening: PyJWKClient fallback drops HS256 (ES256/RS256 only) and
+  verifies audience when `MCP_JWT_AUDIENCE` is set (now on `app.state`).
+- **M4** `MCP_TENANCY_RECONCILE_ROLES` re-syncs drifted built-in role perms on
+  boot; seed-lock scope documented (backend-level lock deferred, §21.1).
+- **M5** removed the hardcoded Supabase issuer default and the email-keyed
+  superadmin binding (could never match `resolve_principal`, which keys on `sub`);
+  superadmin via email-claim match + admin-token bootstrap.
+- **M6** interface: `is_empty()`, `close()` (wired into lifespan shutdown), and
+  `limit`/`offset` pagination on the four `list_*` methods across all backends.
+- **M7** untracked runtime artifacts (`src/data/*.db`, `src/logs/`) + `.gitignore`.
+- **M8** documented that ABAC `trusted_tags` is a required-attributes gate (grant
+  creation is admin-only, so the §17.6 self-grant vector is closed).
+
+### CI / test-environment fixes
+- **fastapi hard-dependency removed** — `plugins/auth_service.py` now imports
+  `HTTPException`/`status` from Starlette (same interface), so
+  `tests/test_plugins_identity.py` collects without fastapi installed.
+- **`src/tests/conftest.py`** sets `MCP_ADMIN_TOKEN` at collection time (via
+  `setdefault`) so the admin/tenancy REST tests run without a hand-set env var.
+- Updated `test_whoami_*` to assert the C1-secure behavior (anonymous ignores
+  tenant headers) instead of the old header-echo.
 
 ---
 
-## Chronological Action Log
+## [2026-08-05] Documentation & Sample Payloads Guide Created
 
-| Timestamp (ISO) | Step ID | Component | Description / Action Taken | Status |
-|-----------------|---------|-----------|----------------------------|--------|
-| 2026-08-04T23:28:10 | ACT-001 | Codebase Scan | Analyzed directory structure, entry points (`src/main.py`, `src/multiple_mcp_main.py`), plugins (`src/plugins/*`), routes, and documentation. Identified core functions (System Probes, Tool Catalog, Direct HTTP Tool Call, Onboarding, Admin, Federation). | COMPLETED |
-| 2026-08-04T23:28:30 | ACT-002 | Swagger Status Check | Verified absence of Swagger UI page on server. `docs/MCP_SERVER_FEATURES.md` noted: `"there is no Swagger/OpenAPI UI on this server"`. | COMPLETED |
-| 2026-08-04T23:28:39 | ACT-003 | Implementation Planning | Formulated comprehensive design plan in `implementation_plan.md` covering schema updates, route registration, UI template embedding, and test coverage. | COMPLETED |
-| 2026-08-04T23:30:10 | ACT-004 | OpenAPI Spec Update | Rebuilt `openapi/openapi.yaml` to document all 24 API routes across System, Tools, Onboarding & Admin, and Federation tags, including schemas and security definitions. | COMPLETED |
-| 2026-08-04T23:30:14 | ACT-005 | Security Exemption Update | Modified `src/plugins/security.py` to add `DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml"}` to `EXEMPT_PATHS`. | COMPLETED |
-| 2026-08-04T23:30:33 | ACT-006 | Plugin Routes Update | Added `SWAGGER_UI_HTML` template, `_swagger_ui`, `_openapi_json`, and `_openapi_yaml` handlers in `src/plugins/routes.py`. Registered `/docs`, `/swagger`, `/openapi.json`, and `/openapi.yaml` in `feature_routes()`. | COMPLETED |
-| 2026-08-04T23:32:18 | ACT-007 | Test Suite Creation | Authored unit tests in `src/tests/test_swagger_docs.py` testing `/docs`, `/swagger`, `/openapi.json`, and `/openapi.yaml`. | COMPLETED |
-| 2026-08-04T23:32:19 | ACT-008 | Documentation Update | Updated `docs/MCP_SERVER_FEATURES.md` and `openapi/README.md` to document the newly available interactive Swagger UI endpoints. | COMPLETED |
-| 2026-08-04T23:33:51 | ACT-009 | Dependency Check | Installed missing dependencies (`fastmcp`, `watchdog`) to enable test suite execution. | COMPLETED |
-| 2026-08-04T23:33:55 | ACT-010 | Unit Test Execution | Ran `pytest src/tests/test_swagger_docs.py`. Verified 100% pass rate (`1 passed`). | COMPLETED |
-| 2026-08-04T23:34:46 | ACT-011 | Integration Test Suite | Executed full core plugin test suite (`120 passed in 14.77s`). | COMPLETED |
-| 2026-08-04T23:38:29 | ACT-012 | OpenAPI Docs Self-Ref | Added `/docs`, `/swagger`, `/openapi.json`, `/openapi.yaml` path definitions to `openapi/openapi.yaml`. | COMPLETED |
-| 2026-08-04T23:38:43 | ACT-013 | Monolith Parity Update | Updated `src/multiple_mcp_main.py` with `DOCS_PATHS`, `SWAGGER_UI_HTML`, and handlers so both single-file and plugin servers serve Swagger UI. | COMPLETED |
-| 2026-08-04T23:39:06 | ACT-014 | Final Verification | Ran combined test suite (`33 passed in 5.46s`). | COMPLETED |
-| 2026-08-05T08:55:00 | ACT-015 | Unused Code Cleanup | Audit of `src/utils/` revealed 5 unreferenced dead files (`common_utils.py`, `mcp_server_generator.py`, `otel_utils.py`, `rag_store.py`, `servicenow_agent_runtime.py`). Directory removed. | COMPLETED |
-| 2026-08-05T08:56:34 | ACT-016 | Observability Module | Implemented `src/plugins/observability.py` with `StructuredJsonFormatter`, `SecretMaskingFilter`, `ProbeLogSampler`, W3C `traceparent` parser, and `TraceCorrelationMiddleware`. | COMPLETED |
-| 2026-08-05T08:56:47 | ACT-017 | App Integration | Wired `TraceCorrelationMiddleware` and `setup_observability()` into `src/plugins/app.py` and `src/tool_runner.py` with `RotatingFileHandler` support (`logs/mcp_server.json.log`). | COMPLETED |
-| 2026-08-05T08:57:15 | ACT-018 | Observability Test Suite | Created `src/tests/test_observability.py`. Executed full test suite (`46 passed in 7.68s`). | COMPLETED |
-| 2026-08-05T09:07:44 | ACT-019 | Log Exposure Endpoints | Implemented `GET /admin/logs` and `GET /admin/logs/{log_category}` in `routes.py` with level, trace ID, and search filtering. Documented in `openapi.yaml`. Test suite passing (`47 passed`). | COMPLETED |
-| 2026-08-05T10:20:11 | ACT-020 | Self-Healing Engine | Built `src/plugins/auto_healer.py` featuring comment-preserving line-token rewriting for missing `from tools_sdk import tool` imports, docstring-to-description `@tool` decorator auto-insertion, PyPI dependency inference (`yaml` ➔ `pyyaml`, `PIL` ➔ `pillow`, `cv2` ➔ `opencv-python`), untyped parameter auto-annotation, and missing colon syntax fix. Added `POST /admin/tools/{name}/revert` endpoint. Verified unit tests (`52 passed`). | COMPLETED |
-| 2026-08-05T11:16:45 | ACT-021 | Advanced Self-Healing Suite | Added unbound standard library symbol auto-imports (`Path` ➔ `from pathlib import Path`, `List` ➔ `from typing import List`, `json`, `re`, `math`, `asyncio`), automatic input type coercion (`"42"` ➔ `42`, `"true"` ➔ `True`, `"3.14"` ➔ `3.14`), one-click proposal acceptance endpoint (`POST /admin/tools/onboard/accept_proposal`), and auto-patch endpoint (`POST /admin/tools/{name}/auto_patch`). Added test suite (`src/tests/test_advanced_auto_healer.py`). All unit tests passing (`55 passed`). | COMPLETED |
-| 2026-08-05T11:43:10 | ACT-022 | Upstream Security & OpenAPI Completion | Documented 100% of missing Federation endpoints in `openapi/openapi.yaml` (`GET /mcp/upstreams`, `GET /mcp/upstreams/{server}/tools`, `POST /mcp/upstreams/{server}/tools/{name}/call`, `POST /admin/mcp/upstreams`, `POST /admin/mcp/upstreams/{server}/remove`). Upgraded `src/plugins/upstreams.py` with multi-scheme auth (API Key `X-API-Key`, Bearer Token / OAuth 2.0 JWT, Custom Headers), secret redaction on API responses, and atomic file persistence (`upstreams.json`). Added unit test suite (`src/tests/test_upstreams_poc_security.py`). All unit tests passing (`58 passed`). | COMPLETED |
-| 2026-08-05T12:47:57 | ACT-023 | OpenAPI MCP Native Plugin | Built `src/plugins/openapi_plugin.py` to parse any OpenAPI 3.0/3.1 spec (URL, local file, or raw JSON/YAML) and dynamically generate live FastMCP tools for every REST operation. Features explicit signature compilation, tool name sanitization, circular `$ref` recursion limits (max 10), and REST execution via `httpx.AsyncClient` with 30s timeout & 5MB cap. Added Admin APIs (`POST /admin/openapi/register`, `GET /admin/openapi/specs`, `POST /admin/openapi/{id}/remove`) and documented in `openapi.yaml`. Added test suite (`src/tests/test_openapi_plugin.py`). All unit tests passing (`61 passed`). | COMPLETED |
-| 2026-08-05T13:40:47 | ACT-024 | ToolLoader Dynamic External Registration Sync | Enhanced `ToolLoader` in `src/plugins/tool_loader.py` with `register_external_tool()` and `unregister_external_tool()`. Connected `OpenAPIToolManager` directly to `ToolLoader` so dynamically registered OpenAPI tools automatically synchronize with `GET /tools` catalog and `POST /tools/{name}/call` HTTP execution endpoint. Added unit tests in `src/tests/test_openapi_plugin.py`. All unit tests passing (`61 passed`). | COMPLETED |
-| 2026-08-05T13:44:29 | ACT-025 | Documentation Suite Update | Created [`docs/OPENAPI_PLUGIN_GUIDE.md`](docs/OPENAPI_PLUGIN_GUIDE.md) detailing OpenAPI registration payloads, field references, `auth_type` security options, tool execution details, and step-by-step testing with `mock_calculator_server.py`. Updated [`README.md`](README.md) and [`docs/README.md`](docs/README.md). | COMPLETED |
+### Summary of Documentation Changes
+1. **Dedicated Architecture Guide (`docs/MULTI_TENANCY_RBAC_GUIDE.md`)**:
+   - Created comprehensive technical documentation containing:
+     - Component structure and module references (`src/plugins/tenancy/*`, `src/plugins/rbac/*`).
+     - Architectural diagrams and 5-tier evaluation precedence details.
+     - Complete REST API Sample Payloads (Request & Response JSON) for:
+       - Auth Signup/Signin (`POST /auth/signup`, `POST /auth/signin`)
+       - WhoAmI Identity Inspection (`GET /whoami`)
+       - Organization Management (`POST /admin/orgs`, `GET /admin/orgs`, `DELETE /admin/orgs/{org}`)
+       - Workspace Management (`POST /admin/orgs/{org}/workspaces`, `GET /admin/orgs/{org}/workspaces`)
+       - Member Role Binding (`POST /admin/orgs/{org}/members`, `GET /admin/orgs/{org}/members`)
+       - Dynamic Tool Grants (`POST /admin/orgs/{org}/tool-grants`, `GET /admin/orgs/{org}/tool-grants`)
+       - Tenant Catalog Scoping (`GET /tools`)
+     - Code Walkthrough snippets (`PolicyEvaluator` logic and MongoDB Motor async pool).
+2. **Environment Configuration Templates**:
+   - Created root [`.env.example`](file:///d:/python/mcp_server/.env.example) and [`src/config/.env.example`](file:///d:/python/mcp_server/src/config/.env.example).
+3. **Documentation Index**:
+   - Updated [`docs/README.md`](file:///d:/python/mcp_server/docs/README.md) and [`docs/MCP_AUTH_GUIDE.md`](file:///d:/python/mcp_server/docs/MCP_AUTH_GUIDE.md) to cross-reference the new guide.
 
 ---
 
-## Key Output Artifacts & Endpoints
+## [2026-08-05] Phase 5 Implementation Complete: Production Hardening, Audit Trail & Metrics
 
-- **OpenAPI Plugin Guide**: [`docs/OPENAPI_PLUGIN_GUIDE.md`](docs/OPENAPI_PLUGIN_GUIDE.md)
-- **Swagger UI Page**: `http://localhost:8000/docs` (or `/swagger`)
-- **OpenAPI Register Spec API**: `POST /admin/openapi/register`
-- **OpenAPI List Specs API**: `GET /admin/openapi/specs`
-- **OpenAPI Remove Spec API**: `POST /admin/openapi/{collection_id}/remove`
-- **Upstream Federation List API**: `GET /mcp/upstreams`
-- **Upstream Tools List API**: `GET /mcp/upstreams/{server}/tools`
-- **Upstream Tool Call API**: `POST /mcp/upstreams/{server}/tools/{name}/call`
-- **Upstream Add API**: `POST /admin/mcp/upstreams`
-- **Upstream Remove API**: `POST /admin/mcp/upstreams/{server}/remove`
-- **Self-Healing Dry-Run API**: `POST /admin/tools/validate_source`
-- **Auto-Healed Onboarding API**: `POST /admin/tools/onboard` (`auto_heal`: true)
-- **One-Click Proposal Acceptance API**: `POST /admin/tools/onboard/accept_proposal`
-- **One-Click Tool Reversion API**: `POST /admin/tools/{name}/revert`
-- **Tool Auto-Patch API**: `POST /admin/tools/{name}/auto_patch`
-- **Log Exposure API**: `GET /admin/logs?type=server` (or `audit` / `all`) & `GET /admin/logs/{log_category}`
-- **OpenAPI Plugin Module**: [`src/plugins/openapi_plugin.py`](file:///d:/python/mcp_server/src/plugins/openapi_plugin.py)
-- **Upstream Module**: [`src/plugins/upstreams.py`](file:///d:/python/mcp_server/src/plugins/upstreams.py)
-- **Auto-Healer Module**: [`src/plugins/auto_healer.py`](file:///d:/python/mcp_server/src/plugins/auto_healer.py)
-- **Specification File**: [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml)
-- **Observability Module**: [`src/plugins/observability.py`](file:///d:/python/mcp_server/src/plugins/observability.py)
-- **Plugin Routes File**: [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py)
-- **OpenAPI Test Suite**: [`src/tests/test_openapi_plugin.py`](file:///d:/python/mcp_server/src/tests/test_openapi_plugin.py)
+### Summary of Phase 5 Changes
+1. `AsyncAuditLogger` non-blocking background queue worker writing to `logs/audit.log` (JSONL) & DB.
+2. Prometheus security metrics `mcp_authz_evaluations_total` and `mcp_authz_denials_total` at `GET /metrics`.
+3. OpenAPI Specification updates in `openapi/openapi.yaml`.
+4. Automated Test Suite (173/173 passing).
+
+---
+
+## [2026-08-05] Phase 4 Implementation Complete: Dynamic Tool Grants & ABAC Rules
+
+### Summary of Phase 4 Changes
+1. `ABACEvaluator` & `ABACResult` (`src/plugins/rbac/abac.py`).
+2. Policy engine integration in `src/plugins/rbac/evaluator.py`.
+3. Admin REST API Tool Grants in `src/plugins/routes.py`.
+
+---
+
+## [2026-08-05] Phase 3 Implementation Complete: Tenant & Workspace Catalog Scoping
+
+### Summary of Phase 3 Changes
+1. Tenant catalog scoping (`src/plugins/tenancy/scoping.py`).
+2. REST API route integration (`src/plugins/routes.py`).
+
+---
+
+## [2026-08-05] Phase 2 Implementation Complete: RBAC Policy Engine & Hierarchical Evaluation
+
+### Summary of Phase 2 Changes
+1. 5-tier policy evaluation engine (`src/plugins/rbac/evaluator.py`).
+2. L1 decision cache (`src/plugins/rbac/cache.py`).
+
+---
+
+## [2026-08-05] Phase 1 Implementation Complete: Pluggable Tenancy Store (SQLite + MongoDB + Memory + JSON)
+
+### Reference Integration from `D:\pyhton\pj\hire-pilot`
+- Motor async connection pooling and unique compound index setup.
+
+---
+
+## [2026-08-05] Phase 0 Implementation Complete
+- Core Identity & Supabase JWT Integration.
+
+---
+
+## [2026-08-06] Final Audit, Environment Template & Documentation Synchronization
+
+### Summary of Actions
+1. **Remediation & Security Verification**:
+   - Conducted deep architectural review of commits `ff6ae03..c380cf1` covering C1 (Tenant Header Anti-Spoofing), C2 (Deny-Override Grants), H1-H5 (Role Matrix, Vocabulary Sync, Shadow Mode, Cache Invalidation), and M1-M8.
+   - Executed full test suite (`pytest src/tests`): **189 / 189 tests passed** (100% pass rate).
+
+2. **Environment Configuration Templates**:
+   - Created root [`.env.example`](file:///d:/python/mcp_server/.env.example) and [`src/config/.env.example`](file:///d:/python/mcp_server/src/config/.env.example) with all configuration variables across Phases 0-5.
+   - Synchronized active runtime environment [`src/config/.env`](file:///d:/python/mcp_server/src/config/.env).
+
+3. **Enterprise Documentation Guide**:
+   - Created [`docs/MULTI_TENANCY_RBAC_GUIDE.md`](file:///d:/python/mcp_server/docs/MULTI_TENANCY_RBAC_GUIDE.md) containing component maps, 5-tier evaluation flow diagrams, code walkthroughs, and sample HTTP payloads (Request/Response JSON for Auth, Admin CRUD, Tool Grants, and Scoped Catalog).
+   - Cross-referenced in [`docs/README.md`](file:///d:/python/mcp_server/docs/README.md) and [`docs/MCP_AUTH_GUIDE.md`](file:///d:/python/mcp_server/docs/MCP_AUTH_GUIDE.md).
+
+4. **Swagger UI Tag Order Update**:
+   - Reordered tags in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml) to place `Authentication & Identity` at the top of Swagger UI.
+
+5. **Admin Route Authorization Dual-Mode Support**:
+   - Updated `admin_denied` in [`src/plugins/security.py`](file:///d:/python/mcp_server/src/plugins/security.py) and [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py) so that `/admin/*` endpoints authorize either static `MCP_ADMIN_TOKEN` (`mysecretadmin`) OR a verified Supabase JWT Bearer token possessing `platform_superadmin` / `platform:admin` / `org:admin` permissions.
+   - Directly checks `request.state.principal` attached by `IdentityMiddleware` for zero-latency JWT validation.
+
+6. **Swagger UI Security Schemes & Secured Lock Icon Alignment**:
+   - Added explicit `security:` requirements (`AdminTokenAuth` & `BearerAuth`) to `/admin/orgs` (GET/POST) in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml).
+   - Added `/mcp` FastMCP Streamable Endpoint with `GET`, `POST`, and `DELETE` operations secured with `BearerAuth` & `ApiKeyAuth` requirements in [`openapi/openapi.yaml`](file:///d:/python/mcp_server/openapi/openapi.yaml) and [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py).
+   - Filtered duplicate `HEAD` methods out of OpenAPI auto-discovery in [`src/plugins/routes.py`](file:///d:/python/mcp_server/src/plugins/routes.py) for a clean Swagger UI.
+   - Updated `_jwt_ok` fast-path in [`src/plugins/security.py`](file:///d:/python/mcp_server/src/plugins/security.py) to immediately recognize principal objects resolved by `IdentityMiddleware`.
+   - Updated Federation endpoints (`/mcp/upstreams`, `/admin/mcp/upstreams`) to require `BearerAuth`, `AdminTokenAuth`, and `ApiKeyAuth`, removing unauthenticated `- {}` overrides.
+7. **Standalone Package Creation, Multi-Framework Usage & Wheel Build**:
+   - Packaged the Multi-Tenancy RBAC authorization framework as a standalone Python package in [`packages/mcp_tenancy_rbac/`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/).
+   - Built standalone Wheel binary distribution [`packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0-py3-none-any.whl`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0-py3-none-any.whl) (38.6 KB) and Source Tarball [`packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0.tar.gz`](file:///d:/python/mcp_server/packages/mcp_tenancy_rbac/dist/mcp_tenancy_rbac-1.0.0.tar.gz) (30.6 KB).
+   - Created comprehensive multi-framework usage guide in [`docs/PACKAGE_USAGE_GUIDE.md`](file:///d:/python/mcp_server/docs/PACKAGE_USAGE_GUIDE.md) featuring explicit production-ready integration examples for FastAPI, gRPC/Background Workers, Flask/Django, and FastMCP.
+   - Installed in editable mode (`pip install -e ./packages/mcp_tenancy_rbac`) and verified 100% test pass rate (190/190 passing).
+
+
+
+
+
 
 
 

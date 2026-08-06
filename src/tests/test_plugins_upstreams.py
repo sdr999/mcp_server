@@ -59,7 +59,9 @@ def test_unknown_upstream_raises_keyerror():
 def test_runtime_add_and_remove():
     reg = _reg()
     reg.add("x", "http://host/sse", token="tok")
-    assert reg.get("x") == {"url": "http://host/sse", "token": "tok"}
+    spec = reg.get("x")
+    assert spec["url"] == "http://host/sse" and spec["token"] == "tok"
+
     assert reg.remove("x") is True
     assert reg.remove("x") is False
 

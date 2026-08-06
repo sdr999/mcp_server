@@ -9,12 +9,15 @@ are implemented and verified.
 | `api_key` | a shared secret in a header (constant-time compare) | that header |
 | `bearer_jwt` (OAuth) | a JWT access token validated against a JWKS (issuer/audience/scopes) | `Authorization: Bearer <token>` |
 
-Two sides are involved:
 - **Resource server** = `agentic-mcp-server` — *validates* the incoming credential.
 - **Client** = an MCP client, or the `agentic-configuration-service` when it onboards/
   executes tools — *obtains and sends* the credential (for OAuth it fetches the token).
 
+> [!NOTE]
+> For enterprise multi-tenancy, pluggable stores (SQLite, MongoDB), 5-tier RBAC policy evaluation, catalog scoping, and ABAC attribute rules, see the dedicated [Multi-Tenancy & RBAC Architecture Guide](MULTI_TENANCY_RBAC_GUIDE.md).
+
 ---
+
 
 ## 1. API key
 

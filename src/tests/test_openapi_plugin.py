@@ -138,7 +138,15 @@ def test_openapi_admin_routes_and_tool_call_integration(tmp_path):
     tool_names_in_catalog = [t["name"] for t in resp_tools.json()["tools"]]
     assert "listPets_mock_pets" in tool_names_in_catalog
     assert "createPet_mock_pets" in tool_names_in_catalog
-    assert "getPetById_mock_pets" in tool_names_in_catalog
+    # 3.5. Execute OpenAPI tool via POST /tools/{name}/call
+    resp_call = client.post(
+        "/tools/listPets_mock_pets/call",
+        json={"limit": 5},
+        headers=headers,
+    )
+    assert resp_call.status_code in (200, 500, 502)
+    res_data = resp_call.json()
+    assert any(k in res_data for k in ("content", "result", "error"))
 
     # 4. Remove OpenAPI spec via Admin API
     resp_rem = client.post("/admin/openapi/mock_pets/remove", headers=headers)

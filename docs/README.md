@@ -12,12 +12,14 @@ Pick a starting point by what you're trying to do.
 
 ## By task
 
-| I want to… | Read |
-|------------|------|
 | Convert OpenAPI REST API specs into live MCP tools | [OPENAPI_PLUGIN_GUIDE.md](OPENAPI_PLUGIN_GUIDE.md) |
+| Configure OpenTelemetry, Rate Limits, Circuit Breakers & Live Dashboard | [RELIABILITY_OBSERVABILITY_GUIDE.md](RELIABILITY_OBSERVABILITY_GUIDE.md) |
 | Run / configure `src/main.py` (local server) | [MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md) |
 | Run / configure the Azure-backed server + all shared features | [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) |
+| Configure Multi-Tenancy, RBAC & ABAC policy rules | [MULTI_TENANCY_RBAC_GUIDE.md](MULTI_TENANCY_RBAC_GUIDE.md) |
 | Secure the server (API key / OAuth-JWT) and connect a client | [MCP_AUTH_GUIDE.md](MCP_AUTH_GUIDE.md) |
+
+
 | Submit tools over HTTP with dependency risk-gating | [MCP_TOOL_ONBOARDING.md](MCP_TOOL_ONBOARDING.md) |
 | Follow step-by-step usage for every feature | [Usage](#usage-step-by-step) (below) |
 | Understand *how the code works inside*, module by module | [dev/](dev/README.md) |
@@ -59,6 +61,13 @@ for the overview, then:
 | 07 | [Tool Onboarding](dev/07-tool-onboarding.md) | the full flow, exposure policy, manifest, conflicts, audit |
 | 08 | [CLI & Sandbox](dev/08-cli-and-sandbox.md) | `--validate`/`--sign`, the subprocess sandbox |
 | 09 | [Federation](dev/09-federation.md) | list/call tools on remote MCP servers |
+
+### Design proposals
+
+- **[design/MULTI_TENANCY_RBAC.md](design/MULTI_TENANCY_RBAC.md)** — proposed
+  Organizations / Workspaces / Roles (Admin, Developer, Agent Consumer) and
+  tenant-scoped tool access. Readiness check, domain model, phased rollout.
+  *Status: proposed (design only).*
 
 ### Project history
 

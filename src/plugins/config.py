@@ -57,7 +57,11 @@ class AppContext:
     require_signed: bool
     manifest_name: str
     signing_key: Optional[str]
+    jwt_algorithm: str = "ES256"
+    sandbox_engine: str = "auto"
     onboard_enabled: bool = True
+
+
     onboard_autoinstall: bool = True
     onboard_network_check: bool = True
     onboard_network_timeout: float = 3.0
@@ -80,11 +84,47 @@ class AppContext:
     tool_call_auth: str = "mcp"     # POST /tools/{name}/call
     upstream_auth: str = "mcp"      # /mcp/upstreams* (list + call)
     # Federation: remote MCP servers this server can list/call tools on
+
     upstreams: dict = field(default_factory=dict)   # name -> {"url", "token"}
     upstream_timeout: float = 30.0
     upstream_allow_runtime: bool = True             # admin add/remove at runtime
 
+    # --- Supabase & Multi-Tenancy / RBAC (Phase 0 & 1) ---
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_jwt_kid: str = ""
+    superadmin_email: str = ""
+    rbac_enabled: bool = False
+    rbac_mode: str = "enforce"
 
+    tenant_header: str = "X-Tenant-Id"
+
+    workspace_header: str = "X-Workspace-Id"
+    api_keys_file: Optional[Path] = None
+    tenancy_store: str = "sqlite"
+    tenancy_db_path: Optional[Path] = None
+    tenancy_dsn: str = ""
+    tenancy_db_name: str = "mcp_tenancy"
+    rbac_cache_ttl: float = 30.0
+    rbac_cache_size: int = 10000
+    tenancy_seed: bool = True
+    tenancy_reconcile_roles: bool = False
+    default_org: str = "default"
+
+
+
+    # --- Phase 3 Telemetry & Reliability ---
+    otel_enabled: bool = True
+
+
+    otel_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "mcp-server"
+    rate_limit_enabled: bool = True
+    rate_limit_default_rpm: int = 600
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_recovery_sec: float = 30.0
+    alert_webhook_url: Optional[str] = None
 def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Secure, plugin-based MCP tool server")
     p.add_argument(
@@ -206,7 +246,9 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         jwt_issuer=env.get("MCP_JWT_ISSUER") or None,
         jwt_audience=env.get("MCP_JWT_AUDIENCE") or None,
         jwt_required_scopes=scopes or None,
+        jwt_algorithm=env.get("MCP_JWT_ALGORITHM", "ES256"),
         host=env.get("MCP_HOST", DEFAULT_HOST),
+
         port=int(env.get("MCP_PORT", DEFAULT_PORT)),
         import_timeout=float(env.get("MCP_TOOL_IMPORT_TIMEOUT_SEC", DEFAULT_IMPORT_TIMEOUT)),
         metrics_enabled=(env.get("MCP_METRICS", "true").lower() == "true"),
@@ -214,6 +256,7 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         sandbox_timeout=float(env.get("MCP_SANDBOX_TIMEOUT_SEC", DEFAULT_SANDBOX_TIMEOUT)),
         sandbox_mem_mb=int(env.get("MCP_SANDBOX_MEM_MB", "0")),
         sandbox_cpu_sec=int(env.get("MCP_SANDBOX_CPU_SEC", "0")),
+        sandbox_engine=env.get("MCP_SANDBOX_ENGINE", "auto").lower(),
         admin_token=env.get("MCP_ADMIN_TOKEN", ""),
         require_signed=env.get("MCP_REQUIRE_SIGNED_TOOLS", "false").lower() == "true",
         manifest_name=env.get("MCP_TOOL_MANIFEST", DEFAULT_MANIFEST),
@@ -238,7 +281,36 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         upstreams=_load_upstreams(env, base_dir),
         upstream_timeout=float(env.get("MCP_UPSTREAM_TIMEOUT_SEC", "30")),
         upstream_allow_runtime=env.get("MCP_UPSTREAM_ALLOW_RUNTIME", "true").lower() == "true",
+        supabase_url=env.get("SUPABASE_URL", ""),
+        supabase_key=env.get("SUPABASE_KEY") or env.get("SUPABASE_PUBLISHABLE_KEY") or "",
+        supabase_jwt_kid=env.get("SUPABASE_JWT_KID", ""),
+        superadmin_email=env.get("MCP_SUPERADMIN_EMAIL", ""),
+        api_keys_file=(base_dir / p if (p := env.get("MCP_API_KEYS_FILE")) else None),
+        tenancy_store=env.get("MCP_TENANCY_STORE", "sqlite").lower(),
+        tenancy_db_path=(base_dir / p if (p := env.get("MCP_TENANCY_DB")) else (base_dir / "data" / "tenancy.db")),
+        tenancy_dsn=env.get("MCP_TENANCY_DSN") or env.get("MONGODB_URI") or "",
+        tenancy_db_name=env.get("MCP_TENANCY_DB_NAME") or env.get("DB_NAME") or "mcp_tenancy",
+        rbac_cache_ttl=float(env.get("MCP_RBAC_CACHE_TTL_SEC", "30")),
+        rbac_cache_size=int(env.get("MCP_RBAC_CACHE_MAX_SIZE", "10000")),
+        tenancy_seed=env.get("MCP_TENANCY_SEED", "true").lower() == "true",
+        tenancy_reconcile_roles=env.get("MCP_TENANCY_RECONCILE_ROLES", "false").lower() == "true",
+        default_org=env.get("MCP_DEFAULT_ORG", "default"),
+        rbac_enabled=env.get("MCP_RBAC_ENABLED", "false").lower() == "true",
+        rbac_mode=env.get("MCP_RBAC_MODE", "enforce").lower(),
+        otel_enabled=env.get("MCP_OTEL_ENABLED", "true").lower() == "true",
+        otel_endpoint=env.get("MCP_OTEL_ENDPOINT", "http://localhost:4317"),
+        otel_service_name=env.get("MCP_OTEL_SERVICE_NAME", "mcp-server"),
+        rate_limit_enabled=env.get("MCP_RATE_LIMIT_ENABLED", "true").lower() == "true",
+        rate_limit_default_rpm=int(env.get("MCP_RATE_LIMIT_DEFAULT_RPM", "600")),
+        circuit_breaker_enabled=env.get("MCP_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
+        circuit_breaker_threshold=int(env.get("MCP_CIRCUIT_BREAKER_THRESHOLD", "5")),
+        circuit_breaker_recovery_sec=float(env.get("MCP_CIRCUIT_BREAKER_RECOVERY_SEC", "30")),
+        alert_webhook_url=env.get("MCP_ALERT_WEBHOOK_URL") or None,
     )
+
+
+
+
 
 
 def validate_context(ctx: AppContext) -> None:
@@ -251,3 +323,5 @@ def validate_context(ctx: AppContext) -> None:
         raise RuntimeError("JWKS_URL must be set when MCP_AUTH_TYPE=bearer_jwt")
     if ctx.auth_type == "api_key" and not ctx.api_key_value:
         raise RuntimeError("MCP_API_KEY_VALUE must be set when MCP_AUTH_TYPE=api_key")
+    if ctx.rbac_mode not in ("shadow", "enforce"):
+        raise RuntimeError(f"MCP_RBAC_MODE must be shadow|enforce, got {ctx.rbac_mode!r}")

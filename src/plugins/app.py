@@ -99,18 +99,52 @@ def build_app(ctx):
     else:
         app = mcp.http_app(transport=transport, stateless_http=ctx.mcp_stateless)
         protocol_prefixes = ("/mcp",)
+    # --- Phase 3 Reliability & Telemetry Setup ---
+    from .reliability import (
+        CircuitBreakerRegistry,
+        RateLimitConfig,
+        RateLimiterRegistry,
+        ReliabilityMiddleware,
+    )
+    from .alerts import AlertManager
+    from .dashboard import dashboard_routes
+
+    rate_limit_cfg = RateLimitConfig(
+        max_requests_per_minute=getattr(ctx, "rate_limit_default_rpm", 600),
+        on_exceed="reject",
+    )
+    rate_limiter_registry = RateLimiterRegistry(rate_limit_cfg)
+    circuit_breakers = CircuitBreakerRegistry()
+    alert_manager = AlertManager(getattr(ctx, "alert_webhook_url", None))
+
+    app.state.rate_limiters = rate_limiter_registry
+    app.state.circuit_breakers = circuit_breakers
+    app.state.alert_manager = alert_manager
+
+    # Unauthorized Access Logger
+    from .unauthorized_logger import UnauthorizedLogger, UnauthorizedLoggingMiddleware
+    unauthorized_log_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "unauthorized_access.json.log"
+    unauthorized_logger = UnauthorizedLogger(unauthorized_log_path)
+    app.add_middleware(UnauthorizedLoggingMiddleware, logger=unauthorized_logger)
+
+    # Middleware LIFO ordering (C2 fix): ReliabilityMiddleware registered FIRST -> runs innermost (after IdentityMiddleware)
+    app.add_middleware(ReliabilityMiddleware, rate_limiter_registry=rate_limiter_registry)
     app.add_middleware(TraceCorrelationMiddleware)
+    from .identity import IdentityMiddleware
+    app.add_middleware(IdentityMiddleware)
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
                            protected_prefixes=protocol_prefixes)
     for route in feature_routes():
         app.router.routes.append(route)
+    for route in dashboard_routes():
+        app.router.routes.append(route)
 
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
     setup_observability(app=app, log_file=log_file_path)
     app.state.log_file_path = log_file_path
-
-
+    app.state.unauthorized_log_path = unauthorized_log_path
+    app.state.unauthorized_logger = unauthorized_logger
 
     app.state.ready = False
     app.state.loader = loader
@@ -119,6 +153,26 @@ def build_app(ctx):
     app.state.admin_token = ctx.admin_token
     app.state.jwt_verifier = jwt_verifier
     app.state.onboarding = onboarding
+
+    # --- Supabase & RBAC Phase 0 context state ---
+    app.state.supabase_url = ctx.supabase_url
+    app.state.supabase_key = ctx.supabase_key
+    app.state.superadmin_email = ctx.superadmin_email
+    app.state.rbac_enabled = ctx.rbac_enabled
+    app.state.rbac_mode = ctx.rbac_mode
+    app.state.tenant_header = ctx.tenant_header
+    app.state.workspace_header = ctx.workspace_header
+    app.state.jwks_url = ctx.jwks_url
+    app.state.jwt_issuer = ctx.jwt_issuer
+    app.state.jwt_audience = ctx.jwt_audience
+    app.state.jwt_algorithm = ctx.jwt_algorithm
+
+    if ctx.supabase_url and ctx.supabase_key:
+        from .auth_service import SupabaseAuthService
+        app.state.supabase_auth = SupabaseAuthService(ctx.supabase_url, ctx.supabase_key)
+    else:
+        app.state.supabase_auth = None
+
     # Credentials + per-route auth policies (read by security.enforce)
     app.state.api_key_header = ctx.api_key_header
     app.state.api_key_value = ctx.api_key_value
@@ -140,6 +194,17 @@ def build_app(ctx):
     app.state.mcp_transport = transport
     register_metrics(loader, app)
 
+    # --- Tenancy Store & RBAC Engine (Phase 1 & 2) ---
+    from .tenancy import create_tenancy_store
+    from .tenancy.seeder import seed_tenancy_store_if_empty
+    from .rbac import DecisionCache, PolicyEvaluator
+
+    tenancy_store = create_tenancy_store(ctx)
+    app.state.tenancy_store = tenancy_store
+
+    rbac_cache = DecisionCache(maxsize=getattr(ctx, "rbac_cache_size", 10000), ttl_sec=getattr(ctx, "rbac_cache_ttl", 300.0))
+    policy_evaluator = PolicyEvaluator(store=tenancy_store, cache=rbac_cache)
+    app.state.policy_evaluator = policy_evaluator
 
     original_lifespan = app.router.lifespan_context
     stop_event = threading.Event()
@@ -148,16 +213,25 @@ def build_app(ctx):
     async def lifespan(app_):
         loop = asyncio.get_running_loop()
 
+        # OTel lifespan bootstrap (C3 fix: safe for multi-worker Gunicorn fork)
+        from .telemetry import HAS_OTEL, TelemetryConfig, init_telemetry, shutdown_telemetry
+        if HAS_OTEL and getattr(ctx, "otel_enabled", True):
+            init_telemetry(TelemetryConfig.from_env())
+
+        rate_limiter_registry.start_cleanup_task()
+
         async def _bootstrap():
+            # Initialize tenancy DB and first-start self-seeding
+            try:
+                await tenancy_store.init_db()
+                await seed_tenancy_store_if_empty(tenancy_store, ctx)
+            except Exception as exc:
+                log.error("Failed to initialize or seed tenancy store: %s", exc)
+
             # Runs as a background task so the server accepts requests immediately:
-            # /healthz is live at once and /readyz reports 503 until the initial
-            # load finishes, then 200. Imports are off-loop (bounded by timeout);
-            # registration is on-loop.
             await initial_load(loader, ctx.import_timeout)
             app_.state.ready = True
             log.info("Initial tool load complete (source=local): %s", loader.stats())
-            # Same task continues as the reload drain -- load-then-drain is
-            # sequential, so there is no race on the registry.
             await _reload_drain(loader, reload_q, mcp, ctx.import_timeout, loader_lock)
 
         worker = loop.create_task(_bootstrap())
@@ -170,10 +244,14 @@ def build_app(ctx):
             reload_q.put(None)
             watcher.stop()
             worker.cancel()
-            # CancelledError is a BaseException (not Exception) in py3.8+, so it
-            # must be suppressed explicitly or it escapes the lifespan on shutdown.
+            rate_limiter_registry.stop()
+            if HAS_OTEL:
+                shutdown_telemetry()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await worker
+            with contextlib.suppress(Exception):
+                await tenancy_store.close()
 
     app.router.lifespan_context = lifespan
     return app, mcp
+

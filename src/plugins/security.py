@@ -38,7 +38,9 @@ def build_mcp(ctx) -> Tuple[FastMCP, Optional[JWTVerifier]]:
             issuer=ctx.jwt_issuer,
             audience=ctx.jwt_audience,
             required_scopes=ctx.jwt_required_scopes,
+            algorithm=getattr(ctx, "jwt_algorithm", "ES256"),
         )
+
         return FastMCP(name="Tool Server", auth=auth), auth
     return FastMCP(name="Tool Server"), None
 
@@ -63,6 +65,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(self._protected):
             provided = request.headers.get(self._header, "")
             if not hmac.compare_digest(provided, self._value):
+                request.state.auth_failure_reason = "Invalid API Key header"
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
@@ -70,38 +73,159 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 def _api_key_ok(request) -> bool:
     st = request.app.state
     provided = request.headers.get(getattr(st, "api_key_header", "authorization"), "")
-    return hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
+    ok = hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
+    if not ok:
+        request.state.auth_failure_reason = "Invalid API Key header"
+    return ok
 
 
 async def _jwt_ok(request) -> bool:
+    # 0. Fast-path: Return True if IdentityMiddleware already resolved an authenticated principal
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and getattr(principal, "subject", "anonymous") != "anonymous":
+        return True
+
     verifier = getattr(request.app.state, "jwt_verifier", None)
     if verifier is None:
+        request.state.auth_failure_reason = "bearer_jwt mode active but JWT verifier not configured"
         return False                          # bearer_jwt configured but no verifier → fail closed
     authz = request.headers.get("authorization", "")
-    token = authz[7:] if authz.lower().startswith("bearer ") else ""
-    return bool(token) and (await verifier.verify_token(token)) is not None
+    token = authz[7:].strip() if authz.lower().startswith("bearer ") else ""
+    if not token:
+        request.state.auth_failure_reason = "Missing or malformed Authorization Bearer token"
+        return False
+
+
+    from .identity import token_cache, build_principal_from_claims, current_principal_var
+
+    # 1. Check LRU Cache
+    cached_principal = token_cache.get(token)
+    if cached_principal is not None:
+        request.state.principal = cached_principal
+        current_principal_var.set(cached_principal)
+        return True
+
+    # 2. Verify via FastMCP / PyJWKClient verifier
+    verified_token = await verifier.verify_token(token)
+    if verified_token is None:
+        request.state.auth_failure_reason = "Invalid or expired JWT token signature/claims"
+        return False
+
+    # Extract claims
+    claims = getattr(verified_token, "claims", {}) or {}
+    sub = getattr(verified_token, "subject", "") or claims.get("sub", "anonymous")
+    iss = claims.get("iss") or getattr(request.app.state, "jwt_issuer", "") or "local"
+    email = claims.get("email") or claims.get("user_metadata", {}).get("email", "")
+    exp = claims.get("exp")
+    superadmin_email = getattr(request.app.state, "superadmin_email", "")
+
+    tenant_header_name = getattr(request.app.state, "tenant_header", "X-Tenant-Id")
+    workspace_header_name = getattr(request.app.state, "workspace_header", "X-Workspace-Id")
+    from .identity import sanitize_header_value
+    active_org = sanitize_header_value(request.headers.get(tenant_header_name), "default")
+    active_ws = sanitize_header_value(request.headers.get(workspace_header_name), "default")
+
+    principal = build_principal_from_claims(
+        issuer=iss,
+        subject=sub,
+        org_id=active_org,
+        workspace_id=active_ws,
+        email=email,
+        superadmin_email=superadmin_email,
+    )
+
+    # Store in LRU cache with dynamic TTL (min(300, exp - now))
+    token_cache.set(token, principal, exp_timestamp=exp)
+
+    request.state.principal = principal
+    current_principal_var.set(principal)
+    return True
+
 
 
 async def enforce(request, policy: str):
-    """Apply a per-route auth policy. Returns a 401/503 JSONResponse when denied,
-    else None.
-
-    - ``"none"``  → open.
-    - ``"admin"`` → requires ``MCP_ADMIN_TOKEN`` (same gate as ``/admin/*``).
-    - ``"mcp"``   → requires the MCP credential for the active ``MCP_AUTH_TYPE``:
-      nothing in ``none`` mode, the api key in ``api_key`` mode, a valid JWT in
-      ``bearer_jwt`` mode.
-    """
+    """Apply a per-route auth policy. Returns a 401/403/503 JSONResponse when denied, else None."""
     if policy == "none":
         return None
     if policy == "admin":
-        return admin_denied(request)
+        return await admin_denied(request)
+
+
     mode = getattr(request.app.state, "auth_type", "none")
-    if mode == "api_key":
-        return None if _api_key_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
-    if mode == "bearer_jwt":
-        return None if await _jwt_ok(request) else JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return None                               # none mode: open
+    if mode == "api_key" and not _api_key_ok(request):
+        request.state.auth_failure_reason = getattr(request.state, "auth_failure_reason", "Invalid API key")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if mode == "bearer_jwt" and not await _jwt_ok(request):
+        request.state.auth_failure_reason = getattr(request.state, "auth_failure_reason", "Invalid or missing JWT token")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    # Phase 2: RBAC Policy Engine Check if enabled
+    rbac_enabled = getattr(request.app.state, "rbac_enabled", False)
+    evaluator = getattr(request.app.state, "policy_evaluator", None)
+    principal = getattr(request.state, "principal", None)
+
+    if rbac_enabled and evaluator and principal:
+        from metrics import METRICS
+        METRICS.inc("mcp_authz_evaluations_total")
+
+        path = request.url.path
+        if "/call" in path:
+            action = "tool:call"
+            resource = request.path_params.get("name", "")
+        elif "/tools" in path:
+            action = "tool:list"
+            resource = ""
+        elif "/upstreams" in path:
+            action = "upstream:call"
+            resource = request.path_params.get("server", "")
+        else:
+            action = "tool:call"
+            resource = ""
+
+        eval_res = await evaluator.evaluate(principal, action, resource)
+        if not eval_res.allowed:
+            rbac_mode = getattr(request.app.state, "rbac_mode", "enforce")
+            if rbac_mode == "shadow":
+                # §19: shadow mode evaluates and records but never blocks, so
+                # operators can seed grants from the would-deny log before
+                # flipping to enforce. The warning reaches the rotating file
+                # handler; the audit row is decision='shadow_deny'.
+                METRICS.inc("mcp_authz_shadow_denials_total")
+                log.warning(
+                    "RBAC shadow would-deny: principal=%s action=%s resource=%s decision=%s reason=%s",
+                    principal.principal_id[:12], action, resource, eval_res.decision, eval_res.reason,
+                )
+                store = getattr(request.app.state, "tenancy_store", None)
+                if store is not None:
+                    try:
+                        await store.log_audit(
+                            actor_principal=principal.principal_id, issuer=principal.issuer,
+                            org_id=principal.org_id, action=action, resource=resource,
+                            decision="shadow_deny", detail=eval_res.reason,
+                        )
+                    except Exception as exc:
+                        log.warning("shadow audit write failed: %s", exc)
+                return None
+            METRICS.inc("mcp_authz_denials_total")
+            # §17.7: don't let error codes confirm another tenant's tools exist.
+            # For a specific tool the caller may not see, answer 404 with the same
+            # body an unknown tool returns; the real reason is logged server-side
+            # only. Non-resource denials (e.g. list) stay 403 but without leaking
+            # the internal decision label.
+            log.info(
+                "RBAC deny: principal=%s action=%s resource=%s decision=%s reason=%s",
+                principal.principal_id[:12], action, resource, eval_res.decision, eval_res.reason,
+            )
+            request.state.auth_failure_reason = f"RBAC permission denied: {eval_res.reason}"
+            if action in ("tool:call", "tool:manage") and resource:
+                return JSONResponse(
+                    {"error": f"unknown or disabled tool {resource!r}"}, status_code=404
+                )
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+
+
+    return None
+
 
 
 async def read_guard(request):
@@ -109,13 +233,40 @@ async def read_guard(request):
     return await enforce(request, "mcp")
 
 
-def admin_denied(request):
-    """Return a JSONResponse if the admin request is unauthorized, else None."""
+async def admin_denied(request):
+    """Return a JSONResponse if the admin request is unauthorized, else None.
+    Allows:
+    1. Static MCP_ADMIN_TOKEN via Authorization: Bearer <admin_token> or x-admin-token
+    2. Verified JWT Bearer token with platform_superadmin role or admin permissions
+    """
     token = getattr(request.app.state, "admin_token", "")
-    if not token:
-        return JSONResponse({"error": "admin API disabled (set MCP_ADMIN_TOKEN)"}, status_code=503)
     authz = request.headers.get("authorization", "")
-    provided = authz[7:] if authz.lower().startswith("bearer ") else ""
-    if not hmac.compare_digest(provided, token):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
-    return None
+    provided = (authz[7:].strip() if authz.lower().startswith("bearer ") else request.headers.get("x-admin-token", "").strip()) or request.query_params.get("token", "").strip()
+
+
+    # 1. Match static MCP_ADMIN_TOKEN
+    if token and provided and hmac.compare_digest(provided, token):
+        return None
+
+
+    # 2. Check principal attached by IdentityMiddleware
+    principal = getattr(request.state, "principal", None)
+    if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
+        if await _jwt_ok(request):
+            principal = getattr(request.state, "principal", None)
+
+    if principal and getattr(principal, "subject", "anonymous") != "anonymous":
+        admin_perms = {"platform:admin", "org:admin", "admin:all", "member:manage"}
+        if "platform_superadmin" in principal.roles or any(p in principal.permissions for p in admin_perms):
+            return None
+        request.state.auth_failure_reason = "Insufficient admin role/permissions"
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    if not token:
+        request.state.auth_failure_reason = "Admin API disabled (MCP_ADMIN_TOKEN unset)"
+        return JSONResponse({"error": "admin API disabled (set MCP_ADMIN_TOKEN)"}, status_code=503)
+
+    request.state.auth_failure_reason = "Invalid admin token"
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+

@@ -79,6 +79,13 @@ treated as unset, so the fallback still applies). A missing `config/.env` is fin
 | `MCP_REQUIRE_SIGNED_TOOLS` | `false` | Only load tools listed in a trusted manifest |
 | `MCP_TOOL_MANIFEST` | `tools.manifest.json` | Manifest filename in the tools dir |
 | `MCP_TOOL_SIGNING_KEY` | — | HMAC key; when set, the manifest signature must verify |
+| `MCP_OTEL_ENABLED` | `true` | OpenTelemetry tracing flag |
+| `MCP_OTEL_ENDPOINT` | `http://localhost:4317` | OTLP gRPC exporter target |
+| `MCP_RATE_LIMIT_ENABLED` | `true` | Per-tenant sliding window rate limiter |
+| `MCP_RATE_LIMIT_DEFAULT_RPM` | `600` | Default requests per minute per tenant |
+| `MCP_CIRCUIT_BREAKER_ENABLED` | `true` | 3-state circuit breaker protection |
+| `MCP_CIRCUIT_BREAKER_THRESHOLD` | `5` | Failures before opening circuit |
+| `MCP_ALERT_WEBHOOK_URL` | — | Webhook alert target URL |
 
 ---
 
@@ -91,12 +98,15 @@ treated as unset, so the fallback still applies). A missing `config/.env` is fin
 | GET | `/status` | api_key* | `{ready, auth, stats:{loaded_modules, total_tools, failed_modules, disabled_tools, failures}}` |
 | GET | `/tools` | api_key* | Tool catalog: `[{name, module, description, tags}]` |
 | GET | `/metrics` | api_key* | Prometheus metrics (see §6) |
+| GET | `/admin/dashboard` | admin token | Single-page HTML live reliability & telemetry dashboard |
+| GET | `/admin/dashboard/stream` | admin token | Real-time SSE metric & circuit breaker status stream (max 10 connections) |
 | POST | `/admin/resync` | admin token | Force an immediate Azure sync |
 | POST | `/admin/reload/{name}` | admin token | Reload the module that owns a tool |
 | POST | `/admin/tool/{name}/disable` | admin token | Unregister a tool and keep it unregistered across reloads |
 | POST | `/admin/tool/{name}/enable` | admin token | Re-enable and reload a disabled tool |
 | GET | `/sse` | per `MCP_AUTH_TYPE` | MCP SSE stream (clients connect here) |
 | POST | `/messages/` | per `MCP_AUTH_TYPE` | MCP JSON-RPC channel; the exact URL (with `session_id`) is handed to the client during the SSE handshake — not called by hand |
+
 
 \* `/status`, `/tools`, `/metrics` require the MCP credential in both `api_key` and
 `bearer_jwt` modes (api key or a valid JWT respectively); they are open only in
