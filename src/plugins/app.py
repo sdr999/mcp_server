@@ -55,13 +55,14 @@ def _as_request_endpoint(endpoint):
     return _endpoint
 
 
-def _register_routes(app: FastAPI, routes) -> None:
+def _register_routes(app: FastAPI, routes, skip_paths=frozenset()) -> None:
     """Attach Starlette Route objects to a FastAPI app. Plain routes become
     documented API routes (auto /docs); Mounts/others are appended as-is. The
-    hand-built docs routes are skipped in favour of FastAPI's own."""
+    hand-built docs routes, and any path in ``skip_paths`` (served by a typed
+    router instead), are skipped."""
     for r in routes:
         if isinstance(r, Route):
-            if r.path in _FASTAPI_OWNED_DOCS:
+            if r.path in _FASTAPI_OWNED_DOCS or r.path in skip_paths:
                 continue
             methods = sorted((set(r.methods or {"GET"})) & _HTTP_METHODS) or ["GET"]
             app.add_api_route(r.path, _as_request_endpoint(r.endpoint), methods=methods, name=r.name)
@@ -192,8 +193,14 @@ def build_app(ctx):
     if ctx.auth_type == "api_key":
         app.add_middleware(ApiKeyMiddleware, header=ctx.api_key_header, value=ctx.api_key_value,
                            protected_prefixes=protocol_prefixes)
-    _register_routes(app, feature_routes())
-    _register_routes(app, dashboard_routes())
+    # Typed FastAPI routes (validated bodies + documented schema) take over the
+    # admin tenancy/RBAC endpoints and tool-call; the plain equivalents are
+    # skipped below so they don't double-register.
+    from .api_routes import router as typed_router, TYPED_PATHS
+    app.include_router(typed_router)
+
+    _register_routes(app, feature_routes(), skip_paths=TYPED_PATHS)
+    _register_routes(app, dashboard_routes(), skip_paths=TYPED_PATHS)
 
     # Back-compat convenience endpoints backed by FastAPI's generated schema.
     async def _swagger_alias(request: Request):

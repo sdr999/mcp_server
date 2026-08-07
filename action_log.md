@@ -1,5 +1,29 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-06] Typed FastAPI routes for admin/RBAC + tool-call (first batch)
+
+Converted the highest-value endpoints from plain Starlette handlers to typed
+FastAPI path operations, so they gain **request validation** and a **documented
+OpenAPI schema** (real /docs value, not just endpoint listing).
+
+- New `plugins/api_models.py` — Pydantic models (OrgCreate/OrgOut, Workspace*,
+  MemberBind/MemberOut, ToolGrantCreate/ToolGrantOut, ToolCallRequest/Result).
+- New `plugins/api_routes.py` — an `APIRouter` with typed operations for
+  `/admin/orgs*` (orgs, workspaces, members, tool-grants) and `POST
+  /tools/{name}/call`. They **reuse** `enforce` (auth+RBAC), the cache
+  invalidation helper, and `_serialize_tool_result`, so status codes and response
+  bodies match the original handlers exactly.
+- `app.py` includes the router and skips the plain equivalents (via
+  `TYPED_PATHS`) so nothing double-registers.
+- Result: `/openapi.json` now carries request-body schemas + component models
+  (e.g. `OrgCreate`), and invalid bodies return **422** with field detail.
+  Behavior note: FastAPI validates the body before the endpoint's auth check, so
+  a malformed body can yield 422 before 401 — acceptable since the schema is
+  already public via auto-docs. Valid-body + missing-auth still returns 401.
+- Full suite: **212 passed** (same pre-existing telemetry failure).
+
+---
+
 ## [2026-08-06] Migrate the web layer from Starlette to FastAPI (branch `fastapi-mcp`)
 
 Replaced the Starlette top-level app with **FastAPI** (wrapper approach; FastAPI
