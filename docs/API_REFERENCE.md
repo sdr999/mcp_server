@@ -14,12 +14,29 @@ the typed routes in [`src/plugins/api_routes.py`](../src/plugins/api_routes.py).
 
 ## Conventions
 
+Set these placeholders once, then paste the examples verbatim. Replace the values
+on the right with your own; anything shown as `$NAME` below is a placeholder.
+
 ```bash
+# --- connection ---
 BASE=http://localhost:8000
-# Admin endpoints require the admin token (server started with MCP_ADMIN_TOKEN):
+
+# --- credentials (placeholders — substitute your real values) ---
+export MCP_ADMIN_TOKEN="<your-admin-token>"      # server's MCP_ADMIN_TOKEN
+export JWT="<your-oauth-jwt>"                      # only in bearer_jwt mode
+
+# --- resource placeholders (substitute your ids/names) ---
+ORG="<org_id>"            # e.g. acme
+WORKSPACE="<workspace_id>" # e.g. prod
+PRINCIPAL="<principal_id>" # subject / principal id, e.g. pid_alice
+TOOL="<tool_name>"         # e.g. weather
+UPSTREAM="<upstream_name>" # e.g. billing
+
+# --- reusable header sets ---
 ADM=(-H "Authorization: Bearer $MCP_ADMIN_TOKEN" -H "Content-Type: application/json")
+JSON=(-H "Content-Type: application/json")
 # Multi-tenancy (when MCP_RBAC_ENABLED=true): select the active tenant/workspace.
-TEN=(-H "X-Tenant-Id: acme" -H "X-Workspace-Id: default")
+TEN=(-H "X-Tenant-Id: $ORG" -H "X-Workspace-Id: $WORKSPACE")
 ```
 
 Auth model: `MCP_AUTH_TYPE` = `none` | `api_key` | `bearer_jwt`; the admin API is
@@ -45,9 +62,9 @@ malformed arguments → `400`; unauthenticated → `401`.
   `::test_tool_call_requires_mcp_credential_in_api_key_mode`
 
 ```bash
-curl -X POST "$BASE/tools/weather/call" -H "Content-Type: application/json" \
-  -d '{"arguments": {"city": "Paris"}}'
-# {"tool":"weather","is_error":false,"structured_content":{"result":"Paris: 69.8F"},"content":[...]}
+curl -X POST "$BASE/tools/$TOOL/call" "${JSON[@]}" \
+  -d '{"arguments": {"city": "<city>"}}'
+# {"tool":"<tool_name>","is_error":false,"structured_content":{"result":"..."},"content":[...]}
 ```
 
 ---
@@ -66,10 +83,11 @@ Create / list / delete organizations.
 - **Tested by:** `tests/test_plugins_tenancy.py::test_admin_tenancy_rest_api_crud`
 
 ```bash
-curl "${ADM[@]}" -X POST "$BASE/admin/orgs" -d '{"org_id":"acme","name":"Acme Corp"}'
-# 201 {"org_id":"acme","name":"Acme Corp","status":"active","created_at":...}
-curl "${ADM[@]:0:2}" "$BASE/admin/orgs"                       # 200 [ {...} ]
-curl "${ADM[@]:0:2}" -X DELETE "$BASE/admin/orgs/acme"        # 200 {"message":"...deleted..."}
+curl "${ADM[@]}" -X POST "$BASE/admin/orgs" \
+  -d "{\"org_id\":\"$ORG\",\"name\":\"<display name>\"}"
+# 201 {"org_id":"<org_id>","name":"<display name>","status":"active","created_at":...}
+curl "${ADM[@]:0:2}" "$BASE/admin/orgs"                    # 200 [ {...} ]
+curl "${ADM[@]:0:2}" -X DELETE "$BASE/admin/orgs/$ORG"     # 200 {"message":"...deleted..."}
 ```
 
 ### `POST /admin/orgs/{org}/workspaces` · `GET …/workspaces`
@@ -80,8 +98,8 @@ Create / list workspaces within an org.
 - **Tested by:** `tests/test_plugins_tenancy.py::test_admin_tenancy_rest_api_crud`
 
 ```bash
-curl "${ADM[@]}" -X POST "$BASE/admin/orgs/acme/workspaces" \
-  -d '{"workspace_id":"prod","name":"Production"}'      # 201
+curl "${ADM[@]}" -X POST "$BASE/admin/orgs/$ORG/workspaces" \
+  -d "{\"workspace_id\":\"$WORKSPACE\",\"name\":\"<display name>\"}"   # 201
 ```
 
 ### `POST /admin/orgs/{org}/members` · `GET …/members`
@@ -93,8 +111,9 @@ A role change busts the RBAC decision cache for that principal.
 - **Tested by:** `tests/test_plugins_tenancy.py::test_admin_tenancy_rest_api_crud`
 
 ```bash
-curl "${ADM[@]}" -X POST "$BASE/admin/orgs/acme/members" \
-  -d '{"principal_id":"pid_alice","role":"org_admin","workspace_id":"prod"}'   # 201
+curl "${ADM[@]}" -X POST "$BASE/admin/orgs/$ORG/members" \
+  -d "{\"principal_id\":\"$PRINCIPAL\",\"role\":\"<role>\",\"workspace_id\":\"$WORKSPACE\"}"   # 201
+# <role> is one of: platform_superadmin | org_admin | developer | agent_consumer
 ```
 
 ### `POST /admin/orgs/{org}/tool-grants` · `GET …/tool-grants`
@@ -109,8 +128,9 @@ precedence is **deny-override**. Adding a grant clears the decision cache.
   `::test_grant_match_types_name_tag_owner_all`
 
 ```bash
-curl "${ADM[@]}" -X POST "$BASE/admin/orgs/acme/tool-grants" \
-  -d '{"scope_type":"org","scope_id":"acme","effect":"allow","match_type":"tag","match_value":"finance"}'
+curl "${ADM[@]}" -X POST "$BASE/admin/orgs/$ORG/tool-grants" \
+  -d "{\"scope_type\":\"org\",\"scope_id\":\"$ORG\",\"effect\":\"allow\",\"match_type\":\"tag\",\"match_value\":\"<tag-or-name>\"}"
+# scope_type: principal|org|workspace|role · effect: allow|deny · match_type: name|tag|owner|all
 ```
 
 ---
@@ -133,9 +153,11 @@ source/body → `413`; too many requirements → `400`; name conflict without
 
 ```bash
 curl "${ADM[@]}" -X POST "$BASE/admin/tools/onboard" -d '{
-  "name":"reverse",
-  "source":"from tools_sdk import tool\n@tool()\ndef reverse(text: str) -> str:\n    return text[::-1]\n"
-}'   # 201 (or 202 if held pending)
+  "name":"<tool_name>",
+  "source":"from tools_sdk import tool\n@tool()\ndef <tool_name>(text: str) -> str:\n    return text[::-1]\n",
+  "requirements": [],
+  "overwrite": false
+}'   # 201 (installed) or 202 (held pending)
 ```
 
 ### `POST /admin/tools/validate_source`
@@ -148,8 +170,8 @@ Dry-run: syntax + dependency check and autofix hints, without installing.
 
 ```bash
 curl "${ADM[@]}" -X POST "$BASE/admin/tools/validate_source" \
-  -d '{"source":"from tools_sdk import tool\n@tool()\ndef ping() -> str:\n    return \"pong\"\n"}'
-# 200 {"syntax_ok":true,"tools_found":["ping"], ...}
+  -d '{"source":"from tools_sdk import tool\n@tool()\ndef <tool_name>() -> str:\n    return \"ok\"\n"}'
+# 200 {"syntax_ok":true,"tools_found":["<tool_name>"], ...}
 ```
 
 ### `POST /admin/tools/onboard/accept_proposal`
@@ -181,8 +203,8 @@ error → `502`.
 - **Tested by:** `tests/test_main_server.py::test_upstream_list_tools_and_call`
 
 ```bash
-curl -X POST "$BASE/mcp/upstreams/billing/tools/invoice_lookup/call" \
-  -H "Content-Type: application/json" -d '{"arguments":{"id":"INV-42"}}'
+curl -X POST "$BASE/mcp/upstreams/$UPSTREAM/tools/<remote_tool_name>/call" \
+  "${JSON[@]}" -d '{"arguments":{"<arg>":"<value>"}}'
 ```
 
 ### `POST /admin/mcp/upstreams`
@@ -195,7 +217,8 @@ Register a remote upstream at runtime (admin). Disabled at runtime → `403`.
 
 ```bash
 curl "${ADM[@]}" -X POST "$BASE/admin/mcp/upstreams" \
-  -d '{"name":"search","url":"http://search:8000/sse"}'   # 201
+  -d "{\"name\":\"$UPSTREAM\",\"url\":\"<remote_mcp_url>\"}"   # 201
+# optional auth fields: token | api_key + header_name | token_url + client_id + client_secret | headers
 ```
 
 ### List / remove (no request body — plain routes)
