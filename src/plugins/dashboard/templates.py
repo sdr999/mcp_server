@@ -34,7 +34,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 20px;
       margin-top: 20px;
     }
@@ -52,7 +52,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       margin-bottom: 10px;
     }
     .metric-value {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: bold;
       color: var(--text);
     }
@@ -96,12 +96,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="metric-value" id="server_ready">CONNECTING</div>
     </div>
     <div class="card">
-      <div class="card-title">Active SSE Connections</div>
+      <div class="card-title">Total Spend (USD)</div>
+      <div class="metric-value" id="total_spend">$0.0000</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chaos Engine</div>
+      <div class="metric-value" id="chaos_status">OFF</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Active SSE Clients</div>
       <div class="metric-value" id="sse_clients">- / 10</div>
     </div>
     <div class="card">
-      <div class="card-title">Rate Limiter Default</div>
-      <div class="metric-value" id="rate_limit_rpm">600 RPM</div>
+      <div class="card-title">Prompt Templates</div>
+      <div class="metric-value" id="total_prompts">0</div>
     </div>
   </div>
 
@@ -173,8 +181,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById("total_tools").innerText = (data.total_tools !== undefined) ? data.total_tools : "0";
       document.getElementById("server_ready").innerText = data.ready ? "READY" : "LOADING";
       document.getElementById("server_ready").className = "metric-value";
+      document.getElementById("total_spend").innerText = "$" + (data.total_spend_usd || 0.0).toFixed(4);
+      document.getElementById("chaos_status").innerText = data.chaos_enabled ? "ACTIVE ⚡" : "DISABLED";
+      document.getElementById("chaos_status").style.color = data.chaos_enabled ? "var(--amber)" : "var(--text)";
       document.getElementById("sse_clients").innerText = (data.active_sse_clients || 1) + " / 10";
-      document.getElementById("rate_limit_rpm").innerText = (data.rate_limit_default_rpm || 600) + " RPM";
+      document.getElementById("total_prompts").innerText = data.total_prompts || "0";
 
       // Render Per-Tool Execution table
       const toolsTable = document.getElementById("tools_table");
@@ -217,7 +228,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const kvTable = document.getElementById("kv_table");
       kvTable.innerHTML = "";
       for (const [k, v] of Object.entries(data)) {
-        if (k === "circuit_breakers" || k === "tool_metrics") continue;
+        if (k === "circuit_breakers" || k === "tool_metrics" || k === "cost_summary" || k === "chaos_summary") continue;
         const valStr = (typeof v === "object") ? JSON.stringify(v) : String(v);
         kvTable.innerHTML += '<tr>' +
           '<td class="key-col">' + k + '</td>' +

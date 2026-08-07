@@ -258,3 +258,44 @@ class AutoHealer:
 
         return code, fixes
 
+    def intercept_runtime_failure(
+        self,
+        tool_name: str,
+        traceback_str: str,
+        source_code: Optional[str] = None,
+    ) -> Optional[HealResult]:
+        """Intercepts a runtime execution failure traceback, diagnoses the error, and proposes AST code fixes."""
+        if not source_code:
+            return None
+
+        heal_result = self.heal_source(source_code, name=tool_name)
+
+        # Check for specific traceback error patterns
+        missing_module = re.search(r"No module named ['\"]([^'\"]+)['\"]", traceback_str)
+        if missing_module:
+            mod = missing_module.group(1)
+            pkg = IMPORT_TO_PACKAGE.get(mod.lower(), mod)
+            if pkg not in heal_result.suggested_requirements:
+                heal_result.suggested_requirements.append(pkg)
+                heal_result.fixes_applied.append(f"Inferred PyPI dependency '{pkg}' for missing module '{mod}'.")
+                heal_result.has_autofix = True
+
+        name_error = re.search(r"name ['\"]([^'\"]+)['\"] is not defined", traceback_str)
+        if name_error:
+            missing_name = name_error.group(1)
+            symbol_map = {
+                "json": "import json",
+                "re": "import re",
+                "math": "import math",
+                "Path": "from pathlib import Path",
+                "List": "from typing import List",
+                "Dict": "from typing import Dict",
+            }
+            if missing_name in symbol_map and symbol_map[missing_name] not in heal_result.corrected_source:
+                heal_result.corrected_source = f"{symbol_map[missing_name]}\n" + heal_result.corrected_source
+                heal_result.fixes_applied.append(f"Auto-imported missing runtime symbol '{missing_name}'.")
+                heal_result.has_autofix = True
+
+        return heal_result
+
+

@@ -62,20 +62,29 @@ def generate_span_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+
 class SecretMaskingFilter(logging.Filter):
+
     """Filter that masks sensitive tokens, passwords, and authorization headers."""
+
+    def mask_text(self, text: str) -> str:
+        if not isinstance(text, str):
+            text = str(text or "")
+        return BEARER_PATTERN.sub(r"\1[REDACTED]", text)
+
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
-            record.msg = BEARER_PATTERN.sub(r"\1[REDACTED]", record.msg)
+            record.msg = self.mask_text(record.msg)
         if isinstance(record.args, dict):
             record.args = self._redact_dict(record.args)
         elif isinstance(record.args, tuple):
             record.args = tuple(
-                BEARER_PATTERN.sub(r"\1[REDACTED]", str(arg)) if isinstance(arg, str) else arg
+                self.mask_text(str(arg)) if isinstance(arg, str) else arg
                 for arg in record.args
             )
         return True
+
 
     def _redact_dict(self, data: dict) -> dict:
         redacted = {}
