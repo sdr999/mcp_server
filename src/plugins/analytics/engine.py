@@ -88,6 +88,10 @@ class AnalyticsConfig:
     success_lane: int = 20_000
     error_lane: int = 2_000
     min_samples: int = 20           # suppress percentiles/trends below this
+    sink: str = "memory"            # memory | jsonl
+    result_ttl_seconds: int = 604800
+    jsonl_path: Optional[str] = None
+    redact_keys: tuple = ("token", "password", "secret", "authorization", "api_key")
 
     @classmethod
     def from_env(cls) -> "AnalyticsConfig":
@@ -104,6 +108,17 @@ class AnalyticsConfig:
             result_max_bytes=_int_env("MCP_ANALYTICS_RESULT_MAX_BYTES", 4096, 64, 1_048_576),
             capture_content=_bool_env("MCP_ANALYTICS_CAPTURE_CONTENT", False),
             success_sample_rate=_float_env("MCP_ANALYTICS_SUCCESS_SAMPLE_RATE", 0.0),
+            sink=(os.environ.get("MCP_ANALYTICS_SINK", "memory").strip().lower()
+                  if os.environ.get("MCP_ANALYTICS_SINK", "memory").strip().lower() in ("memory", "jsonl")
+                  else "memory"),
+            result_ttl_seconds=_int_env("MCP_ANALYTICS_RESULT_TTL_SECONDS", 604800, 60, 31_536_000),
+            jsonl_path=os.environ.get("MCP_ANALYTICS_JSONL_PATH"),
+            redact_keys=tuple(
+                k.strip().lower() for k in
+                os.environ.get("MCP_ANALYTICS_REDACT_KEYS",
+                               "token,password,secret,authorization,api_key").split(",")
+                if k.strip()
+            ),
         )
 
 
@@ -131,7 +146,13 @@ class AnalyticsEngine:
         self._succ: Deque[Any] = deque(maxlen=self.cfg.success_lane)
         self._err: Deque[Any] = deque(maxlen=self.cfg.error_lane)
         self._tools: LRUMap[ToolRollup] = LRUMap(self.cfg.max_tools, ToolRollup)
-        self._results: Deque[dict] = deque(maxlen=self.cfg.max_results)
+        from .sink import build_sink, hmac_secret_from_env, redact, token_fingerprint
+        self._sink = build_sink(self.cfg.sink, max_results=self.cfg.max_results,
+                                ttl_seconds=self.cfg.result_ttl_seconds, path=self.cfg.jsonl_path)
+        self._hmac_secret = hmac_secret_from_env()
+        self._redact = redact
+        self._fingerprint = token_fingerprint
+        self._redact_keys = set(self.cfg.redact_keys)
         self._callers = HyperLogLog(p=10)
         self._started_at = time.time()
         self._total_calls = 0
@@ -185,6 +206,8 @@ class AnalyticsEngine:
         self._stop = True
         with contextlib.suppress(Exception):
             self._flush_once()  # final synchronous flush so no error record is lost
+        with contextlib.suppress(Exception):
+            self._sink.close()  # rotate/persist durable sink
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -267,10 +290,12 @@ class AnalyticsEngine:
                 "error_msg": (str(event.error)[:512] if event.error else None),
                 "org_id": getattr(p, "org_id", None),
                 "kind": getattr(p, "kind", None),
+                "caller_fp": self._fingerprint(getattr(p, "principal_id", None), self._hmac_secret),
             }
             if self.cfg.capture_content and event.result is not None:
-                row["result_excerpt"] = self._safe_excerpt(event.result)
-            self._results.append(row)
+                excerpt = self._redact(event.result, self._redact_keys)
+                row["result_excerpt"] = self._safe_excerpt(excerpt)
+            self._sink.append(row)
             self._sink_fail_streak = 0
         except Exception:
             self.sink_errors += 1
@@ -297,17 +322,7 @@ class AnalyticsEngine:
     # -- read side ---------------------------------------------------------
     def get_results(self, tool: str = "", errors_only: bool = False,
                     cursor: int = 0, limit: int = 50) -> dict:
-        with self._lock:
-            rows = list(self._results)
-        if tool:
-            rows = [r for r in rows if r["tool"] == tool]
-        if errors_only:
-            rows = [r for r in rows if not r["ok"]]
-        rows.reverse()  # newest first
-        limit = max(1, min(500, limit))
-        page = rows[cursor:cursor + limit]
-        nxt = cursor + limit if cursor + limit < len(rows) else None
-        return {"total": len(rows), "cursor": cursor, "next_cursor": nxt, "results": page}
+        return self._sink.query(tool=tool, errors_only=errors_only, cursor=cursor, limit=limit)
 
     def get_stats(self) -> dict:
         now = time.time()

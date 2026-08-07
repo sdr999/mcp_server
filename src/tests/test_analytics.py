@@ -162,6 +162,69 @@ def test_error_lane_reserved_under_success_flood():
     assert eng.get_stats()["tools"]["t"]["errors"] == 10
 
 
+# -- Phase C: durable sink, redaction, HMAC fingerprint --------------------
+
+def test_redaction_nested_and_value_patterns():
+    from plugins.analytics.sink import redact
+    keys = {"password", "token"}
+    out = redact({
+        "user": "alice",
+        "password": "hunter2",
+        "nested": {"token": "abc", "note": "Bearer sk-ABCDEFGHIJKLMNOP12345"},
+        "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+    }, keys)
+    assert out["password"] == "***"
+    assert out["nested"]["token"] == "***"
+    assert "***" in out["nested"]["note"]     # value-pattern redaction
+    assert "***" in out["jwt"]
+    assert out["user"] == "alice"
+
+
+def test_hmac_fingerprint_keyed_and_stable():
+    from plugins.analytics.sink import token_fingerprint
+    s1, s2 = b"secret-1", b"secret-2"
+    fp = token_fingerprint("principal-xyz", s1)
+    assert fp == token_fingerprint("principal-xyz", s1)   # stable per key
+    assert fp != token_fingerprint("principal-xyz", s2)   # keyed -> differs by secret
+    assert token_fingerprint(None, s1) is None
+    assert len(fp) == 12
+
+
+def test_jsonl_sink_durability_and_query(tmp_path):
+    from plugins.analytics.sink import JsonlResultSink
+    p = tmp_path / "results.jsonl"
+    sink = JsonlResultSink(str(p), max_results=100, ttl_seconds=3600)
+    for i in range(5):
+        sink.append({"ts": time.time(), "tool": "t", "ok": i % 2 == 0})
+    assert p.exists() and len(p.read_text().strip().splitlines()) == 5   # durable
+    page = sink.query(errors_only=True)
+    assert page["total"] == 2 and all(not r["ok"] for r in page["results"])
+
+
+def test_engine_capture_content_off_by_default():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1))
+    eng.subscribe()
+    emit(_ev("t", ok=False, dur=0.01, err=ValueError("boom")))
+    _drain(eng)
+    rows = eng.get_results()["results"]
+    assert len(rows) == 1
+    assert "result_excerpt" not in rows[0]      # bodies OFF by default
+    assert rows[0]["error_type"] == "ValueError"  # metadata still captured
+    assert "caller_fp" in rows[0]
+
+
+def test_results_pagination():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1))
+    eng.subscribe()
+    for _ in range(10):
+        emit(_ev("t", ok=False, dur=0.01, err=RuntimeError("x")))
+    _drain(eng)
+    p1 = eng.get_results(limit=4, cursor=0)
+    assert len(p1["results"]) == 4 and p1["next_cursor"] == 4
+    p3 = eng.get_results(limit=4, cursor=8)
+    assert len(p3["results"]) == 2 and p3["next_cursor"] is None
+
+
 # -- failure isolation -----------------------------------------------------
 
 def test_sink_failure_never_breaks_and_trips_breaker(monkeypatch):
@@ -217,6 +280,56 @@ def test_hyperloglog_approximates():
 
 
 # -- lifecycle -------------------------------------------------------------
+
+# -- R1 spike: does the authenticated principal reach the tool wrapper? -----
+
+def test_r1_identity_reaches_wrapper_http(tmp_path):
+    """Phase-0 gate: capture the principal the wrapper observes on the HTTP
+    /tools/{name}/call path. Determines whether caller-dimension metrics are
+    viable (Phase D) or need explicit principal threading."""
+    import sys
+    from pathlib import Path
+    from plugins.app import build_app
+    from plugins.config import AppContext
+    from starlette.testclient import TestClient
+
+    SRC = str(Path(__file__).resolve().parent.parent)
+    d = tmp_path / "an_pkg"
+    d.mkdir()
+    (d / "__init__.py").write_text("")
+    (d / "echo.py").write_text("def echo(msg: str) -> str:\n    return msg\n")
+    sys.path.insert(0, SRC)
+    sys.path.insert(0, str(tmp_path))
+    ctx = AppContext(
+        base_dir=Path(SRC), tools_dir=d, env={}, auth_type="none",
+        api_key_header="authorization", api_key_value="", jwks_url="",
+        jwt_issuer=None, jwt_audience=None, jwt_required_scopes=None, host="127.0.0.1", port=0,
+        import_timeout=30, metrics_enabled=True, sandbox=False, sandbox_timeout=30,
+        sandbox_mem_mb=0, sandbox_cpu_sec=0, admin_token="mysecretadmin",
+        require_signed=False, manifest_name="tools.manifest.json", signing_key=None,
+        onboard_enabled=True, onboard_autoinstall=True, onboard_network_check=False,
+        onboard_network_timeout=3.0, onboard_install_timeout=30.0,
+        onboard_allowlist_path=None, onboard_denylist_path=None,
+    )
+
+    seen = {}
+    observer.subscribe(lambda ev: seen.update(principal=ev.principal))
+
+    app, _ = build_app(ctx)
+    with TestClient(app) as client:
+        for _ in range(50):
+            if client.get("/readyz").status_code == 200:
+                break
+            time.sleep(0.1)
+        r = client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}},
+                        headers={"Authorization": "Bearer mysecretadmin"})
+        assert r.status_code == 200
+
+    p = seen.get("principal")
+    assert p is not None, "wrapper saw no principal at all"
+    assert getattr(p, "subject", None) == "admin-token", (
+        f"identity did not propagate to wrapper: saw subject={getattr(p,'subject',None)!r}")
+
 
 def test_start_and_stop_drain():
     async def run():
