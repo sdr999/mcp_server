@@ -133,6 +133,13 @@ def build_app(ctx):
     prompt_repository = PromptRepository()
     ab_test_manager = ABTestManager()
 
+    # Analytics plugin (no hard dependency): consumes tool events via the neutral
+    # observer seam. Subscribe once here so hot-reload can't leak subscriptions.
+    from .analytics import AnalyticsEngine, analytics_routes
+    analytics = AnalyticsEngine.from_env(ctx)
+    app.state.analytics = analytics
+    analytics.subscribe()
+
     app.state.cost_tracker = cost_tracker
     app.state.chaos_engine = chaos_engine
     app.state.log_search_index = log_search_index
@@ -165,6 +172,8 @@ def build_app(ctx):
     for route in intelligence_routes():
         app.router.routes.append(route)
     for route in prompt_routes():
+        app.router.routes.append(route)
+    for route in analytics_routes():
         app.router.routes.append(route)
 
 
@@ -247,6 +256,7 @@ def build_app(ctx):
             init_telemetry(TelemetryConfig.from_env())
 
         rate_limiter_registry.start_cleanup_task()
+        analytics.start()  # background drain task (owned by the lifespan)
 
         async def _bootstrap():
             # Initialize tenancy DB and first-start self-seeding
@@ -273,6 +283,9 @@ def build_app(ctx):
             watcher.stop()
             worker.cancel()
             rate_limiter_registry.stop()
+            with contextlib.suppress(Exception):
+                await analytics.stop()  # drain-and-flush: no error record is lost
+
             if HAS_OTEL:
                 shutdown_telemetry()
             with contextlib.suppress(asyncio.CancelledError, Exception):

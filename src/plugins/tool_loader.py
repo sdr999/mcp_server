@@ -189,8 +189,12 @@ class ToolLoader:
         @functools.wraps(original)
         async def wrapper(**kwargs):
             from .telemetry import tool_execution_span
+            from .observer import emit, ToolEvent
             start = time.perf_counter()
             METRICS.inc("mcp_tool_calls_total", tool=tool_name)
+            ok = False
+            err: Exception | None = None
+            result = None
 
             # Self-Healing Input Type Coercion (convert string arguments to int/bool/float if typed)
             with contextlib.suppress(Exception):
@@ -209,17 +213,29 @@ class ToolLoader:
             with tool_execution_span(tool_name, sandbox_engine="docker" if sandbox else "none"):
                 try:
                     if sandbox:
-                        return await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
-                    result = original(**kwargs)
-                    if inspect.isawaitable(result):
-                        result = await result
+                        result = await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
+                    else:
+                        result = original(**kwargs)
+                        if inspect.isawaitable(result):
+                            result = await result
+                    ok = True
                     return result
 
-                except Exception:
+                except Exception as exc:
                     METRICS.inc("mcp_tool_errors_total", tool=tool_name)
+                    err = exc
                     raise
                 finally:
-                    METRICS.observe("mcp_tool_duration_seconds", time.perf_counter() - start, tool=tool_name)
+                    dur = time.perf_counter() - start
+                    METRICS.observe("mcp_tool_duration_seconds", dur, tool=tool_name)
+                    # Analytics plane: emit through the neutral seam (no-op if
+                    # unsubscribed; never raises into the call). Principal may be
+                    # blank on the /mcp path until the identity-propagation fix.
+                    with contextlib.suppress(Exception):
+                        from .identity import get_current_principal
+                        emit(ToolEvent(tool=tool_name, duration=dur, ok=ok, error=err,
+                                       result=result if ok else None,
+                                       principal=get_current_principal()))
 
         return wrapper
 

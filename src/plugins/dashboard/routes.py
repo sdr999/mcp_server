@@ -38,6 +38,8 @@ def _build_dashboard_summary(request) -> dict:
     chaos_summary = chaos_engine.get_stats() if chaos_engine else {}
     prompt_repo = getattr(st, "prompt_repository", None)
     prompts_count = len(prompt_repo.list_prompts()) if prompt_repo else 0
+    analytics = getattr(st, "analytics", None)
+    analytics_summary = analytics.get_stats() if analytics else {}
 
     return {
         "server_status": "READY" if getattr(st, "ready", False) else "LOADING",
@@ -57,6 +59,7 @@ def _build_dashboard_summary(request) -> dict:
         "tool_metrics": tool_metrics,
         "cost_summary": cost_summary,
         "chaos_summary": chaos_summary,
+        "analytics": analytics_summary,
     }
 
 
