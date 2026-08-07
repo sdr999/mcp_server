@@ -17,6 +17,7 @@ Pick a starting point by what you're trying to do.
 | Run / configure `src/main.py` (local server) | [MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md) |
 | Run / configure the Azure-backed server + all shared features | [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) |
 | Configure Multi-Tenancy, RBAC & ABAC policy rules | [MULTI_TENANCY_RBAC_GUIDE.md](MULTI_TENANCY_RBAC_GUIDE.md) |
+| Look up an HTTP endpoint: usage + code + tests | [API_REFERENCE.md](API_REFERENCE.md) |
 | Secure the server (API key / OAuth-JWT) and connect a client | [MCP_AUTH_GUIDE.md](MCP_AUTH_GUIDE.md) |
 
 
