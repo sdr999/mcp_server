@@ -108,3 +108,21 @@ class ToolCallResult(BaseModel):
     is_error: bool
     structured_content: Optional[Any] = None
     content: List[Any] = Field(default_factory=list)
+
+
+# --- Federation (remote MCP upstreams) ------------------------------------
+class UpstreamToolCallRequest(BaseModel):
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Remote tool arguments")
+
+
+class UpstreamAddRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    url: str = Field(..., min_length=1, description="Remote MCP server URL")
+    token: Optional[str] = Field(None, description="Bearer/OAuth token")
+    api_key: Optional[str] = None
+    header_name: Optional[str] = Field(None, description="Header name for the api_key")
+    auth_type: Optional[str] = None
+    headers: Optional[Dict[str, str]] = Field(None, description="Extra custom headers")
+    token_url: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None

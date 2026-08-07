@@ -1,5 +1,17 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-06] Typed FastAPI routes — federation batch
+
+Converted the body-carrying federation endpoints to typed FastAPI:
+- `POST /mcp/upstreams/{server}/tools/{name}/call` (UpstreamToolCallRequest) —
+  reuses `enforce(upstream_auth)`; 404 unknown upstream, 502 UpstreamError.
+- `POST /admin/mcp/upstreams` (UpstreamAddRequest) — admin-gated; 403 when
+  runtime changes disabled; registers the upstream and returns 201.
+- The no-body list/tools/remove routes stay plain (still in /docs).
+- Full suite: **212 passed** (pre-existing telemetry failure unchanged).
+
+---
+
 ## [2026-08-06] Typed FastAPI routes — onboarding batch
 
 Converted the body-carrying onboarding endpoints to typed FastAPI path

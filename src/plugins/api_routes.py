@@ -25,6 +25,8 @@ from .api_models import (
     ToolCallResult,
     ToolGrantCreate,
     ToolGrantOut,
+    UpstreamAddRequest,
+    UpstreamToolCallRequest,
     ValidateSourceRequest,
     WorkspaceCreate,
     WorkspaceOut,
@@ -43,6 +45,8 @@ TYPED_PATHS = {
     "/admin/tools/onboard",
     "/admin/tools/onboard/accept_proposal",
     "/admin/tools/validate_source",
+    "/mcp/upstreams/{server}/tools/{name}/call",
+    "/admin/mcp/upstreams",
 }
 
 router = APIRouter()
@@ -244,6 +248,42 @@ async def accept_proposal(body: AcceptProposalRequest, request: Request):
         return JSONResponse(record, status_code=201)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+# --- Federation (remote MCP upstreams) ------------------------------------
+@router.post("/mcp/upstreams/{server}/tools/{name}/call", tags=["federation"])
+async def call_upstream_tool(server: str, name: str, body: UpstreamToolCallRequest, request: Request):
+    """Call a tool on a remote MCP upstream. 404 unknown upstream, 502 upstream error."""
+    st = request.app.state
+    if (denied := await enforce(request, st.upstream_auth)) is not None:
+        return denied
+    from .upstreams import UpstreamError
+    try:
+        result = await st.upstreams.call_tool(server, name, body.arguments)
+    except KeyError:
+        return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
+    except UpstreamError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse(result)
+
+
+@router.post("/admin/mcp/upstreams", status_code=201, tags=["admin: federation"])
+async def add_upstream(body: UpstreamAddRequest, request: Request):
+    """Register a remote MCP upstream at runtime (admin)."""
+    if (denied := await enforce(request, "admin")) is not None:
+        return denied
+    st = request.app.state
+    if not st.upstreams.allow_runtime:
+        return JSONResponse(
+            {"error": "runtime upstream changes are disabled (MCP_UPSTREAM_ALLOW_RUNTIME=false)"}, status_code=403
+        )
+    st.upstreams.add(
+        body.name, body.url,
+        token=body.token, api_key=body.api_key, header_name=body.header_name,
+        auth_type=body.auth_type, headers=body.headers, token_url=body.token_url,
+        client_id=body.client_id, client_secret=body.client_secret,
+    )
+    return JSONResponse({"status": "added", "upstream": body.name}, status_code=201)
 
 
 # --- Tool execution --------------------------------------------------------
