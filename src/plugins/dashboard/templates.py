@@ -149,6 +149,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </table>
     <div class="card-title" style="font-size:12px;margin-top:14px;">Calls by Hour (UTC)</div>
     <div id="an_heatmap" style="display:flex;gap:2px;align-items:flex-end;height:44px;"></div>
+
+    <div class="card-title" style="font-size:12px;margin-top:14px;">
+      Caller Attribution <span id="an_coverage" style="color:var(--muted);font-weight:normal;"></span>
+    </div>
+    <div id="an_callers" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;"></div>
   </div>
 
   <div class="grid">
@@ -275,6 +280,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             Math.max(3, pct) + '%;background:var(--green);opacity:' +
             (0.25 + 0.75 * c / mx).toFixed(2) + ';border-radius:2px;"></div>';
         }).join("");
+
+        // Caller attribution (only meaningful with real identity — P10)
+        const cal = an.callers || {};
+        const cov = cal.identity_coverage_percent || 0;
+        document.getElementById("an_coverage").innerText =
+          "— " + cov + "% of calls attributed (" + (cal.attributed_calls || 0) + ")";
+        const callersEl = document.getElementById("an_callers");
+        if (cov <= 0) {
+          callersEl.innerHTML = '<div style="color:var(--muted);font-size:12px;">' +
+            'No attributed calls yet — traffic is anonymous. Caller cards populate ' +
+            'once authenticated calls arrive.</div>';
+        } else {
+          const kindRows = Object.entries(cal.by_kind || {})
+            .map(([k, v]) => '<tr><td class="key-col">' + k + '</td><td>' + v + '</td></tr>').join("");
+          callersEl.innerHTML =
+            '<div><div class="card-title" style="font-size:12px;">👤 By Agent Kind</div><table><tbody>' +
+              (kindRows || '<tr><td>—</td></tr>') + '</tbody></table></div>' +
+            '<div><div class="card-title" style="font-size:12px;">🏢 By Org</div><table><tbody>' +
+              fmtRows(cal.by_org) + '</tbody></table></div>' +
+            '<div><div class="card-title" style="font-size:12px;">🔑 Top Callers (fp)</div><table><tbody>' +
+              fmtRows(cal.top_callers) + '</tbody></table></div>';
+        }
+      }
+      function fmtRows(rows) {
+        if (!rows || rows.length === 0) return '<tr><td>—</td></tr>';
+        return rows.map(r => '<tr><td class="key-col">' + r.name + '</td><td>' + r.value + '</td></tr>').join("");
       }
 
       // Render Circuit Breaker table

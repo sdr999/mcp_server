@@ -146,6 +146,53 @@ def test_hour_heatmap_present():
     assert len(hm) == 24 and sum(hm) == 1
 
 
+# -- Phase D: caller-dimension attribution ---------------------------------
+
+class _P:
+    """Minimal principal stand-in for tests."""
+    def __init__(self, pid, subject, org="acme", kind="agent"):
+        self.principal_id, self.subject, self.org_id, self.kind = pid, subject, org, kind
+        self.workspace_id = "default"
+
+
+def test_caller_dimension_attribution():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1))
+    eng.subscribe()
+    for _ in range(6):
+        emit(_ev("t", ok=True, dur=0.01, principal=_P("pid-alice", "alice", "acme", "agent")))
+    for _ in range(4):
+        emit(_ev("t", ok=True, dur=0.01, principal=_P("pid-bob", "bob", "globex", "user")))
+    _drain(eng)
+    c = eng.get_stats()["callers"]
+    assert c["identity_coverage_percent"] == 100.0
+    assert c["attributed_calls"] == 10
+    assert c["by_kind"] == {"agent": 6, "user": 4}
+    orgs = {r["name"]: r["value"] for r in c["by_org"]}
+    assert orgs["acme"] == 6 and orgs["globex"] == 4
+    assert len(c["top_callers"]) == 2      # two distinct fingerprints
+
+
+def test_anonymous_calls_not_attributed():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1))
+    eng.subscribe()
+    emit(_ev("t", ok=True, dur=0.01, principal=_P("pid-anon", "anonymous", "default", "user")))
+    emit(_ev("t", ok=True, dur=0.01, principal=None))
+    _drain(eng)
+    c = eng.get_stats()["callers"]
+    assert c["attributed_calls"] == 0          # anonymous + none -> unattributed
+    assert c["identity_coverage_percent"] == 0.0
+    assert c["top_callers"] == []              # gate holds (P10)
+
+
+def test_orgs_dimension_bounded():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1, max_orgs=3))
+    eng.subscribe()
+    for i in range(10):
+        emit(_ev("t", ok=True, dur=0.01, principal=_P(f"pid{i}", f"s{i}", f"org{i}", "user")))
+    _drain(eng)
+    assert eng.get_stats()["callers"]["orgs_tracked"] <= 3
+
+
 # -- backpressure: errors are never dropped for successes ------------------
 
 def test_error_lane_reserved_under_success_flood():

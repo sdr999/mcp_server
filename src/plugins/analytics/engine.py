@@ -80,6 +80,8 @@ class AnalyticsConfig:
     window_seconds: int = 60
     buckets: int = 60               # -> 1h sparkline at 1min buckets
     max_tools: int = 500
+    max_orgs: int = 200
+    max_callers: int = 1000
     max_results: int = 1000
     result_max_bytes: int = 4096
     capture_content: bool = False   # bodies OFF by default (data governance)
@@ -104,6 +106,8 @@ class AnalyticsConfig:
             window_seconds=_int_env("MCP_ANALYTICS_WINDOW_SECONDS", 60, 1, 3600),
             buckets=_int_env("MCP_ANALYTICS_BUCKETS", 60, 2, 1440),
             max_tools=_int_env("MCP_ANALYTICS_MAX_TOOLS", 500, 1, 100_000),
+            max_orgs=_int_env("MCP_ANALYTICS_MAX_ORGS", 200, 1, 100_000),
+            max_callers=_int_env("MCP_ANALYTICS_MAX_CALLERS", 1000, 1, 1_000_000),
             max_results=_int_env("MCP_ANALYTICS_RESULTS_MAX", 1000, 0, 1_000_000),
             result_max_bytes=_int_env("MCP_ANALYTICS_RESULT_MAX_BYTES", 4096, 64, 1_048_576),
             capture_content=_bool_env("MCP_ANALYTICS_CAPTURE_CONTENT", False),
@@ -157,7 +161,14 @@ class AnalyticsEngine:
         self._started_at = time.time()
         self._total_calls = 0
         self._total_errors = 0
+        self._attributed_calls = 0   # calls with a non-anonymous principal
         self._hour_hist = [0] * 24   # calls by UTC hour-of-day
+        # caller-dimension rollups (Phase D). Bounded so a large tenant base
+        # cannot OOM the process. Only populated when identity is present.
+        self._orgs: LRUMap[dict] = LRUMap(self.cfg.max_orgs, lambda: {"calls": 0, "errors": 0})
+        self._caller_map: LRUMap[dict] = LRUMap(
+            self.cfg.max_callers, lambda: {"calls": 0, "errors": 0, "org": None, "kind": None})
+        self._kinds: Dict[str, int] = {}
         # self-metrics
         self.dropped_success = 0
         self.dropped_error = 0
@@ -262,10 +273,30 @@ class AnalyticsEngine:
                         b[2] += 1
                 else:
                     r.series.append([bucket, 1, 0 if event.ok else 1])
-                # unique callers (approximate, bounded)
-                pid = getattr(event.principal, "principal_id", None)
+                # caller-dimension rollups (bounded). org/kind for all traffic;
+                # per-caller only for authenticated (non-anonymous) principals.
+                p = event.principal
+                pid = getattr(p, "principal_id", None)
                 if pid:
-                    self._callers.add(pid)
+                    self._callers.add(pid)                 # unique-caller HLL
+                org = getattr(p, "org_id", None) or "unknown"
+                kind = getattr(p, "kind", None) or "unknown"
+                if kind in self._kinds or len(self._kinds) < 20:
+                    self._kinds[kind] = self._kinds.get(kind, 0) + 1
+                ob = self._orgs.get_or_create(org)
+                ob["calls"] += 1
+                if not event.ok:
+                    ob["errors"] += 1
+                subject = getattr(p, "subject", None)
+                if subject and subject != "anonymous":
+                    self._attributed_calls += 1
+                    fp = self._fingerprint(pid, self._hmac_secret) or "unknown"
+                    cb = self._caller_map.get_or_create(fp)
+                    cb["calls"] += 1
+                    cb["org"] = org
+                    cb["kind"] = kind
+                    if not event.ok:
+                        cb["errors"] += 1
             if not event.ok:
                 self._capture_result(event, ms)
             elif self.cfg.success_sample_rate > 0:
@@ -362,6 +393,18 @@ class AnalyticsEngine:
                     trending.append((name, trend))
             uptime = now - self._started_at
             cpm = (self._total_calls / uptime * 60.0) if uptime > 0 else 0.0
+            # caller-dimension view (P10: only meaningful with real identity)
+            coverage = (self._attributed_calls / self._total_calls * 100.0) if self._total_calls else 0.0
+            by_org = self._top([(k, v["calls"]) for k, v in self._orgs.items()], 5)
+            top_callers = self._top([(k[:12], v["calls"]) for k, v in self._caller_map.items()], 5)
+            callers_block = {
+                "identity_coverage_percent": round(coverage, 1),
+                "attributed_calls": self._attributed_calls,
+                "by_kind": dict(self._kinds),
+                "by_org": by_org,
+                "top_callers": top_callers,
+                "orgs_tracked": len(self._orgs),
+            }
             return {
                 "enabled": self.cfg.enabled,
                 "scope": self.cfg.scope,
@@ -372,6 +415,7 @@ class AnalyticsEngine:
                 "tools_tracked": len(self._tools),
                 "unique_callers_approx": self._callers.count(),
                 "hour_heatmap": list(self._hour_hist),
+                "callers": callers_block,
                 "tools": tools,
                 "leaderboards": {
                     "most_called": self._top(leaderboard_calls, 5),

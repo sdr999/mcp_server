@@ -86,6 +86,30 @@ stable), JSONL durability + query, content-off-by-default, results pagination.
 
 ---
 
+## Phase D — caller-dimension attribution
+**Commit:** _(this change)_ · **Tests:** +3 · suite 250 passed.
+
+- `engine.py` — bounded caller rollups (LRU-capped orgs + callers, `MAX_ORGS`/
+  `MAX_CALLERS`; small `by_kind` map, P6). `_apply` records org/kind for all
+  traffic and per-caller (HMAC fingerprint) only for **authenticated**
+  (non-anonymous) principals. `get_stats` adds a `callers` block:
+  `identity_coverage_percent`, `attributed_calls`, `by_kind`, `by_org`,
+  `top_callers` (opaque fp), `orgs_tracked`.
+- `dashboard/templates.py` — "Caller Attribution" cards (by agent kind / by org /
+  top callers) with a coverage line. **Gated (P10):** when coverage is 0 the cards
+  are replaced by an explanatory note rather than shipping empty/misleading data.
+- Grounded by the R1 finding: identity reaches the wrapper on the HTTP path, so
+  attribution is real there. `/mcp` cluster attribution still pending an MCP-client
+  verification; the `scope` badge already declares process-vs-cluster honestly.
+- Tests: attribution counts + coverage, anonymous-not-attributed (gate holds),
+  org dimension bounded.
+
+**Cluster scope (shared backend) — deferred:** the `scope=cluster` shared-state
+backend (Redis/store) is documented and declared but not implemented in this
+increment (needs infra not available here). The honesty guard — process-scope
+badge + `analytics_scope` in every payload — is shipped, so no configuration
+presents partial data as global.
+
 ## Status vs plan
 | Phase | State |
 |---|---|
@@ -93,11 +117,11 @@ stable), JSONL durability + query, content-off-by-default, results pagination.
 | A hardened tool-dimension analytics | ✅ |
 | B percentiles + heatmap + dashboard | ✅ |
 | C durable sinks + redaction + HMAC | ✅ |
-| D cluster scope + caller-dimension cards | ⬜ (unblocked by R1 on HTTP) |
+| D caller-dimension cards | ✅ (HTTP); cluster shared-backend deferred |
 
 ## Test summary
-- Analytics suite: **24 tests**, all passing.
-- Full suite: **247 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
+- Analytics suite: **27 tests**, all passing.
+- Full suite: **250 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
   pre-existing and environmental (OpenTelemetry not installed); confirmed to fail
   with these changes stashed.
 
