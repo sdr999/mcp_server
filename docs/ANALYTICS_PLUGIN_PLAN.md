@@ -391,24 +391,36 @@ problem and the per-worker limitation.
 pluggable backends as tenancy** and reads are **RBAC-scoped**. Independent of Phase E
 and can land first — it directly answers "where is the data saved + who can see it".
 
-### 1. `AnalyticsStore` abstraction (mirrors `tenancy/base.py`)
-Abstract async interface: `init_db()`, `append(row)`, `query(filter, scope, cursor,
-limit)`, `purge_expired(cutoff)`, `close()`. Backends reuse the tenancy pattern
-verbatim (`plugins/tenancy/__init__.py::register_backend`):
+### 1. Reuse the tenancy store (default) — don't build a parallel DB stack
+The tenancy backends already own a DB handle and create their tables/collections in
+`init_db()` (sqlite: `_get_conn()` → `db_path`, tables `organizations`/`audit`/…;
+mongo: shared `self._db`, per-collection indexes). Analytics reuses **that same
+physical database, connection/handle, config, and RBAC pattern** — it only adds one
+`analytics_results` table/collection alongside the existing ones.
 
-| Backend | Module | Notes |
+- **Boundary:** reuse everything *except* the `audit` table. Analytics rows are
+  higher-volume and a different schema; overloading the transactional RBAC audit
+  table is exactly what review R3 forbids. Separate table/collection, same DB.
+- **How, without bloating the `TenancyStore` ABC:** an optional `AnalyticsCapable`
+  **mixin/protocol** — `append_analytics(row)`, `query_analytics(org_scope, filter,
+  cursor, limit)`, `purge_analytics(cutoff)` — implemented by the sqlite / mongo /
+  json / memory backends. The core ABC stays clean; the engine checks the capability
+  and falls back to the in-proc/jsonl sink if the store doesn't advertise it.
+- **Wiring:** `MCP_ANALYTICS_STORE=tenancy` (**new default**) hands
+  `app.state.tenancy_store` to the engine as its sink — one DB to operate, one
+  connection pool, cross-replica correctness via Mongo for free, and org-scoped reads
+  reusing the proven `query_audit(org_id=…)` `WHERE org_id = ?` pattern.
+
+| `MCP_ANALYTICS_STORE` | Storage | When |
 |---|---|---|
-| `memory` | in-proc deque (default, zero-config) | dev / ephemeral |
-| `json` | append file | small single-node |
-| `sqlite` | one table `analytics_results` | **recommended single-node durable** |
-| `mongodb` | one collection + **TTL index** | multi-replica, cross-worker durable |
-| `<module.path:Factory>` | custom spec | Postgres / ClickHouse / S3 — "any more" without core changes |
+| `tenancy` (**default**) | same DB as tenancy, `analytics_results` table/collection | reuse — one datastore, RBAC + cross-replica inherited |
+| `memory` | in-proc deque | dev / ephemeral |
+| `jsonl` | flat file (current sink) | zero-DB single-node |
+| `sqlite` / `mongodb` | **own** DB via `MCP_ANALYTICS_DSN` | scale: isolate analytics write load from the RBAC DB |
+| `<module.path:Factory>` | custom (Postgres/ClickHouse/S3) | "any more", via the tenancy `register_backend` spec mechanism |
 
-Config mirrors tenancy: `MCP_ANALYTICS_STORE=memory|json|sqlite|mongodb|<spec>`
-(default `memory`); DSN/db reuse — `MCP_ANALYTICS_DSN` falling back to the tenancy
-`MCP_TENANCY_DSN`/`MONGODB_URI`, plus `MCP_ANALYTICS_DB_NAME`. **Rows go to a separate
-table/collection, never the RBAC `log_audit` table** (keeps review R3). Ops configure
-one database; analytics is just another namespace in it.
+So the escape hatch stays: point analytics at a **separate DSN** when its write volume
+shouldn't contend with the RBAC database — same code path, different connection.
 
 ### 2. RBAC scoping on reads (the core ask)
 Rows already carry `org_id` (+ `kind`, HMAC `caller_fp`). Reads enforce tenant
