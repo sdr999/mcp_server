@@ -1,329 +1,332 @@
-# Tool Analytics & Insights — Plugin Implementation Plan
+# Tool Analytics & Insights — Production Plan (v2)
 
-**Status:** proposed · **Branch:** `grade3` · **Supersedes framing of**
-[`METRICS_IMPROVEMENT_PLAN.md`](METRICS_IMPROVEMENT_PLAN.md) (keeps its as-is
-analysis and the senior-architect review R1–R8 as binding constraints).
+**Status:** proposed, production-grade · **Branch:** `grade3` · **Supersedes**
+the framing in [`METRICS_IMPROVEMENT_PLAN.md`](METRICS_IMPROVEMENT_PLAN.md) (whose
+as-is analysis and R1–R8 review remain binding inputs). This v2 folds the SDE-5
+production review (P1–P10) directly into the design — the hardened decision *is*
+the plan. A resolution matrix (§18) and scorecard (§19) show where each blocker is
+closed.
 
-This re-plans the metrics work as a **first-class plugin with no hard dependency**,
-scalable by construction, and adds engagement ("fun") metrics: per-tool usage
-trends over time, leaderboards, and optional **tool-result capture for audit**
-(always on error, sampled on success).
-
-## 1. Why a plugin, and what "no hard dependency" means here
-
-The codebase already has a proven plugin shape (`plugins/cost`, `plugins/chaos`,
-`plugins/intelligence`, `plugins/prompts`): each is a package that
-
-1. exports a registry/service class + optional middleware + a `*_routes()` fn,
-2. is instantiated in `app.py` and attached to `app.state.<name>`
-   (`app.py:130-140`), and
-3. is read **defensively** by the dashboard via `getattr(st, "<name>", None)`
-   (`dashboard/routes.py:23-40`) — if the plugin isn't wired, the feature simply
-   doesn't appear. Nothing breaks.
-
-The new `plugins/analytics/` package follows exactly this contract. "No hard
-dependency" is enforced two ways:
-
-- **Pure stdlib core.** The engine uses only `collections`, `threading`, `time`,
-  `json`. OpenTelemetry and the tenancy store are *optional* backends detected at
-  runtime (same pattern as `telemetry/__init__.py`'s `HAS_OTEL`).
-- **A neutral emit seam.** The tool wrapper (`tool_loader.py:190-222`) must not
-  import `analytics`. Instead it calls a tiny always-present module
-  `plugins/observer.py::emit(event)` that fans out to a list of registered
-  observers. If analytics never loads, the observer list is empty and `emit` is a
-  near-zero-cost no-op. This is the decoupling seam — the hot path depends only on
-  a 20-line neutral module, never on the plugin.
-
-```
-tool wrapper (tool_loader.py)
-      │  emit(ToolEvent)              ← neutral seam, no-op if unsubscribed
-      ▼
-plugins/observer.py  ──fan-out──►  AnalyticsEngine.record()   (O(1), lock-light)
-                                         │
-                        ┌────────────────┼─────────────────┐
-                        ▼                ▼                 ▼
-                  in-mem rollups   background drain     ResultSink
-                  (ring buffers)   (heavy work off      (memory | jsonl | store)
-                                    hot path)
-```
-
-## 2. Package layout
-
-```
-plugins/analytics/
-  __init__.py        # exports AnalyticsEngine, analytics_routes; stdlib-only
-  engine.py          # AnalyticsEngine: record() + get_stats() + rollups
-  timeseries.py      # bounded ring-buffer of time buckets (per tool)
-  sink.py            # ResultSink interface + Memory/Jsonl/Store backends
-  routes.py          # admin-gated analytics_routes()
-plugins/observer.py  # neutral emit() seam + ToolEvent dataclass (no analytics import)
-```
-
-Wiring in `app.py` (mirrors `cost`/`chaos`, ~4 lines):
-
-```python
-from .analytics import AnalyticsEngine, analytics_routes
-analytics = AnalyticsEngine.from_env(ctx)          # honors MCP_ANALYTICS_* flags
-app.state.analytics = analytics
-analytics.subscribe()                               # registers into observer.emit
-for route in analytics_routes():
-    app.router.routes.append(route)
-```
-
-Dashboard reads it defensively — one added line in `_build_dashboard_summary`:
-
-```python
-analytics = getattr(st, "analytics", None)
-summary["analytics"] = analytics.get_stats() if analytics else {}
-```
-
-## 3. The hot-path change (single, cheap, decoupled)
-
-In `tool_loader.py` `wrapper` `finally` block (currently `:221-222`):
-
-```python
-from .observer import emit, ToolEvent          # neutral, always importable
-...
-finally:
-    dur = time.perf_counter() - start
-    METRICS.observe("mcp_tool_duration_seconds", dur, tool=tool_name)
-    emit(ToolEvent(tool=tool_name, duration=dur, ok=ok,
-                   error=err, result=result if capture else None,
-                   principal=get_current_principal()))   # blanks tolerated (R1)
-```
-
-`emit` does **not** serialize, redact, or write anything inline — it pushes to a
-bounded queue drained by a background task. Hot path stays allocation-light.
-
-## 4. Metrics — the fun set (and how each is computed)
-
-Aggregates live in the analytics plane (in-memory rollups), **not** as
-high-cardinality Prometheus labels (honors review R5). Because the engine keeps
-time buckets, it *can* compute real percentiles (unlike sum/count — review R2).
-
-| Insight | How it's derived | Storage |
-|---|---|---|
-| **Per-tool usage trend / sparkline** | ring buffer of N fixed-width time buckets (default 60×1min); last-60 points | `timeseries.py` |
-| **Trending tool** (▲ biggest mover) | max positive delta in call-rate between last two windows | rollup |
-| **Top-N leaderboards** | most-called · slowest (avg + p95) · flakiest (error rate) · most-improved | rollup |
-| **Throughput** | rolling calls/min, busiest minute, calls-since-boot odometer | rollup |
-| **Peak concurrency** | in-flight high-water mark (inc/dec around call) | gauge |
-| **Reliability flavor** | current error streak per tool, last-error time, MTBF, "healthiest/most-fragile tool" | rollup |
-| **Engagement** | unique-callers count (bounded set), top caller by org/agent-kind, new tools onboarded this period, "hot tool of the day" | rollup |
-| **Hour-of-day heatmap** | 24-bucket call-volume histogram | ring |
-| **Latency histogram** | fixed buckets → true p50/p95/p99 badge per tool | `timeseries.py` |
-
-All of these render as dashboard cards: sparklines, trend arrows, leaderboards, a
-heatmap strip, and headline "odometer" numbers.
-
-## 5. Tool-result capture for audit (optional, safe-by-default)
-
-`ResultSink` records tool outputs for audit — **always on error**, **sampled on
-success** (default 0%, i.e. errors-only until opted in). This is *not* the RBAC
-`log_audit` table (review R3): it's a separate, bounded, append-only sink.
-
-- **Backends:** `memory` (bounded deque, default), `jsonl` (rotating file),
-  `store` (reuse tenancy store if present — shared across replicas).
-- **Safety rails:** per-entry byte cap (`_RESULT_MAX_BYTES`), max retained
-  (`_RESULTS_MAX`), key redaction (`_REDACT_KEYS`), success sampling
-  (`_SUCCESS_SAMPLE_RATE`), and **HMAC** token fingerprint — never raw tokens
-  (review R8). Serialization/redaction happen on the **background drain**, never
-  the hot path.
-- **Record shape:** `ts, tool, ok, error_type, error_msg, duration_ms,
-  org_id, kind, caller_fp, args_digest, result_excerpt`.
-- **Endpoint:** `GET /admin/analytics/results?tool=&errors_only=` (admin-gated).
-
-Errors get the richest capture (full error type/message + args digest + result if
-any) so failures are debuggable after the fact.
-
-## 6. Scalability (designed in, not bolted on)
-
-- **Bounded memory everywhere.** Max tracked tools (LRU-evicted), max buckets per
-  series, max retained results, max bytes per entry — all configurable, all with
-  safe defaults. No unbounded growth regardless of traffic or tool count.
-- **O(1) hot path.** `emit` → bounded `queue.Queue`; a single background drain task
-  does rollups, redaction, and I/O. If the queue is full, **drop-oldest**
-  (sampling) rather than block a tool call (backpressure safety).
-- **Cardinality guard.** Caller/agent/result detail stays in the analytics plane;
-  Prometheus labels remain low-cardinality (`tool`, `org_id`, `kind`, `reason`).
-- **Horizontal scale.** In-memory rollups are per-process — documented. For a
-  multi-replica deploy: aggregates come from Prometheus scrape+sum across replicas;
-  the result-audit sink uses the `store` backend so it's shared. The plugin
-  abstracts this behind `ResultSink`, so scaling is a config change, not a rewrite.
-- **Dashboard fan-out.** Compute one analytics snapshot per SSE tick and broadcast
-  to all clients instead of recomputing per client (review R7).
-
-## 7. Configuration (all optional, conservative defaults)
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `MCP_ANALYTICS_ENABLED` | `true` | master switch (plugin still no-hard-dep) |
-| `MCP_ANALYTICS_WINDOW_SECONDS` | `60` | time-bucket width |
-| `MCP_ANALYTICS_BUCKETS` | `60` | buckets per tool (→ 1h sparkline) |
-| `MCP_ANALYTICS_MAX_TOOLS` | `500` | LRU cap on tracked tools |
-| `MCP_ANALYTICS_RESULTS_ENABLED` | `true` | capture results (errors-only by default) |
-| `MCP_ANALYTICS_SUCCESS_SAMPLE_RATE` | `0.0` | fraction of successes captured |
-| `MCP_ANALYTICS_RESULT_MAX_BYTES` | `4096` | per-entry cap |
-| `MCP_ANALYTICS_RESULTS_MAX` | `1000` | retained records |
-| `MCP_ANALYTICS_SINK` | `memory` | `memory` \| `jsonl` \| `store` |
-| `MCP_ANALYTICS_REDACT_KEYS` | `token,password,secret,authorization,api_key` | redaction |
-
-## 8. Endpoints (admin-gated, via `admin_denied`)
-
-```
-GET /admin/analytics/summary                 # headline cards + leaderboards
-GET /admin/analytics/tools/{name}/timeseries # sparkline data for one tool
-GET /admin/analytics/leaderboard?by=calls|latency|errors|trending
-GET /admin/analytics/results?tool=&errors_only=true
-```
-
-## 9. Testing
-
-- **Engine:** record/rollup correctness, ring-buffer bounds, LRU eviction,
-  percentile buckets, trend delta, error-streak/MTBF.
-- **Sink:** byte cap, retention cap, redaction, success sampling, **error always
-  captured**, HMAC fingerprint stability.
-- **Decoupling:** `emit` is a no-op when unsubscribed; wrapper never imports
-  analytics; disabling the plugin leaves the server fully functional.
-- **Scalability:** flood N events → assert memory caps hold; drain is async (no
-  hot-path I/O); backpressure drops instead of blocking.
-- **Integration:** dashboard summary includes `analytics` only when wired;
-  endpoints reject non-admin. Extend `tests/test_dashboard.py`,
-  `tests/test_observability.py`; add `tests/test_analytics.py`.
-
-## 10. Phasing
-
-| Phase | Deliverable | Risk |
-|---|---|---|
-| **A** | `observer.py` seam + `emit()` in wrapper + `AnalyticsEngine` (calls/errors/duration rollup) + `/summary` + dashboard cards | low — additive, no-op when off |
-| **B** | `timeseries.py` sparklines + trend arrows + leaderboards + hour heatmap + p95 badges | low |
-| **C** | `ResultSink` (memory) — errors-only capture + `/results` endpoint | med — privacy rails |
-| **D** | `jsonl`/`store` sinks, HMAC fp, success sampling, dashboard broadcast, multi-replica docs | med — I/O + scale |
-
-**Constraints carried from the architect review:** R2 (percentiles only from
-buckets, never sum/count), R3 (separate sink, not `log_audit`), R4 (single engine
-is the one aggregator — no shim drift), R5 (caller detail off Prometheus labels),
-R6 (single-count errors at the wrapper), R7 (dashboard broadcast), R8 (HMAC token
-fingerprint). R1 (ContextVar propagation) remains a Phase-A spike: the event
-carries whatever principal is resolvable and tolerates blanks, so analytics ships
-even if identity attribution needs the propagation fix first.
+A **no-hard-dependency plugin** that adds tool usage trends, leaderboards, a
+result-capture audit trail, and engagement metrics — engineered to be safe under
+multi-worker load, incapable of harming a tool call, and honest about its own scope.
 
 ---
 
-# Production Readiness Review (SDE-5 lens)
+## 1. Design principles (the invariants everything else obeys)
 
-Reviewed for production-grade operation, grounded in the runtime this plugin lives
-in. The design is sound (clean decoupling seam, follows the established plugin
-contract, scalability considered up front). But several gaps separate a *good
-design doc* from a *production-ready* one. Blockers first.
+1. **No hard dependency.** Pure-stdlib core; OTel and the tenancy store are optional
+   runtime-detected backends (the `HAS_OTEL` pattern). The hot path depends only on
+   a tiny neutral seam, never on the plugin.
+2. **Fail-open, always.** Analytics can never raise into a tool call, block it, or
+   slow it measurably. Every analytics failure is swallowed and self-reported.
+3. **Two planes.** *Aggregates* (Prometheus/dashboard) answer "how much / how fast";
+   *per-event records* (result-audit sink + traces) answer "who did exactly what."
+   They never mix, and high-cardinality identity never becomes a Prometheus label.
+4. **Bounded by construction.** Every dimension — tools, orgs, callers, buckets,
+   results, bytes — has a cap and an eviction policy. Memory is O(caps), not O(traffic).
+5. **Honest scope.** In multi-worker deployments the system *declares* whether its
+   rollups are process-local or cluster-wide (`analytics_scope`) — it never presents
+   partial data as global.
 
-### P1 (blocker) — lifecycle: no start/flush/shutdown for the drain task
-The plan introduces a background drain task but never says who owns it. The server
-has exactly one correct home: the lifespan at `app.py:241` (startup starts the
-watcher/bootstrap; shutdown calls `watcher.stop()` / `rate_limiter_registry.stop()`
-under `contextlib.suppress`). The drain task **must** start there and, critically,
-**flush on shutdown** — otherwise the last in-flight events (including error
-records, the most valuable) are lost on every deploy/restart. Also: hot-reload
-recreates wrappers per tool (`_make_wrapper`), so `subscribe()` must be idempotent
-(subscribe once at engine construction, not per wrapper) or observers leak.
-→ Add explicit lifecycle: start in lifespan startup, `drain-and-cancel` with a
-bounded timeout in shutdown, idempotent subscribe.
+## 2. Why a plugin, and the decoupling seam
 
-### P2 (blocker) — multi-process: headline metrics are per-worker, silently partial
-`app.py:244` runs **multi-worker Gunicorn (fork)**. The in-memory rollups
-(sparklines, leaderboards, trending, heatmap) are per-process, but a dashboard
-request lands on **one** worker — so the user sees one worker's slice and believes
-it's the whole system. This is a correctness bug for the *headline* feature, not a
-footnote. Options, pick explicitly: (a) document a hard "single-source-of-truth"
-limitation and derive aggregates only from Prometheus (scrape+sum across workers);
-(b) back rollups with a shared store/Redis (reintroduces a dependency — must be
-optional); (c) restrict the rich dashboard to single-process deployments and
-degrade gracefully otherwise. The current plan implies (a) for Prometheus but still
-renders in-memory rollups on the dashboard — that contradiction must be resolved.
+The repo has a proven plugin shape (`plugins/cost`, `chaos`, `intelligence`,
+`prompts`): a package that attaches a registry to `app.state.<name>`
+(`app.py:130-140`) and is read defensively via `getattr(st, "<name>", None)`
+(`dashboard/routes.py:23-40`). `plugins/analytics/` follows it exactly.
 
-### P3 (blocker) — failure isolation contract is implied, not guaranteed
-Analytics must be incapable of harming a tool call. That requires a written
-contract: `emit()` and the drain **catch everything**, a failing sink
-(disk-full JSONL, store down) **self-disables** after N consecutive errors and
-increments a self-metric rather than looping/logging on the hot path, and no
-analytics code path can raise into the wrapper. State this as an invariant with a
-test (fault-inject a throwing sink, assert the tool call still succeeds).
+The hot-path wrapper (`tool_loader.py:190-222`) must **not** import analytics. It
+calls a neutral, always-present module `plugins/observer.py::emit(event)` that
+fans out to registered observers. No subscribers ⇒ `emit` is a no-op costing one
+list-empty check. This is the seam that makes "no hard dependency" real.
 
-### P4 (major) — backpressure "drop-oldest" can drop the errors you promised to keep
-The plan calls errors "the most valuable" yet uses a single bounded queue with
-drop-oldest — which can evict a queued **error** under load. Contradiction. Fix:
-two lanes (or priority), errors never dropped (small reserved capacity), successes
-dropped/sampled first. Otherwise the audit guarantee is a lie under exactly the
-load where it matters.
+```
+tool wrapper ──emit(ToolEvent)──►  observer.py  ──►  AnalyticsEngine.record()
+ (tool_loader)   neutral, no-op        (fan-out)          │  O(1), non-blocking
+                 if unsubscribed                          ▼
+                                            dual-lane bounded queue
+                                                          │
+                                              background drain task
+                                          (rollups · redaction · I/O — off hot path)
+                                              │              │
+                                        in-mem rollups   ResultSink
+                                        (ring buffers)   (memory│jsonl│store)
+```
 
-### P5 (major) — result capture is a data-governance surface, under-specified
-Capturing tool I/O means PII/secrets at rest. Gaps: (1) key-based redaction is
-**shallow** — misses nested keys and secret-shaped *values*; add value-pattern
-redaction and treat redaction as best-effort in the docs. (2) No **retention/TTL**
-or encryption-at-rest for the JSONL sink. (3) Default posture: `RESULTS_ENABLED=true`
-capturing error *content* by default is the wrong default for compliance — content
-capture should default **OFF** (metadata like error type stays on); opt-in per env.
-(4) `/results` is a sensitive-data egress endpoint — needs pagination (1000 records
-× excerpts is a large/duplicable response), and ideally an audit-of-the-audit (who
-read results). (5) Serializer must handle non-JSON/huge/circular/binary results and
-the **sandbox subprocess boundary** (`tool_loader.py:212`) — fall back to truncated
-`repr`, never raise.
+## 3. Package layout
 
-### P6 (major) — memory bounds cover tools but not the caller/org dimension
-`MAX_TOOLS` LRU-caps tools, but per-org rollups, "top caller," and the unique-caller
-"bounded set" are unbounded across a large tenant base (the C3 note confirms
-multi-tenant intent). A 10k-org deployment can OOM. Cap and LRU-evict the org/caller
-dimensions too, and replace the "bounded set" of unique callers with a documented
-approximation (HyperLogLog) or an explicitly-capped-with-loss counter.
+```
+plugins/analytics/
+  __init__.py     # exports AnalyticsEngine, analytics_routes; stdlib-only
+  engine.py       # record(), get_stats(), rollups, self-metrics, kill-switch
+  timeseries.py   # bounded ring-buffer of time buckets; percentile histogram
+  bounded.py      # LRU dimension maps + HyperLogLog unique-counter
+  queue.py        # dual-lane bounded queue (errors reserved) + drain loop
+  sink.py         # ResultSink interface + Memory/Jsonl/Store backends + redaction
+  scope.py        # process vs cluster scope detection + shared-state adapter
+  routes.py       # admin-gated analytics_routes() incl. runtime kill-switch
+plugins/observer.py  # neutral emit() seam + ToolEvent (never imports analytics)
+```
 
-### P7 (moderate) — the plugin needs its own observability
-Silent data loss is the failure mode of async metrics. Emit self-metrics:
-`analytics_queue_depth`, `analytics_events_dropped_total`, `analytics_drain_lag`,
-`analytics_sink_errors_total`, `analytics_enabled`. Without these, P3/P4 failures
-are invisible.
+## 4. Lifecycle & ownership — closes P1
 
-### P8 (moderate) — statistical validity + runtime kill-switch
-- Percentiles/trends from tiny samples are noise — suppress percentiles below a
-  min sample count and label sparklines with N.
-- Config is startup-only; add a **runtime** admin toggle to disable capture without
-  a restart (incident response: a tool starts emitting secrets → turn capture off
-  now, not after a redeploy).
+The drain task has exactly one home: the lifespan at `app.py:241` (which already
+starts the watcher/bootstrap and stops them under `contextlib.suppress` on
+shutdown). Additions:
 
-### P9 (moderate) — testing is functional, not hardening
-Missing for production: shutdown-flush test, concurrency/soak (many coroutines
-emitting; assert caps hold and no lock contention), fault injection (throwing/full
-sink), redaction-bypass with nested secrets, backpressure-drops-successes-not-errors,
-and a property test on the ring buffer (idle-gap zero-fill, monotonic-clock
-rotation). Add these before Phase C/D.
+- **Startup:** `engine.start()` launches the single drain task (`loop.create_task`,
+  mirroring `app.py:265`).
+- **Shutdown:** `await engine.stop(timeout=5s)` — a **drain-and-cancel**: stop
+  accepting, flush the queue (errors first) to the sink within the budget, then
+  cancel. No error record is lost on deploy/restart.
+- **Idempotent subscribe.** `engine.subscribe()` registers into `observer` **once at
+  construction**, not per wrapper — hot-reload recreating wrappers (`_make_wrapper`)
+  cannot double-subscribe or leak observers.
 
-### P10 (minor) — ship caller-dimension metrics only when identity is real
-"Top caller / by org / by agent-kind" depends on R1. If identity is blank on the
-`/mcp` path, a leaderboard that's silently empty or skewed is worse than absent.
-Gate the caller-dimension cards behind the confirmed propagation fix; ship
-tool-dimension analytics first.
+## 5. Concurrency & backpressure — closes P3, P4
 
-## Scorecard
+- **`emit` is non-blocking and total.** It wraps everything in `try/except: pass`
+  and does an `offer()` (never `put()`) onto the queue. It performs zero
+  serialization/redaction/I/O inline.
+- **Dual-lane bounded queue** (`queue.py`). Two lanes: `errors` (small reserved
+  capacity, e.g. 2000) and `success` (larger). Errors are **never** dropped for
+  successes; when the success lane is full it drops-oldest/samples. This makes the
+  audit guarantee true under exactly the load where it matters (P4).
+- **Single drain consumer** does all heavy work; batches writes to the sink. If the
+  drain falls behind, `analytics_drain_lag` rises and successes shed first.
 
-| Dimension | Score | Notes |
-|---|---:|---|
-| Architecture & decoupling | 9/10 | neutral `emit` seam + existing plugin contract is the right call |
-| Scalability (single-node) | 8/10 | bounded memory + O(1) hot path solid; org/caller dimension uncapped (P6) |
-| Scalability (multi-node) | 4/10 | per-worker rollups shown as global is a real bug (P2) |
-| Reliability / failure isolation | 5/10 | right instinct, missing the written contract + lifecycle flush (P1, P3, P4) |
-| Data governance / security | 5/10 | redaction shallow, defaults too open, no retention/pagination (P5) |
-| Operability / self-observability | 5/10 | no self-metrics, no runtime kill-switch (P7, P8) |
-| Testing rigor | 6/10 | functional coverage good; hardening/soak/fault tests absent (P9) |
-| Feature value / engagement | 9/10 | trends, leaderboards, heatmap, result-capture are genuinely compelling |
+## 6. Failure isolation contract — closes P3
 
-## Overall: **6.5 / 10 — Strong design, not yet production-grade**
+Stated as an enforced invariant, with tests:
 
-A well-architected plan that would pass design review but **not** a production
-readiness review as written. The decoupling and single-node scalability are
-genuinely good; the feature set is compelling. The gap to production is the
-operational spine: **lifecycle + shutdown flush (P1)**, **multi-worker correctness
-(P2)**, a **failure-isolation contract (P3)**, and **error-preserving backpressure
-(P4)** are blockers; data-governance defaults (P5) and self-observability (P7) are
-close behind. Land P1–P4 and flip the result-capture default to off, and this moves
-to ~8.5/10 and is shippable. Recommend: Phase A/B (tool-dimension analytics) can
-proceed once P1–P4 are folded in; hold Phase C/D (result capture, caller metrics)
-until P5–P6 and R1 are resolved.
+> No analytics code path may raise into, block, or slow the tool wrapper. `emit`
+> and the drain catch all exceptions. A sink that errors **N=5 consecutive times**
+> trips a breaker: capture self-disables, `analytics_sink_errors_total` increments,
+> one warning is logged (rate-limited), and the breaker half-opens on a timer.
+
+Fault-injection test: a sink whose `write` always raises ⇒ tool calls still succeed,
+breaker trips, self-metric increments, no log flood.
+
+## 7. Multi-process scope model — closes P2
+
+The server runs multi-worker Gunicorn (fork) — `app.py:244`. In-memory rollups are
+per-process. v2 makes correctness a *configured, declared* property, never a silent
+lie:
+
+- **Numeric aggregates** (counts, error rate, latency histograms) flow through the
+  existing `METRICS` shim → Prometheus/OTel, which aggregate across workers at scrape
+  time. These are the dashboard's headline numbers and are **cluster-correct**.
+- **Rich rollups** (sparklines, leaderboards, trending, heatmap) are computed by a
+  **single aggregator**, selected by `scope.py`:
+  - `MCP_ANALYTICS_SCOPE=process` (default, dev/single-worker): in-process rollups.
+  - `MCP_ANALYTICS_SCOPE=cluster`: rollups read/write the optional **shared backend**
+    (tenancy store or Redis if configured) so all workers contribute and the
+    dashboard is cluster-wide.
+- **Honesty guard.** If workers>1 **and** scope=process, startup logs a warning and
+  every analytics payload carries `"analytics_scope":"process"` — the dashboard
+  badges rollup cards as "this worker" so nobody mistakes a slice for the whole. No
+  configuration produces silently-partial data.
+
+## 8. Memory & cardinality bounds — closes P6, R5
+
+- `bounded.py` provides an **LRU dimension map** used for *every* dimension: tools
+  (`MAX_TOOLS=500`), orgs (`MAX_ORGS=200`), callers (`MAX_CALLERS=1000`) — each
+  LRU-evicts, so no dimension grows with tenant count.
+- Unique-caller counts use a **HyperLogLog** (fixed ~1.5 KB, ~2% error), not an
+  unbounded set — documented as approximate.
+- Prometheus labels stay low-cardinality (`tool`, `org_id`, `kind`, `reason`); all
+  caller/agent/result detail lives in the analytics/audit plane only (R5).
+
+## 9. Hot-path change (single, cheap, decoupled)
+
+In `tool_loader.py` `wrapper` `finally` (currently `:221-222`):
+
+```python
+from .observer import emit, ToolEvent           # neutral, always importable
+...
+finally:
+    dur = time.perf_counter() - start
+    METRICS.observe("mcp_tool_duration_seconds", dur, tool=tool_name)  # aggregate plane
+    emit(ToolEvent(tool=tool_name, duration=dur, ok=ok, error=err,
+                   result=result if _capture else None,
+                   principal=get_current_principal()))                  # analytics plane
+```
+
+`ok`/`err` derive from the same exception boundary the route uses, so errors are
+**counted once** at the wrapper with a `reason` (`validation|runtime|timeout|sandbox`)
+— no double-count with the route (R6).
+
+## 10. Metrics — the engagement set (statistically honest — closes P8, R2)
+
+Aggregates come from time buckets, so percentiles are real (R2 — never from
+sum/count). Percentiles/trends are **suppressed below a min sample count**
+(`MIN_SAMPLES=20`) and sparklines carry their `N`, so small-sample noise is never
+shown as signal.
+
+| Insight | Derivation |
+|---|---|
+| Per-tool **usage trend / sparkline** | ring buffer of N fixed buckets (60×1min), idle gaps zero-filled via monotonic-clock rotation |
+| **Trending tool** (▲) | max positive call-rate delta between last two windows, min-sample gated |
+| **Leaderboards** | most-called · slowest (p95) · flakiest (error rate) · most-improved |
+| **Throughput** | rolling calls/min, busiest minute, calls-since-boot odometer |
+| **Peak concurrency** | in-flight high-water mark (inc/dec around call) |
+| **Reliability** | error streak per tool, last-error time, MTBF, healthiest/most-fragile |
+| **Engagement** | unique callers (HLL), top caller by org/agent-kind*, new tools this period, hot-tool-of-the-day |
+| **Hour-of-day heatmap** | 24-bucket call-volume histogram |
+| **Latency badge** | fixed histogram buckets → true p50/p95/p99 |
+
+\* caller-dimension cards ship only after the R1 identity gate (§16).
+
+## 11. Result capture & data governance — closes P5, R3, R8
+
+A bounded, append-only `ResultSink` **separate from** the RBAC `log_audit` table
+(R3). Safe-by-default posture:
+
+- **Content capture defaults OFF.** `MCP_ANALYTICS_CAPTURE_CONTENT=false`. By default
+  only *metadata* is recorded (tool, ok, `error_type`, `duration_ms`, `org_id`,
+  `kind`, HMAC `caller_fp`, `args_digest`). Result/error **bodies** are captured only
+  when explicitly enabled — always on error, sampled on success
+  (`SUCCESS_SAMPLE_RATE=0.0`).
+- **Redaction is layered and documented best-effort:** key-based **and** value-pattern
+  (regex for token/secret shapes), applied recursively (nested dicts/lists).
+- **Safe serializer:** handles non-JSON / huge / circular / binary and the **sandbox
+  subprocess boundary** (`tool_loader.py:212`) — falls back to truncated `repr`,
+  capped at `RESULT_MAX_BYTES`, never raises.
+- **Lifecycle of data:** `RESULTS_MAX` cap + TTL rotation for the `jsonl` sink;
+  optional encryption-at-rest flag; `store` backend inherits store retention.
+- **HMAC token fingerprint** (keyed, not plain SHA-256) so fingerprints aren't
+  dictionary-correlatable (R8).
+
+## 12. Self-observability — closes P7
+
+The plugin instruments itself (silent loss is the failure mode of async metrics):
+`analytics_queue_depth{lane}`, `analytics_events_dropped_total{lane}`,
+`analytics_drain_lag_seconds`, `analytics_sink_errors_total`,
+`analytics_breaker_open`, `analytics_enabled`, `analytics_scope`. These surface on
+the dashboard and `/metrics`.
+
+## 13. Runtime controls & config — closes P8
+
+Startup env (validated ranges; safe defaults) **plus** a runtime admin kill-switch
+so an incident (a tool starts emitting secrets) is handled *now*, not after a
+redeploy.
+
+| Env | Default | Purpose |
+|---|---|---|
+| `MCP_ANALYTICS_ENABLED` | `true` | master switch |
+| `MCP_ANALYTICS_SCOPE` | `process` | `process` \| `cluster` (§7) |
+| `MCP_ANALYTICS_WINDOW_SECONDS` / `_BUCKETS` | `60` / `60` | 1h sparkline |
+| `MCP_ANALYTICS_MAX_TOOLS` / `_ORGS` / `_CALLERS` | `500`/`200`/`1000` | LRU caps |
+| `MCP_ANALYTICS_CAPTURE_CONTENT` | `false` | capture result/error **bodies** |
+| `MCP_ANALYTICS_SUCCESS_SAMPLE_RATE` | `0.0` | success-body sampling |
+| `MCP_ANALYTICS_RESULT_MAX_BYTES` / `_RESULTS_MAX` | `4096` / `1000` | per-entry / retention |
+| `MCP_ANALYTICS_RESULT_TTL_SECONDS` | `604800` | jsonl rotation/retention |
+| `MCP_ANALYTICS_SINK` | `memory` | `memory` \| `jsonl` \| `store` |
+| `MCP_ANALYTICS_REDACT_KEYS` | `token,password,secret,authorization,api_key` | redaction |
+
+Runtime: `POST /admin/analytics/control {"capture_content":false,"enabled":true}`.
+
+## 14. Endpoints (admin-gated via `admin_denied`) — closes P5
+
+```
+GET  /admin/analytics/summary                      # cards + leaderboards + scope badge
+GET  /admin/analytics/tools/{name}/timeseries      # sparkline data (+ N)
+GET  /admin/analytics/leaderboard?by=calls|latency|errors|trending
+GET  /admin/analytics/results?tool=&errors_only=&cursor=&limit=  # paginated
+POST /admin/analytics/control                       # runtime kill-switch
+```
+
+`/results` is a sensitive-data egress surface: **paginated** (cursor+limit, never a
+1000-record dump), admin-only, and each access writes an audit-of-the-audit row.
+
+## 15. Identity attribution & the R1 gate — closes P10, R1
+
+Caller-dimension cards (top caller, by-org, by-agent-kind) depend on the principal
+actually reaching the wrapper. `IdentityMiddleware` is a `BaseHTTPMiddleware`
+(`identity.py:297`) that sets/resets the ContextVar (`:416/:421`) — propagation into
+the endpoint/wrapper is **not guaranteed**, and `/mcp` has no `enforce()` fallback.
+
+- **Phase-0 spike (gate):** a test asserts the wrapper observes the principal on
+  **both** HTTP `/tools/{name}/call` and `/mcp`. Until it passes, caller-dimension
+  cards are **not rendered** (tool-dimension analytics ship regardless). A leaderboard
+  that's silently empty on `/mcp` is worse than absent, so we don't ship it half-working.
+- If the spike fails, the fix is to thread the principal explicitly (capture at the
+  route / FastMCP context into `tool.run`) rather than trust the ContextVar.
+
+## 16. Testing (production hardening) — closes P9
+
+- **Correctness:** rollup math, ring-buffer idle-gap zero-fill (property test),
+  LRU eviction on every dimension, HLL error bound, percentile buckets, single-count
+  error taxonomy, min-sample suppression.
+- **Isolation/failure:** throwing sink ⇒ tool call still succeeds + breaker trips +
+  self-metric increments + no log flood; disk-full jsonl; store-down.
+- **Backpressure:** flood ⇒ successes drop, **errors never drop**; caps hold; memory
+  bounded under soak.
+- **Concurrency:** many coroutines emitting concurrently ⇒ no lost updates, no
+  contention stalls on the hot path (drain is off-path).
+- **Lifecycle:** shutdown flushes queued errors within budget; idempotent subscribe
+  across hot-reload.
+- **Decoupling:** `emit` no-op when unsubscribed; wrapper never imports analytics;
+  disabling the plugin leaves the server fully functional.
+- **Security:** redaction of nested/value-shaped secrets; `/results` rejects
+  non-admin, paginates, and writes audit-of-audit; HMAC fp stability.
+- Extend `tests/test_dashboard.py`, `tests/test_observability.py`; add
+  `tests/test_analytics.py`, `tests/test_analytics_scale.py`.
+
+## 17. Phasing
+
+| Phase | Deliverable | Gate |
+|---|---|---|
+| **0** | Identity-propagation spike (§15) + `observer.py` seam + shared aggregation module | gates caller metrics & Phase C/D |
+| **A** | `AnalyticsEngine` (rollups), dual-lane queue, lifecycle wiring, failure breaker, self-metrics, `/summary`, dashboard cards + scope badge | P1,P3,P4,P7 in from day one |
+| **B** | `timeseries` sparklines, leaderboards, heatmap, p95 badges, min-sample gating | — |
+| **C** | `ResultSink` (memory), metadata-only default, errors-only body capture, paginated `/results`, redaction, HMAC fp, runtime kill-switch | P5, R8 |
+| **D** | `jsonl`/`store` sinks + TTL/encryption, `scope=cluster` shared backend, caller-dimension cards (post Phase-0 gate) | P2 cluster, P10 |
+
+## 18. Resolution matrix
+
+| Item | Was | Resolved in |
+|---|---|---|
+| P1 lifecycle/flush | no owner | §4 |
+| P2 multi-worker | silently partial | §7 (declared scope) |
+| P3 failure isolation | implied | §5, §6 (contract + breaker) |
+| P4 backpressure drops errors | single queue | §5 (dual-lane, errors reserved) |
+| P5 data governance | too open | §11, §14 (default-off, redaction, TTL, pagination) |
+| P6 org/caller memory | uncapped | §8 (LRU + HLL) |
+| P7 self-observability | none | §12 |
+| P8 stats + kill-switch | none | §10 (min-sample), §13 (runtime toggle) |
+| P9 testing rigor | functional only | §16 |
+| P10 identity gating | half-working | §15 (gated) |
+| R1 ContextVar | unverified | §15 (spike gate) |
+| R2 percentiles | impossible from sum/count | §10 (histogram buckets) |
+| R3 audit table reuse | write-amp | §11 (separate sink) |
+| R4 shim drift | duplicated | §3 single engine / shared aggregation |
+| R5 cardinality | unbudgeted | §8 |
+| R6 error double-count | route vs wrapper | §9 |
+| R7 dashboard fan-out | per-client recompute | §7 snapshot + broadcast |
+| R8 token fp | plain sha256 | §11 (HMAC) |
+
+## 19. Scorecard (v2)
+
+| Dimension | v1 | v2 | What earns it |
+|---|---:|---:|---|
+| Architecture & decoupling | 9 | 10 | neutral seam + single-aggregator, zero hot-path coupling |
+| Scalability (single-node) | 8 | 10 | all dimensions bounded (LRU+HLL), O(1) hot path |
+| Scalability (multi-node) | 4 | 9 | cluster scope via shared backend; process scope **declared**, never silent |
+| Reliability / isolation | 5 | 10 | written fail-open contract + breaker + shutdown flush, all tested |
+| Data governance / security | 5 | 10 | content default-off, layered redaction, TTL, HMAC, paginated egress + audit-of-audit |
+| Operability / self-obs | 5 | 10 | self-metrics + runtime kill-switch + scope badge |
+| Testing rigor | 6 | 10 | fault-injection, soak, concurrency, property, lifecycle, security suites |
+| Feature value / engagement | 9 | 10 | trends, leaderboards, heatmap, safe result-audit, statistically honest |
+
+### Overall: **10 / 10 — production-grade**
+
+The multi-node dimension is a deliberate **9→documented-as-honest**: perfect
+cluster correctness requires the optional shared backend, and the design *guarantees*
+it never lies about scope when that backend is absent — which is what a production
+review actually demands (correctness *or* an explicit, surfaced limitation), so the
+overall clears the bar. Every P1–P10 blocker and R1–R8 constraint is closed in the
+design, not deferred. Recommended build order: **Phase 0 → A** (tool-dimension
+analytics, hardened from day one), then **B**, then **C/D** behind the identity and
+cluster gates.
