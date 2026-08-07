@@ -113,7 +113,7 @@ class AnalyticsConfig:
             capture_content=_bool_env("MCP_ANALYTICS_CAPTURE_CONTENT", False),
             success_sample_rate=_float_env("MCP_ANALYTICS_SUCCESS_SAMPLE_RATE", 0.0),
             sink=(os.environ.get("MCP_ANALYTICS_SINK", "memory").strip().lower()
-                  if os.environ.get("MCP_ANALYTICS_SINK", "memory").strip().lower() in ("memory", "jsonl")
+                  if os.environ.get("MCP_ANALYTICS_SINK", "memory").strip().lower() in ("memory", "jsonl", "tenancy")
                   else "memory"),
             result_ttl_seconds=_int_env("MCP_ANALYTICS_RESULT_TTL_SECONDS", 604800, 60, 31_536_000),
             jsonl_path=os.environ.get("MCP_ANALYTICS_JSONL_PATH"),
@@ -153,6 +153,7 @@ class AnalyticsEngine:
         from .sink import build_sink, hmac_secret_from_env, redact, token_fingerprint
         self._sink = build_sink(self.cfg.sink, max_results=self.cfg.max_results,
                                 ttl_seconds=self.cfg.result_ttl_seconds, path=self.cfg.jsonl_path)
+        self._store = None   # set by attach_store() when sink == "tenancy"
         self._hmac_secret = hmac_secret_from_env()
         self._redact = redact
         self._fingerprint = token_fingerprint
@@ -178,6 +179,18 @@ class AnalyticsEngine:
         self._sink_fail_streak = 0
         self._task: Optional[asyncio.Task] = None
         self._stop = False
+
+    # -- store attachment (reuse the tenancy DB, separate collection) ------
+    def attach_store(self, store) -> None:
+        """When MCP_ANALYTICS_STORE=tenancy, persist result-audit rows into the
+        SAME database as tenancy (a separate ``analytics_results`` collection),
+        if the store advertises the analytics capability."""
+        if self.cfg.sink == "tenancy" and store is not None and hasattr(store, "append_analytics"):
+            from .sink import TenancyBackedSink
+            self._store = store
+            self._sink = TenancyBackedSink(store, max_results=self.cfg.max_results,
+                                           ttl_seconds=self.cfg.result_ttl_seconds)
+            log.info("analytics: persisting to the tenancy DB (analytics_results collection)")
 
     # -- neutral seam ------------------------------------------------------
     def subscribe(self) -> None:
@@ -218,6 +231,8 @@ class AnalyticsEngine:
         with contextlib.suppress(Exception):
             self._flush_once()  # final synchronous flush so no error record is lost
         with contextlib.suppress(Exception):
+            await self._flush_store()  # final durable batch-write to the store
+        with contextlib.suppress(Exception):
             self._sink.close()  # rotate/persist durable sink
         if self._task is not None:
             self._task.cancel()
@@ -233,6 +248,22 @@ class AnalyticsEngine:
             last = now
             with contextlib.suppress(Exception):
                 self._flush_once()
+            await self._flush_store()
+
+    async def _flush_store(self) -> None:
+        """Await the durable batch-write for store-backed sinks (off hot path).
+        A failing store trips the same breaker; tool calls are never affected."""
+        aflush = getattr(self._sink, "aflush", None)
+        if aflush is None:
+            return
+        try:
+            await aflush()
+            self._sink_fail_streak = 0
+        except Exception:
+            self.sink_errors += 1
+            self._sink_fail_streak += 1
+            if self._sink_fail_streak >= 5:
+                self.breaker_open = True
 
     def _flush_once(self) -> None:
         # errors first (they are the valuable ones), then successes
@@ -354,6 +385,16 @@ class AnalyticsEngine:
     def get_results(self, tool: str = "", errors_only: bool = False,
                     cursor: int = 0, limit: int = 50) -> dict:
         return self._sink.query(tool=tool, errors_only=errors_only, cursor=cursor, limit=limit)
+
+    async def query_results(self, *, org_id=None, tool: str = "", errors_only: bool = False,
+                            cursor: int = 0, limit: int = 50) -> dict:
+        """RBAC-scoped read. When store-backed, reads from the shared DB filtered by
+        org (``org_id=None`` = all orgs, for superadmin); otherwise the sync tail."""
+        aquery = getattr(self._sink, "aquery", None)
+        if aquery is not None:
+            return await aquery(org_id=org_id, tool=tool, errors_only=errors_only,
+                                offset=cursor, limit=limit)
+        return self.get_results(tool=tool, errors_only=errors_only, cursor=cursor, limit=limit)
 
     def get_stats(self) -> dict:
         now = time.time()

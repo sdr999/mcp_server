@@ -115,6 +115,41 @@ increment (needs infra not available here). The honesty guard — process-scope
 badge + `analytics_scope` in every payload — is shipped, so no configuration
 presents partial data as global.
 
+## Phase F (partial) — reuse the tenancy DB (same database, separate collection)
+**Commit:** _(this change)_ · **Tests:** +5 · suite 257 passed.
+
+Persist result-audit rows into the **same database as the tenancy store**, in a
+**separate `analytics_results` table/collection** — never the transactional `audit`
+table (review R3).
+- `plugins/tenancy/memory.py`, `plugins/tenancy/sqlite_store.py`: added the
+  analytics capability — `append_analytics(rows)`, `query_analytics(org_id, tool,
+  errors_only, limit, offset)` (org-scoped), `purge_analytics(cutoff)`. Sqlite
+  creates `analytics_results` (+ `ix_analytics_org_ts` index) in `init_db()`.
+- `plugins/analytics/sink.py`: `TenancyBackedSink` — sync `append` buffers on the
+  hot path; `aflush` (awaited by the drain) batch-writes durably; `aquery` reads
+  back org-scoped; a bounded tail backs the sync fallback.
+- `plugins/analytics/engine.py`: `attach_store(store)` swaps to the tenancy-backed
+  sink when `MCP_ANALYTICS_SINK=tenancy`; the drain awaits `_flush_store` each tick
+  (same breaker on failure); `query_results(org_id=…)` reads DB-scoped.
+- `plugins/analytics/routes.py`: `/results` computes RBAC scope from the principal
+  (superadmin → all orgs; otherwise own `org_id`; mismatched `?org=` ignored) and
+  queries the store with that filter.
+- `plugins/app.py`: `analytics.attach_store(tenancy_store)` after the store is built
+  (no-op for the default in-proc/jsonl sinks).
+
+**Config:** `MCP_ANALYTICS_SINK=tenancy` (reuse the tenancy DB) alongside the
+existing `memory` | `jsonl`. Reuses the tenancy DSN/backend selection — so `sqlite`
+today, `mongodb`/custom via the same `register_backend` mechanism.
+
+**Live-verified:** ran the real server with `MCP_ANALYTICS_SINK=tenancy`; 3 error
+rows landed in `analytics_results`, `audit` stayed at **0** — same DB, separate
+collection, read back org-scoped through `/admin/analytics/results`.
+
+**Still open in Phase F:** switch `/analytics/*` from `admin_denied` (superadmin-only)
+to `enforce(analytics:read)` with the new `analytics:read`/`read_content`/`manage`
+permissions seeded into roles, so `org_admin` can read its own org (scoping code is
+already in place); Mongo backend method impls (pattern mirrors sqlite).
+
 ## Status vs plan
 | Phase | State |
 |---|---|
@@ -123,6 +158,8 @@ presents partial data as global.
 | B percentiles + heatmap + dashboard | ✅ |
 | C durable sinks + redaction + HMAC | ✅ |
 | D caller-dimension cards | ✅ (HTTP + `/mcp`); cluster shared-backend deferred |
+| F reuse tenancy DB (same db, separate collection) | ✅ storage + org-scoped reads (sqlite/memory); endpoint RBAC-permission switch + Mongo impl pending |
+| E TSDB-native aggregation | ⬜ (specced) |
 
 ## Live end-to-end tests (from the running-server verification)
 The manual live-server run (real uvicorn + admin token + genuine `/mcp` call) was

@@ -62,8 +62,17 @@ async def results_handler(request):
     except ValueError:
         limit = 50
     errors_only = qp.get("errors_only", "").lower() in ("1", "true", "yes")
-    return JSONResponse(eng.get_results(
-        tool=qp.get("tool", ""), errors_only=errors_only, cursor=cursor, limit=limit))
+    # RBAC scope: superadmin sees all orgs; anyone else is confined to their own
+    # org (a mismatched ?org= is ignored, never honored). Enforced in the store query.
+    p = getattr(request.state, "principal", None)
+    perms = getattr(p, "permissions", set()) or set()
+    roles = getattr(p, "roles", []) or []
+    is_super = ("platform:admin" in perms) or ("platform_superadmin" in roles)
+    org_scope = None if is_super else (getattr(p, "org_id", None) if p else None)
+    data = await eng.query_results(
+        org_id=org_scope, tool=qp.get("tool", ""), errors_only=errors_only,
+        cursor=cursor, limit=limit)
+    return JSONResponse(data)
 
 
 async def control_handler(request):

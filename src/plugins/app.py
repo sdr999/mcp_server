@@ -238,6 +238,10 @@ def build_app(ctx):
 
     tenancy_store = create_tenancy_store(ctx)
     app.state.tenancy_store = tenancy_store
+    # Reuse the tenancy DB for analytics persistence (separate collection/table)
+    # when MCP_ANALYTICS_STORE=tenancy. No-op for the default in-proc/jsonl sinks.
+    with contextlib.suppress(Exception):
+        analytics.attach_store(tenancy_store)
 
     rbac_cache = DecisionCache(maxsize=getattr(ctx, "rbac_cache_size", 10000), ttl_sec=getattr(ctx, "rbac_cache_ttl", 300.0))
     policy_evaluator = PolicyEvaluator(store=tenancy_store, cache=rbac_cache)

@@ -140,6 +140,47 @@ class JsonlResultSink:
             self._rotate_locked()
 
 
+class TenancyBackedSink:
+    """Persists result-audit rows into the SAME database as the tenancy store,
+    in a SEPARATE ``analytics_results`` collection/table. Sync ``append`` buffers
+    on the hot path; ``aflush`` (awaited by the engine drain) batch-writes durably;
+    ``aquery`` reads back org-scoped for RBAC. A bounded in-memory tail backs the
+    sync ``query`` fallback so nothing on the read path blocks."""
+
+    def __init__(self, store, max_results: int = 1000, ttl_seconds: int = 604800):
+        self._store = store
+        self._buffer: Deque[dict] = deque()
+        self._tail: Deque[dict] = deque(maxlen=max(1, max_results))
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+
+    def append(self, row: dict) -> None:
+        with self._lock:
+            self._buffer.append(row)
+            self._tail.append(row)
+
+    async def aflush(self) -> None:
+        with self._lock:
+            batch = list(self._buffer)
+            self._buffer.clear()
+        if batch:
+            await self._store.append_analytics(batch)   # durable, shared DB
+
+    def query(self, tool: str = "", errors_only: bool = False,
+              cursor: int = 0, limit: int = 50) -> dict:
+        with self._lock:
+            rows = list(self._tail)
+        return _page(rows, tool, errors_only, cursor, limit)
+
+    async def aquery(self, *, org_id=None, tool: str = "", errors_only: bool = False,
+                     offset: int = 0, limit: int = 50) -> dict:
+        return await self._store.query_analytics(
+            org_id=org_id, tool=tool, errors_only=errors_only, limit=limit, offset=offset)
+
+    def close(self) -> None:
+        pass
+
+
 def _page(rows: List[dict], tool: str, errors_only: bool, cursor: int, limit: int) -> dict:
     if tool:
         rows = [r for r in rows if r.get("tool") == tool]
