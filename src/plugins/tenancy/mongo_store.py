@@ -58,7 +58,39 @@ class MongoTenancyStore(TenancyStore):
             db["tool_grants"].create_index([("scope_type", 1), ("scope_id", 1)]),
             db["audit"].create_index("org_id"),
             db["audit"].create_index([("ts", -1)]),
+            # analytics rows: separate collection in the SAME db (never `audit`)
+            db["analytics_results"].create_index([("org_id", 1), ("ts", -1)]),
         )
+
+    # -- analytics capability (separate collection, same db) ---------------
+    async def append_analytics(self, rows) -> None:
+        if not rows:
+            return
+        db = self._get_db()
+        await db["analytics_results"].insert_many([dict(r) for r in rows])
+
+    async def query_analytics(self, *, org_id=None, tool: str = "",
+                              errors_only: bool = False, limit: int = 50, offset: int = 0) -> dict:
+        db = self._get_db()
+        q = {}
+        if org_id is not None:
+            q["org_id"] = org_id
+        if tool:
+            q["tool"] = tool
+        if errors_only:
+            q["ok"] = False
+        limit = max(1, min(500, limit))
+        total = await db["analytics_results"].count_documents(q)
+        cursor = (db["analytics_results"].find(q, {"_id": 0})
+                  .sort("ts", -1).skip(offset).limit(limit))
+        rows = await cursor.to_list(length=limit)
+        nxt = offset + limit if offset + limit < total else None
+        return {"total": total, "cursor": offset, "next_cursor": nxt, "results": rows}
+
+    async def purge_analytics(self, cutoff: float) -> int:
+        db = self._get_db()
+        res = await db["analytics_results"].delete_many({"ts": {"$lt": cutoff}})
+        return res.deleted_count
 
     async def is_empty(self) -> bool:
         db = self._get_db()

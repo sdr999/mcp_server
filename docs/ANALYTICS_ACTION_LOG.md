@@ -145,10 +145,27 @@ today, `mongodb`/custom via the same `register_backend` mechanism.
 rows landed in `analytics_results`, `audit` stayed at **0** — same DB, separate
 collection, read back org-scoped through `/admin/analytics/results`.
 
-**Still open in Phase F:** switch `/analytics/*` from `admin_denied` (superadmin-only)
-to `enforce(analytics:read)` with the new `analytics:read`/`read_content`/`manage`
-permissions seeded into roles, so `org_admin` can read its own org (scoping code is
-already in place); Mongo backend method impls (pattern mirrors sqlite).
+### Phase F completion — RBAC permission gating + Mongo backend
+- **New permissions** in `BUILTIN_ROLE_PERMISSIONS` (`identity.py`): `analytics:admin`
+  (global dashboards + kill-switch → platform_superadmin only), `analytics:read`
+  (own-org result rows → superadmin, org_admin, developer), `analytics:read_content`
+  (see captured bodies → superadmin, org_admin). Seeded from BUILTIN automatically.
+- **`security.require_permission(request, perm)`** — gates on a resolved-principal
+  permission; the static admin token still passes as superadmin.
+- **Routes switched** from `admin_denied` to permission gates: `summary`/`timeseries`/
+  `leaderboard`/`control` → `analytics:admin`; `results` → `analytics:read`, **org-scoped**
+  (superadmin all orgs; otherwise own `org_id`; mismatched `?org=` ignored) with
+  `result_excerpt` bodies stripped unless the caller holds `analytics:read_content`.
+- **Mongo backend** (`mongo_store.py`): `append_analytics`/`query_analytics`(org-scoped)/
+  `purge_analytics` on an `analytics_results` collection + `(org_id, ts)` index —
+  mirrors sqlite; cross-replica durable. (Runs behind `HAS_MOTOR`; not unit-tested here.)
+- Tests +6: role matrix, `require_permission` (token/allow/403/401), content-policy
+  strip, and the HTTP `/results` 401-without-`analytics:read` gate.
+
+**Migration note:** fresh tenancy DBs seed the new analytics permissions
+automatically; an **existing** seeded DB backfills them only with
+`MCP_TENANCY_RECONCILE_ROLES=true` (RBAC-off deployments derive perms from BUILTIN
+directly, so no migration needed there).
 
 ## Status vs plan
 | Phase | State |
@@ -158,7 +175,7 @@ already in place); Mongo backend method impls (pattern mirrors sqlite).
 | B percentiles + heatmap + dashboard | ✅ |
 | C durable sinks + redaction + HMAC | ✅ |
 | D caller-dimension cards | ✅ (HTTP + `/mcp`); cluster shared-backend deferred |
-| F reuse tenancy DB (same db, separate collection) | ✅ storage + org-scoped reads (sqlite/memory); endpoint RBAC-permission switch + Mongo impl pending |
+| F reuse tenancy DB (same db, separate collection) | ✅ storage (sqlite/memory/mongo) + RBAC permission gating + org-scoped reads + content policy |
 | E TSDB-native aggregation | ⬜ (specced) |
 
 ## Live end-to-end tests (from the running-server verification)
@@ -176,8 +193,8 @@ captured as automated integration tests so the behavior is regression-guarded:
   appear in `/metrics`.
 
 ## Test summary
-- Analytics suite: **29 tests**, all passing.
-- Full suite: **252 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
+- Analytics suite: **42 tests** (`test_analytics.py` + `test_analytics_store.py`), all passing.
+- Full suite: **260 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
   pre-existing and environmental (OpenTelemetry not installed); confirmed to fail
   with these changes stashed.
 

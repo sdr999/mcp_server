@@ -438,8 +438,9 @@ def test_live_analytics_end_to_end_http(tmp_path):
         # deterministic flush of the async drain before asserting
         app.state.analytics._flush_once()
 
-        # --- admin gating ---
-        assert client.get("/admin/analytics/summary").status_code == 401
+        # --- RBAC gating (permission-based) ---
+        assert client.get("/admin/analytics/summary").status_code == 401   # needs analytics:admin
+        assert client.get("/admin/analytics/results").status_code == 401   # needs analytics:read
         s = client.get("/admin/analytics/summary", headers=AUTH).json()
 
         # --- rollups reflect the traffic ---

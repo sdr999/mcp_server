@@ -112,3 +112,54 @@ def test_engine_persists_to_tenancy_store_sqlite(tmp_path):
         # a different org sees nothing
         assert (await eng.query_results(org_id="other"))["total"] == 0
     asyncio.run(run())
+
+
+# -- RBAC: permissions, gating helper, content policy ----------------------
+
+def test_new_analytics_permissions_in_role_matrix():
+    from plugins.identity import BUILTIN_ROLE_PERMISSIONS as B
+    assert {"analytics:admin", "analytics:read", "analytics:read_content"} <= B["platform_superadmin"]
+    assert "analytics:admin" not in B["org_admin"]                    # not global dashboards
+    assert {"analytics:read", "analytics:read_content"} <= B["org_admin"]
+    assert B["developer"] & {"analytics:read"} == {"analytics:read"}
+    assert "analytics:read_content" not in B["developer"]             # metadata only
+    assert not (B["agent_consumer"] & {"analytics:read", "analytics:admin"})
+
+
+def test_require_permission_helper():
+    from types import SimpleNamespace
+    from plugins.security import require_permission
+
+    def _req(admin_token="", principal=None, headers=None):
+        return SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(admin_token=admin_token)),
+            headers=headers or {}, query_params={},
+            state=SimpleNamespace(principal=principal))
+
+    class P:
+        def __init__(self, subject, perms):
+            self.subject, self.permissions = subject, set(perms)
+
+    # static admin token always passes
+    r = _req(admin_token="sek", headers={"authorization": "Bearer sek"})
+    assert asyncio.run(require_permission(r, "analytics:admin")) is None
+    # principal holding the permission passes
+    r = _req(principal=P("alice", {"analytics:read"}))
+    assert asyncio.run(require_permission(r, "analytics:read")) is None
+    # authenticated but missing -> 403
+    r = _req(principal=P("bob", {"tool:call"}))
+    resp = asyncio.run(require_permission(r, "analytics:read"))
+    assert resp is not None and resp.status_code == 403
+    # anonymous -> 401
+    r = _req(principal=P("anonymous", set()))
+    resp = asyncio.run(require_permission(r, "analytics:read"))
+    assert resp is not None and resp.status_code == 401
+
+
+def test_content_policy_strips_bodies_without_permission():
+    from plugins.analytics.routes import _apply_content_policy
+    data = {"results": [{"tool": "t", "result_excerpt": "secret-ish"}]}
+    stripped = _apply_content_policy({"results": [dict(r) for r in data["results"]]}, allowed=False)
+    assert "result_excerpt" not in stripped["results"][0]
+    kept = _apply_content_policy({"results": [dict(r) for r in data["results"]]}, allowed=True)
+    assert kept["results"][0]["result_excerpt"] == "secret-ish"

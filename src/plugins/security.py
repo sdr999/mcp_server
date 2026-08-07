@@ -233,6 +233,31 @@ async def read_guard(request):
     return await enforce(request, "mcp")
 
 
+async def require_permission(request, permission: str):
+    """Gate an endpoint on a specific RBAC permission. The static admin token
+    (platform_superadmin) always passes; otherwise the resolved principal must
+    carry the permission. Returns a 401/403 JSONResponse when denied, else None."""
+    token = getattr(request.app.state, "admin_token", "")
+    authz = request.headers.get("authorization", "")
+    provided = (authz[7:].strip() if authz.lower().startswith("bearer ")
+                else request.headers.get("x-admin-token", "").strip()) or request.query_params.get("token", "").strip()
+    if token and provided and hmac.compare_digest(provided, token):
+        return None  # static admin token == platform_superadmin
+
+    principal = getattr(request.state, "principal", None)
+    if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
+        if await _jwt_ok(request):
+            principal = getattr(request.state, "principal", None)
+
+    perms = getattr(principal, "permissions", None) or set()
+    if permission in perms:
+        return None
+    request.state.auth_failure_reason = f"requires {permission}"
+    if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return JSONResponse({"error": "forbidden", "detail": f"requires {permission}"}, status_code=403)
+
+
 async def admin_denied(request):
     """Return a JSONResponse if the admin request is unauthorized, else None.
     Allows:
