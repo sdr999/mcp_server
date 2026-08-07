@@ -330,3 +330,125 @@ overall clears the bar. Every P1–P10 blocker and R1–R8 constraint is closed 
 design, not deferred. Recommended build order: **Phase 0 → A** (tool-dimension
 analytics, hardened from day one), then **B**, then **C/D** behind the identity and
 cluster gates.
+
+---
+
+# 20. Follow-up phases: E (TSDB-native aggregation) · F (durable RBAC-scoped store)
+
+These close the gaps a FAANG infra review flagged against the *as-built* code:
+multi-node correctness (4/10), TSDB integration (5/10), two metric planes, and the
+absence of durable, RBAC-scoped persistence. They are additive — the `observer.emit`
+seam is unchanged, so the hot path stays a single call.
+
+## 20.1 Where analytics data lives today (as-built)
+
+| Data | Storage now | Durable | Cross-worker | Access control |
+|---|---|---|---|---|
+| Rollups (calls/latency/leaderboards/attribution) | in-memory in `AnalyticsEngine` | ❌ | ❌ per-worker | admin-token (superadmin) |
+| Result-audit rows | `MemoryResultSink` (deque) or `JsonlResultSink` → `logs/analytics_results.jsonl` | jsonl only | ❌ per-process file | admin-token (superadmin) |
+
+Two consequences to fix: (a) rollups are per-process, so the dashboard shows one
+worker's slice; (b) there is **no RBAC scoping** — any holder of the admin token
+sees everything, and an `org_admin` cannot get just their org's data.
+
+## 20.2 Phase E — TSDB-native aggregation (single source of truth)
+
+**Goal:** make the *aggregate* plane correct across workers/replicas by computing it
+in a real time-series backend, not in-process — deleting the two-sources-of-truth
+problem and the per-worker limitation.
+
+- **One exporter for counters/histograms.** Route the aggregate plane through
+  Prometheus multiprocess mode (`PROMETHEUS_MULTIPROC_DIR`) **or** OTel OTLP → a
+  collector. Latency uses real histograms with explicit buckets so **p50/p95/p99 are
+  computed by the TSDB** (`histogram_quantile` / OTel views), not in Python.
+- **Bounded attribution labels on the aggregate plane.** Add `org_id`, `kind`,
+  `reason` as low-cardinality labels on `mcp_tool_calls_total` /
+  `mcp_tool_errors_total` / the duration histogram, within a documented series
+  ceiling (guarded). Cross-worker attribution then aggregates in the TSDB — the
+  per-process attribution limit disappears for the aggregate plane.
+- **Retire in-process rollups as the source of truth.** The in-memory engine becomes
+  an optional *local fast-path* for the dashboard when no TSDB is configured; when one
+  is present, headline numbers, leaderboards, and percentiles are read from it (or
+  Grafana). This resolves the "two metric systems can drift" finding (system-level R4).
+- **Export plugin self-metrics** (`analytics_queue_depth{lane}`,
+  `analytics_events_dropped_total{lane}`, `analytics_drain_lag_seconds`,
+  `analytics_sink_errors_total`, `analytics_breaker_open`) as scrapable series so an
+  SRE can alert on silent data loss (fixes the current "dashboard-JSON only" gap).
+- **Scope becomes real.** With TSDB aggregation, `MCP_ANALYTICS_SCOPE=cluster` needs
+  no bespoke shared backend — Prometheus/OTel *is* the shared aggregation layer; the
+  scope badge then reflects TSDB-backed cluster truth.
+- **Back-compat:** keep the `/metrics` text endpoint; TSDB mode is feature-flagged
+  (`MCP_ANALYTICS_EXPORTER=none|prometheus_multiproc|otlp`); the wrapper's single
+  `emit` is untouched.
+- **Tests:** exporter/label unit tests, a multiprocess scrape-aggregation test,
+  cardinality-ceiling guard, `histogram_quantile` correctness on known buckets.
+
+**Impact:** multi-node 4→9, TSDB 5→9, self-metrics alertable, one counter plane.
+
+## 20.3 Phase F — durable, RBAC-scoped analytics store (pluggable backends)
+
+**Goal:** the result-audit plane (per-call rows) persists durably in the **same
+pluggable backends as tenancy** and reads are **RBAC-scoped**. Independent of Phase E
+and can land first — it directly answers "where is the data saved + who can see it".
+
+### 1. `AnalyticsStore` abstraction (mirrors `tenancy/base.py`)
+Abstract async interface: `init_db()`, `append(row)`, `query(filter, scope, cursor,
+limit)`, `purge_expired(cutoff)`, `close()`. Backends reuse the tenancy pattern
+verbatim (`plugins/tenancy/__init__.py::register_backend`):
+
+| Backend | Module | Notes |
+|---|---|---|
+| `memory` | in-proc deque (default, zero-config) | dev / ephemeral |
+| `json` | append file | small single-node |
+| `sqlite` | one table `analytics_results` | **recommended single-node durable** |
+| `mongodb` | one collection + **TTL index** | multi-replica, cross-worker durable |
+| `<module.path:Factory>` | custom spec | Postgres / ClickHouse / S3 — "any more" without core changes |
+
+Config mirrors tenancy: `MCP_ANALYTICS_STORE=memory|json|sqlite|mongodb|<spec>`
+(default `memory`); DSN/db reuse — `MCP_ANALYTICS_DSN` falling back to the tenancy
+`MCP_TENANCY_DSN`/`MONGODB_URI`, plus `MCP_ANALYTICS_DB_NAME`. **Rows go to a separate
+table/collection, never the RBAC `log_audit` table** (keeps review R3). Ops configure
+one database; analytics is just another namespace in it.
+
+### 2. RBAC scoping on reads (the core ask)
+Rows already carry `org_id` (+ `kind`, HMAC `caller_fp`). Reads enforce tenant
+isolation via the **existing** `PolicyEvaluator` + `resolve_principal`:
+
+- `platform_superadmin` → all orgs.
+- `org_admin` / `developer` → **own org only** (`principal.org_id` injected into the
+  store filter — deny-by-default; a mismatched `?org=` is ignored, not honored).
+- `agent_consumer` / unauthenticated → **denied**.
+- New permissions in `BUILTIN_ROLE_PERMISSIONS` (`identity.py`) seeded by
+  `tenancy.seeder`: `analytics:read` (metadata rows), `analytics:read_content`
+  (the stricter grant needed to see `result_excerpt` bodies — PII/secret surface),
+  `analytics:manage` (the `/control` kill-switch).
+- Endpoint change: `/admin/analytics/*` reads switch from `admin_denied`
+  (superadmin-only) to `enforce(request, "analytics:read")`, and `get_results` passes
+  the resolved principal so the **store query is filtered by org in the backend** —
+  isolation happens at the data layer, not just the API.
+
+### 3. Durability & availability
+- Writes are async-batched from the drain to the store (off hot path); the existing
+  sink breaker covers store outages — on failure, degrade to the in-memory tail +
+  `analytics_sink_errors_total`, **never block a tool call**.
+- Retention: `purge_expired()` on a timer (reuse the drain loop) for SQL
+  (`DELETE WHERE ts < cutoff`); native **TTL index** for Mongo.
+- Cross-replica: a shared DB (mongo/postgres) makes the **audit plane cross-replica
+  correct even before Phase E**; sqlite remains single-node durable.
+
+### 4. Tests
+- Per-backend contract suite (memory/json/sqlite always; mongo behind `HAS_MOTOR`
+  skip) — append/query/pagination/TTL parity.
+- RBAC: `org_admin` sees only own org; cross-org `?org=` ignored; `agent_consumer`
+  denied; superadmin sees all; `result_excerpt` hidden without `analytics:read_content`.
+- Store-outage degradation (breaker trips, calls unaffected).
+
+**Impact:** durable persistence with `sqlite`/`mongodb`/custom backends, tenant-isolated
+reads via the existing RBAC engine, and cross-replica audit correctness — closing the
+"where is it saved / RBAC / multi-backend" gap.
+
+## 20.4 Sequencing
+Phase **F first** (durable + RBAC store — directly answers the persistence/RBAC ask
+and is Phase-E-independent), then Phase **E** (TSDB aggregation — fixes multi-node
+rollups and unifies the counter plane). Together they lift the FAANG-review scores:
+multi-node 4→9, TSDB 5→9, and add the missing persistence/RBAC dimension.
