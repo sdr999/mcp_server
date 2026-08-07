@@ -9,7 +9,9 @@ import pytest
 
 from plugins import observer
 from plugins.observer import ToolEvent, emit
-from plugins.analytics.engine import AnalyticsEngine, AnalyticsConfig
+from plugins.analytics.engine import (
+    AnalyticsEngine, AnalyticsConfig, _percentile, _bucket_index, _NUM_BUCKETS,
+)
 from plugins.analytics.bounded import LRUMap, HyperLogLog
 
 
@@ -108,6 +110,40 @@ def test_min_samples_suppresses_slowest():
     _drain(eng)
     slow = [x["name"] for x in eng.get_stats()["leaderboards"]["slowest"]]
     assert "rare" not in slow  # below min_samples -> not ranked
+
+
+# -- Phase B: percentiles + heatmap ----------------------------------------
+
+def test_percentile_helper_from_buckets():
+    hist = [0] * _NUM_BUCKETS
+    # 90 calls at ~5ms, 10 calls at ~1000ms
+    hist[_bucket_index(5)] = 90
+    hist[_bucket_index(1000)] = 10
+    assert _percentile(hist, 0.50) <= 5
+    assert _percentile(hist, 0.99) >= 500
+    assert _percentile([0] * _NUM_BUCKETS, 0.95) == 0.0
+
+
+def test_tool_percentiles_gated_by_min_samples():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=20))
+    eng.subscribe()
+    for _ in range(5):                        # below min_samples
+        emit(_ev("rare", ok=True, dur=0.01))
+    _drain(eng)
+    assert eng.get_stats()["tools"]["rare"]["p95_ms"] is None
+    for _ in range(30):                       # now above
+        emit(_ev("rare", ok=True, dur=0.01))
+    _drain(eng)
+    assert eng.get_stats()["tools"]["rare"]["p95_ms"] is not None
+
+
+def test_hour_heatmap_present():
+    eng = AnalyticsEngine(AnalyticsConfig(min_samples=1))
+    eng.subscribe()
+    emit(_ev("t", ok=True, dur=0.01))
+    _drain(eng)
+    hm = eng.get_stats()["hour_heatmap"]
+    assert len(hm) == 24 and sum(hm) == 1
 
 
 # -- backpressure: errors are never dropped for successes ------------------

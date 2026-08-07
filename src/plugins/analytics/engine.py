@@ -24,6 +24,33 @@ from .bounded import HyperLogLog, LRUMap
 
 log = logging.getLogger("MCP_logger")
 
+# Fixed latency histogram boundaries (ms). Percentiles are estimated from these
+# buckets -- honest quantiles, never derived from a running sum (see R2).
+_LAT_BUCKETS_MS = (1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
+_NUM_BUCKETS = len(_LAT_BUCKETS_MS) + 1  # + overflow lane
+
+
+def _bucket_index(ms: float) -> int:
+    for i, edge in enumerate(_LAT_BUCKETS_MS):
+        if ms <= edge:
+            return i
+    return _NUM_BUCKETS - 1
+
+
+def _percentile(hist, q: float) -> float:
+    """Estimate the q-quantile (0..1) from bucket counts; returns the bucket's
+    upper edge in ms (overflow -> last edge)."""
+    total = sum(hist)
+    if total == 0:
+        return 0.0
+    threshold = q * total
+    cum = 0
+    for i, c in enumerate(hist):
+        cum += c
+        if cum >= threshold:
+            return float(_LAT_BUCKETS_MS[i]) if i < len(_LAT_BUCKETS_MS) else float(_LAT_BUCKETS_MS[-1])
+    return float(_LAT_BUCKETS_MS[-1])
+
 
 def _int_env(name: str, default: int, lo: int = 1, hi: int = 10_000_000) -> int:
     try:
@@ -91,6 +118,8 @@ class ToolRollup:
     last_error_ts: float = 0.0
     # ring of (bucket_index -> [calls, errors]) capped to `buckets`
     series: "Deque[tuple]" = field(default_factory=lambda: deque(maxlen=60))
+    # fixed latency histogram for real percentiles
+    hist: List[int] = field(default_factory=lambda: [0] * _NUM_BUCKETS)
 
 
 class AnalyticsEngine:
@@ -107,6 +136,7 @@ class AnalyticsEngine:
         self._started_at = time.time()
         self._total_calls = 0
         self._total_errors = 0
+        self._hour_hist = [0] * 24   # calls by UTC hour-of-day
         # self-metrics
         self.dropped_success = 0
         self.dropped_error = 0
@@ -192,6 +222,8 @@ class AnalyticsEngine:
                 r.dur_sum += ms
                 r.max_ms = max(r.max_ms, ms)
                 r.last_ts = event.ts
+                r.hist[_bucket_index(ms)] += 1
+                self._hour_hist[int(event.ts // 3600) % 24] += 1
                 if event.ok:
                     r.error_streak = 0
                 else:
@@ -288,11 +320,19 @@ class AnalyticsEngine:
                 rate = 100.0 if r.calls == 0 else round(succ / r.calls * 100.0, 1)
                 spark = [b[1] for b in r.series]
                 trend = self._trend(r.series)
+                # percentiles only when the sample is big enough to be meaningful
+                if r.calls >= self.cfg.min_samples:
+                    pcts = {"p50_ms": _percentile(r.hist, 0.50),
+                            "p95_ms": _percentile(r.hist, 0.95),
+                            "p99_ms": _percentile(r.hist, 0.99)}
+                else:
+                    pcts = {"p50_ms": None, "p95_ms": None, "p99_ms": None}
                 tools[name] = {
                     "calls": r.calls, "errors": r.errors, "successes": succ,
                     "success_rate_percent": rate,
                     "avg_latency_ms": round(avg_ms, 2),
                     "max_latency_ms": round(r.max_ms, 2),
+                    **pcts,
                     "error_streak": r.error_streak,
                     "last_called_ts": r.last_ts,
                     "sparkline": spark,
@@ -316,6 +356,7 @@ class AnalyticsEngine:
                 "calls_per_min": round(cpm, 2),
                 "tools_tracked": len(self._tools),
                 "unique_callers_approx": self._callers.count(),
+                "hour_heatmap": list(self._hour_hist),
                 "tools": tools,
                 "leaderboards": {
                     "most_called": self._top(leaderboard_calls, 5),
