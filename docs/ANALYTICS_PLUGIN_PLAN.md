@@ -207,3 +207,123 @@ R6 (single-count errors at the wrapper), R7 (dashboard broadcast), R8 (HMAC toke
 fingerprint). R1 (ContextVar propagation) remains a Phase-A spike: the event
 carries whatever principal is resolvable and tolerates blanks, so analytics ships
 even if identity attribution needs the propagation fix first.
+
+---
+
+# Production Readiness Review (SDE-5 lens)
+
+Reviewed for production-grade operation, grounded in the runtime this plugin lives
+in. The design is sound (clean decoupling seam, follows the established plugin
+contract, scalability considered up front). But several gaps separate a *good
+design doc* from a *production-ready* one. Blockers first.
+
+### P1 (blocker) — lifecycle: no start/flush/shutdown for the drain task
+The plan introduces a background drain task but never says who owns it. The server
+has exactly one correct home: the lifespan at `app.py:241` (startup starts the
+watcher/bootstrap; shutdown calls `watcher.stop()` / `rate_limiter_registry.stop()`
+under `contextlib.suppress`). The drain task **must** start there and, critically,
+**flush on shutdown** — otherwise the last in-flight events (including error
+records, the most valuable) are lost on every deploy/restart. Also: hot-reload
+recreates wrappers per tool (`_make_wrapper`), so `subscribe()` must be idempotent
+(subscribe once at engine construction, not per wrapper) or observers leak.
+→ Add explicit lifecycle: start in lifespan startup, `drain-and-cancel` with a
+bounded timeout in shutdown, idempotent subscribe.
+
+### P2 (blocker) — multi-process: headline metrics are per-worker, silently partial
+`app.py:244` runs **multi-worker Gunicorn (fork)**. The in-memory rollups
+(sparklines, leaderboards, trending, heatmap) are per-process, but a dashboard
+request lands on **one** worker — so the user sees one worker's slice and believes
+it's the whole system. This is a correctness bug for the *headline* feature, not a
+footnote. Options, pick explicitly: (a) document a hard "single-source-of-truth"
+limitation and derive aggregates only from Prometheus (scrape+sum across workers);
+(b) back rollups with a shared store/Redis (reintroduces a dependency — must be
+optional); (c) restrict the rich dashboard to single-process deployments and
+degrade gracefully otherwise. The current plan implies (a) for Prometheus but still
+renders in-memory rollups on the dashboard — that contradiction must be resolved.
+
+### P3 (blocker) — failure isolation contract is implied, not guaranteed
+Analytics must be incapable of harming a tool call. That requires a written
+contract: `emit()` and the drain **catch everything**, a failing sink
+(disk-full JSONL, store down) **self-disables** after N consecutive errors and
+increments a self-metric rather than looping/logging on the hot path, and no
+analytics code path can raise into the wrapper. State this as an invariant with a
+test (fault-inject a throwing sink, assert the tool call still succeeds).
+
+### P4 (major) — backpressure "drop-oldest" can drop the errors you promised to keep
+The plan calls errors "the most valuable" yet uses a single bounded queue with
+drop-oldest — which can evict a queued **error** under load. Contradiction. Fix:
+two lanes (or priority), errors never dropped (small reserved capacity), successes
+dropped/sampled first. Otherwise the audit guarantee is a lie under exactly the
+load where it matters.
+
+### P5 (major) — result capture is a data-governance surface, under-specified
+Capturing tool I/O means PII/secrets at rest. Gaps: (1) key-based redaction is
+**shallow** — misses nested keys and secret-shaped *values*; add value-pattern
+redaction and treat redaction as best-effort in the docs. (2) No **retention/TTL**
+or encryption-at-rest for the JSONL sink. (3) Default posture: `RESULTS_ENABLED=true`
+capturing error *content* by default is the wrong default for compliance — content
+capture should default **OFF** (metadata like error type stays on); opt-in per env.
+(4) `/results` is a sensitive-data egress endpoint — needs pagination (1000 records
+× excerpts is a large/duplicable response), and ideally an audit-of-the-audit (who
+read results). (5) Serializer must handle non-JSON/huge/circular/binary results and
+the **sandbox subprocess boundary** (`tool_loader.py:212`) — fall back to truncated
+`repr`, never raise.
+
+### P6 (major) — memory bounds cover tools but not the caller/org dimension
+`MAX_TOOLS` LRU-caps tools, but per-org rollups, "top caller," and the unique-caller
+"bounded set" are unbounded across a large tenant base (the C3 note confirms
+multi-tenant intent). A 10k-org deployment can OOM. Cap and LRU-evict the org/caller
+dimensions too, and replace the "bounded set" of unique callers with a documented
+approximation (HyperLogLog) or an explicitly-capped-with-loss counter.
+
+### P7 (moderate) — the plugin needs its own observability
+Silent data loss is the failure mode of async metrics. Emit self-metrics:
+`analytics_queue_depth`, `analytics_events_dropped_total`, `analytics_drain_lag`,
+`analytics_sink_errors_total`, `analytics_enabled`. Without these, P3/P4 failures
+are invisible.
+
+### P8 (moderate) — statistical validity + runtime kill-switch
+- Percentiles/trends from tiny samples are noise — suppress percentiles below a
+  min sample count and label sparklines with N.
+- Config is startup-only; add a **runtime** admin toggle to disable capture without
+  a restart (incident response: a tool starts emitting secrets → turn capture off
+  now, not after a redeploy).
+
+### P9 (moderate) — testing is functional, not hardening
+Missing for production: shutdown-flush test, concurrency/soak (many coroutines
+emitting; assert caps hold and no lock contention), fault injection (throwing/full
+sink), redaction-bypass with nested secrets, backpressure-drops-successes-not-errors,
+and a property test on the ring buffer (idle-gap zero-fill, monotonic-clock
+rotation). Add these before Phase C/D.
+
+### P10 (minor) — ship caller-dimension metrics only when identity is real
+"Top caller / by org / by agent-kind" depends on R1. If identity is blank on the
+`/mcp` path, a leaderboard that's silently empty or skewed is worse than absent.
+Gate the caller-dimension cards behind the confirmed propagation fix; ship
+tool-dimension analytics first.
+
+## Scorecard
+
+| Dimension | Score | Notes |
+|---|---:|---|
+| Architecture & decoupling | 9/10 | neutral `emit` seam + existing plugin contract is the right call |
+| Scalability (single-node) | 8/10 | bounded memory + O(1) hot path solid; org/caller dimension uncapped (P6) |
+| Scalability (multi-node) | 4/10 | per-worker rollups shown as global is a real bug (P2) |
+| Reliability / failure isolation | 5/10 | right instinct, missing the written contract + lifecycle flush (P1, P3, P4) |
+| Data governance / security | 5/10 | redaction shallow, defaults too open, no retention/pagination (P5) |
+| Operability / self-observability | 5/10 | no self-metrics, no runtime kill-switch (P7, P8) |
+| Testing rigor | 6/10 | functional coverage good; hardening/soak/fault tests absent (P9) |
+| Feature value / engagement | 9/10 | trends, leaderboards, heatmap, result-capture are genuinely compelling |
+
+## Overall: **6.5 / 10 — Strong design, not yet production-grade**
+
+A well-architected plan that would pass design review but **not** a production
+readiness review as written. The decoupling and single-node scalability are
+genuinely good; the feature set is compelling. The gap to production is the
+operational spine: **lifecycle + shutdown flush (P1)**, **multi-worker correctness
+(P2)**, a **failure-isolation contract (P3)**, and **error-preserving backpressure
+(P4)** are blockers; data-governance defaults (P5) and self-observability (P7) are
+close behind. Land P1–P4 and flip the result-capture default to off, and this moves
+to ~8.5/10 and is shippable. Recommend: Phase A/B (tool-dimension analytics) can
+proceed once P1–P4 are folded in; hold Phase C/D (result capture, caller metrics)
+until P5–P6 and R1 are resolved.
