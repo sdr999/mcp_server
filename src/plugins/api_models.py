@@ -76,6 +76,28 @@ class ToolGrantOut(BaseModel):
     created_at: float
 
 
+# --- Tool onboarding -------------------------------------------------------
+class OnboardRequest(BaseModel):
+    name: str = Field(..., min_length=1, description="Tool name")
+    source: str = Field(..., description="Python source for the tool module")
+    requirements: List[str] = Field(default_factory=list, description="pip requirements")
+    overwrite: bool = Field(False, description="Replace an existing tool of the same name")
+    auto_heal: bool = Field(True, description="Attempt auto-fixes on validation errors")
+
+
+class ValidateSourceRequest(BaseModel):
+    source: str = Field(..., description="Python source to validate (not installed)")
+    requirements: List[str] = Field(default_factory=list)
+    name: Optional[str] = None
+
+
+class AcceptProposalRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    source: str = Field(...)
+    requirements: List[str] = Field(default_factory=list)
+    overwrite: bool = True
+
+
 # --- Tool execution --------------------------------------------------------
 class ToolCallRequest(BaseModel):
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Tool arguments object")

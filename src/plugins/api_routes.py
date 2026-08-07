@@ -15,14 +15,17 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .api_models import (
+    AcceptProposalRequest,
     MemberBind,
     MemberOut,
+    OnboardRequest,
     OrgCreate,
     OrgOut,
     ToolCallRequest,
     ToolCallResult,
     ToolGrantCreate,
     ToolGrantOut,
+    ValidateSourceRequest,
     WorkspaceCreate,
     WorkspaceOut,
 )
@@ -37,6 +40,9 @@ TYPED_PATHS = {
     "/admin/orgs/{org}/members",
     "/admin/orgs/{org}/tool-grants",
     "/tools/{name}/call",
+    "/admin/tools/onboard",
+    "/admin/tools/onboard/accept_proposal",
+    "/admin/tools/validate_source",
 }
 
 router = APIRouter()
@@ -173,6 +179,71 @@ async def list_tool_grants(org: str, request: Request):
         )
         for g in grants
     ]
+
+
+# --- Tool onboarding -------------------------------------------------------
+@router.post("/admin/tools/onboard", status_code=201, tags=["admin: onboarding"])
+async def onboard_tool(body: OnboardRequest, request: Request):
+    """Onboard a tool from source + pip requirements. Returns 201 (installed) or
+    202 (held pending review); 409 on a name conflict without overwrite."""
+    if (denied := await enforce(request, "admin")) is not None:
+        return denied
+    st = request.app.state
+    if not st.onboarding.enabled:
+        return JSONResponse(
+            {"error": "tool onboarding is disabled (MCP_TOOL_ONBOARD_ENABLED=false)"}, status_code=503
+        )
+    from .onboarding import MAX_REQUIREMENTS, MAX_SOURCE_BYTES, OnboardingConflict
+    from .notifications import notify_tools_changed
+
+    clen = request.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > MAX_SOURCE_BYTES + 65536:
+        return JSONResponse({"error": "request body too large"}, status_code=413)
+    if len(body.source.encode("utf-8")) > MAX_SOURCE_BYTES:
+        return JSONResponse({"error": f"source exceeds the {MAX_SOURCE_BYTES}-byte limit"}, status_code=413)
+    if len(body.requirements) > MAX_REQUIREMENTS:
+        return JSONResponse({"error": f"too many requirements (max {MAX_REQUIREMENTS})"}, status_code=400)
+
+    try:
+        record = await st.onboarding.onboard(
+            body.name, body.source, body.requirements, overwrite=body.overwrite, auto_heal=body.auto_heal
+        )
+    except OnboardingConflict as exc:
+        return JSONResponse(
+            {"error": str(exc), "hint": "Set 'overwrite': true in your JSON request body to replace an existing tool."},
+            status_code=409,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    await notify_tools_changed(st.mcp)
+    return JSONResponse(record, status_code=202 if record.get("status") == "pending" else 201)
+
+
+@router.post("/admin/tools/validate_source", tags=["admin: onboarding"])
+async def validate_source(body: ValidateSourceRequest, request: Request):
+    """Dry-run: syntax/dependency check + autofix hints without installing."""
+    if (denied := await enforce(request, "admin")) is not None:
+        return denied
+    res = request.app.state.onboarding.validate_source(body.source, body.requirements, name=body.name)
+    return JSONResponse(res)
+
+
+@router.post("/admin/tools/onboard/accept_proposal", status_code=201, tags=["admin: onboarding"])
+async def accept_proposal(body: AcceptProposalRequest, request: Request):
+    """Accept a dry-run proposal and onboard the tool immediately."""
+    if (denied := await enforce(request, "admin")) is not None:
+        return denied
+    st = request.app.state
+    from .notifications import notify_tools_changed
+    try:
+        record = await st.onboarding.onboard(
+            body.name, body.source, body.requirements, overwrite=body.overwrite, auto_heal=True
+        )
+        await notify_tools_changed(st.mcp)
+        return JSONResponse(record, status_code=201)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 # --- Tool execution --------------------------------------------------------

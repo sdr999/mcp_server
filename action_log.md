@@ -1,5 +1,22 @@
 # Action Log - Multi-Tenancy & RBAC Implementation
 
+## [2026-08-06] Typed FastAPI routes — onboarding batch
+
+Converted the body-carrying onboarding endpoints to typed FastAPI path
+operations (request validation + documented schema):
+- `POST /admin/tools/onboard` (OnboardRequest), `POST
+  /admin/tools/validate_source` (ValidateSourceRequest), `POST
+  /admin/tools/onboard/accept_proposal` (AcceptProposalRequest).
+- All error semantics preserved exactly: onboarding-disabled 503, oversized
+  source/body 413, too-many-requirements 400, name conflict 409, validation
+  ValueError 400, success 201 (installed) / 202 (pending). Reuses `enforce`,
+  `notify_tools_changed`, and the onboarding manager.
+- The no-body pending/approve/reject/revert/auto_patch routes stay as plain
+  wrapped routes (nothing to validate); still listed in /docs.
+- Full suite: **212 passed** (pre-existing telemetry failure unchanged).
+
+---
+
 ## [2026-08-06] Typed FastAPI routes for admin/RBAC + tool-call (first batch)
 
 Converted the highest-value endpoints from plain Starlette handlers to typed
