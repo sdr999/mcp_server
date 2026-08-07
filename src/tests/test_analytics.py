@@ -328,6 +328,33 @@ def test_hyperloglog_approximates():
 
 # -- lifecycle -------------------------------------------------------------
 
+def _build_echo_app(tmp_path, admin_token="mysecretadmin"):
+    import sys
+    from pathlib import Path
+    from plugins.app import build_app
+    from plugins.config import AppContext
+    SRC = str(Path(__file__).resolve().parent.parent)
+    d = tmp_path / f"an_pkg_{int(time.time()*1000) % 100000}"
+    d.mkdir()
+    (d / "__init__.py").write_text("")
+    (d / "echo.py").write_text("def echo(msg: str) -> str:\n    return msg\n")
+    sys.path.insert(0, SRC)
+    sys.path.insert(0, str(tmp_path))
+    ctx = AppContext(
+        base_dir=Path(SRC), tools_dir=d, env={}, auth_type="none",
+        api_key_header="authorization", api_key_value="", jwks_url="",
+        jwt_issuer=None, jwt_audience=None, jwt_required_scopes=None, host="127.0.0.1", port=0,
+        import_timeout=30, metrics_enabled=True, sandbox=False, sandbox_timeout=30,
+        sandbox_mem_mb=0, sandbox_cpu_sec=0, admin_token=admin_token,
+        require_signed=False, manifest_name="tools.manifest.json", signing_key=None,
+        onboard_enabled=True, onboard_autoinstall=True, onboard_network_check=False,
+        onboard_network_timeout=3.0, onboard_install_timeout=30.0,
+        onboard_allowlist_path=None, onboard_denylist_path=None,
+    )
+    app, _ = build_app(ctx)
+    return app
+
+
 # -- R1 spike: does the authenticated principal reach the tool wrapper? -----
 
 def test_r1_identity_reaches_wrapper_http(tmp_path):
@@ -376,6 +403,59 @@ def test_r1_identity_reaches_wrapper_http(tmp_path):
     assert p is not None, "wrapper saw no principal at all"
     assert getattr(p, "subject", None) == "admin-token", (
         f"identity did not propagate to wrapper: saw subject={getattr(p,'subject',None)!r}")
+
+
+def test_r1_identity_reaches_wrapper_mcp(tmp_path):
+    """Phase-0 gate for the /mcp protocol path: unlike /tools/{name}/call there is
+    no enforce() to re-set the ContextVar, so this genuinely tests whether
+    IdentityMiddleware's principal reaches the tool wrapper when the FastMCP
+    session manager invokes the tool. Runs the app under a real uvicorn server so
+    the full ASGI middleware stack + lifespan execute."""
+    import asyncio
+    import threading
+    import httpx
+    import uvicorn
+    from fastmcp import Client
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    seen = {}
+    observer.subscribe(lambda ev: seen.update(principal=ev.principal))
+    app = _build_echo_app(tmp_path)
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning", lifespan="on")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            time.sleep(0.05)
+        assert server.started, "uvicorn did not start"
+        port = server.servers[0].sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(100):
+            try:
+                if httpx.get(base + "/readyz", timeout=2).status_code == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        async def call():
+            transport = StreamableHttpTransport(
+                url=base + "/mcp", headers={"Authorization": "Bearer mysecretadmin"})
+            async with Client(transport) as client:
+                return await client.call_tool("echo", {"msg": "hi"})
+        asyncio.run(call())
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+    p = seen.get("principal")
+    assert p is not None, "wrapper saw no principal on the /mcp path"
+    assert getattr(p, "subject", None) == "admin-token", (
+        f"identity did NOT propagate on /mcp: saw subject={getattr(p, 'subject', None)!r}")
 
 
 def test_start_and_stop_drain():

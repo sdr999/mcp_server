@@ -57,15 +57,20 @@ Files changed:
 ## Phase 0 spike (R1) + Phase C — durable sinks, redaction, HMAC
 **Commit:** _(this change)_ · **Tests:** +7 · suite 247 passed.
 
-### R1 identity-propagation spike — RESOLVED
-- Added `test_r1_identity_reaches_wrapper_http`: boots the real app via
-  `TestClient`, subscribes a capture observer, calls `/tools/echo/call` with an
-  admin token, and asserts the principal the wrapper sees.
-- **Finding: identity DOES propagate to the wrapper on the HTTP path**
-  (`subject == "admin-token"`). Caller-dimension metrics are therefore **viable**
-  — the plan's biggest open question is answered for `/tools/{name}/call`.
-- Remaining: verify the `/mcp` protocol path with an MCP client session before
-  shipping caller cards cluster-wide (Phase D).
+### R1 identity-propagation spike — RESOLVED (both paths)
+- `test_r1_identity_reaches_wrapper_http`: boots the real app via `TestClient`,
+  subscribes a capture observer, calls `/tools/echo/call` with an admin token,
+  asserts the principal the wrapper sees. **Finding: identity propagates on the
+  HTTP path** (`subject == "admin-token"`).
+- `test_r1_identity_reaches_wrapper_mcp`: runs the app under a **real uvicorn
+  server** (full ASGI middleware stack + lifespan) and drives a genuine MCP
+  `tools/call` for `echo` over `/mcp` with a bearer token via the fastmcp
+  `Client` + `StreamableHttpTransport`. The `/mcp` path has no `enforce()` to
+  re-set the ContextVar, so this is the strict test. **Finding: identity ALSO
+  propagates on the `/mcp` protocol path** (`subject == "admin-token"`).
+- **Conclusion:** caller-dimension attribution is real for both HTTP and
+  MCP-protocol clients. No explicit principal-threading fix is required; the
+  ContextVar set by `IdentityMiddleware` reaches the tool wrapper on both paths.
 
 ### Phase C — result-audit data plane
 - `src/plugins/analytics/sink.py` (new):
@@ -113,15 +118,15 @@ presents partial data as global.
 ## Status vs plan
 | Phase | State |
 |---|---|
-| 0 seam + R1 spike | ✅ (HTTP path confirmed; `/mcp` still to verify) |
+| 0 seam + R1 spike | ✅ (HTTP **and** `/mcp` confirmed) |
 | A hardened tool-dimension analytics | ✅ |
 | B percentiles + heatmap + dashboard | ✅ |
 | C durable sinks + redaction + HMAC | ✅ |
-| D caller-dimension cards | ✅ (HTTP); cluster shared-backend deferred |
+| D caller-dimension cards | ✅ (HTTP + `/mcp`); cluster shared-backend deferred |
 
 ## Test summary
-- Analytics suite: **27 tests**, all passing.
-- Full suite: **250 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
+- Analytics suite: **28 tests**, all passing.
+- Full suite: **251 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
   pre-existing and environmental (OpenTelemetry not installed); confirmed to fail
   with these changes stashed.
 

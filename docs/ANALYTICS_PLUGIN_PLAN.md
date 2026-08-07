@@ -298,7 +298,7 @@ the endpoint/wrapper is **not guaranteed**, and `/mcp` has no `enforce()` fallba
 | P8 stats + kill-switch | none | §10 (min-sample), §13 (runtime toggle) |
 | P9 testing rigor | functional only | §16 |
 | P10 identity gating | half-working | §15 (gated) |
-| R1 ContextVar | unverified | §15 (spike gate) |
+| R1 ContextVar | unverified | §15 — **RESOLVED**: verified on HTTP *and* `/mcp` (see ANALYTICS_ACTION_LOG.md); identity reaches the wrapper on both paths |
 | R2 percentiles | impossible from sum/count | §10 (histogram buckets) |
 | R3 audit table reuse | write-amp | §11 (separate sink) |
 | R4 shim drift | duplicated | §3 single engine / shared aggregation |
