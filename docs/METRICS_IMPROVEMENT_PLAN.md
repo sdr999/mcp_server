@@ -3,6 +3,12 @@
 **Status:** proposed · **Branch:** `grade3` · **Scope:** tool-execution metrics,
 caller-identity attribution, dashboard data richness.
 
+> **Re-planned as a plugin:** the implementation approach now lives in
+> [`ANALYTICS_PLUGIN_PLAN.md`](ANALYTICS_PLUGIN_PLAN.md) (no-hard-dependency
+> plugin, scalable, plus usage-trend/leaderboard/result-capture features). This
+> document remains the source for the **as-is analysis** and the **senior-architect
+> review (R1–R8)**, which the plugin plan treats as binding constraints.
+
 ## 1. Problem statement
 
 The live dashboard is effectively limited to **invocation count, error count, and
