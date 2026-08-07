@@ -124,9 +124,23 @@ presents partial data as global.
 | C durable sinks + redaction + HMAC | ✅ |
 | D caller-dimension cards | ✅ (HTTP + `/mcp`); cluster shared-backend deferred |
 
+## Live end-to-end tests (from the running-server verification)
+The manual live-server run (real uvicorn + admin token + genuine `/mcp` call) was
+captured as automated integration tests so the behavior is regression-guarded:
+- `test_live_analytics_end_to_end_http` — boots the real app via `TestClient`,
+  drives 25 attributed successes + 4 real runtime errors (a raising tool) + 3
+  anonymous calls, then asserts the live endpoints: `/admin/analytics/summary`
+  rollups + leaderboards, caller attribution (`by_kind.service`, coverage),
+  `/admin/analytics/results?errors_only` (error metadata + `caller_fp`) with
+  pagination, **admin-gating** (401 without token), the **runtime kill-switch**
+  (disable → new calls not recorded), and Prometheus `/metrics` cross-check.
+- `test_r1_identity_reaches_wrapper_mcp` — extended to also assert the `/mcp`
+  protocol calls are counted and attributed in `/admin/analytics/summary` and
+  appear in `/metrics`.
+
 ## Test summary
-- Analytics suite: **28 tests**, all passing.
-- Full suite: **251 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
+- Analytics suite: **29 tests**, all passing.
+- Full suite: **252 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
   pre-existing and environmental (OpenTelemetry not installed); confirmed to fail
   with these changes stashed.
 

@@ -328,7 +328,7 @@ def test_hyperloglog_approximates():
 
 # -- lifecycle -------------------------------------------------------------
 
-def _build_echo_app(tmp_path, admin_token="mysecretadmin"):
+def _build_echo_app(tmp_path, admin_token="mysecretadmin", extra=None):
     import sys
     from pathlib import Path
     from plugins.app import build_app
@@ -338,6 +338,8 @@ def _build_echo_app(tmp_path, admin_token="mysecretadmin"):
     d.mkdir()
     (d / "__init__.py").write_text("")
     (d / "echo.py").write_text("def echo(msg: str) -> str:\n    return msg\n")
+    for fname, src in (extra or {}).items():
+        (d / fname).write_text(src)
     sys.path.insert(0, SRC)
     sys.path.insert(0, str(tmp_path))
     ctx = AppContext(
@@ -405,6 +407,79 @@ def test_r1_identity_reaches_wrapper_http(tmp_path):
         f"identity did not propagate to wrapper: saw subject={getattr(p,'subject',None)!r}")
 
 
+def test_live_analytics_end_to_end_http(tmp_path):
+    """End-to-end through the real app (mirrors the live server test): attributed
+    successes + real runtime errors + anonymous traffic, then assert the live
+    analytics endpoints — summary, results, admin-gating, and the kill-switch."""
+    from starlette.testclient import TestClient
+
+    boom = "def boom(x: int) -> int:\n    raise RuntimeError('intentional boom')\n"
+    app = _build_echo_app(tmp_path, extra={"boom.py": boom})
+    AUTH = {"Authorization": "Bearer mysecretadmin"}
+
+    with TestClient(app) as client:
+        for _ in range(50):
+            if client.get("/readyz").status_code == 200:
+                break
+            time.sleep(0.1)
+
+        # attributed successes
+        for _ in range(25):
+            assert client.post("/tools/echo/call", json={"arguments": {"msg": "hi"}},
+                               headers=AUTH).status_code == 200
+        # real runtime errors (attributed) -> reported in-band
+        for _ in range(4):
+            r = client.post("/tools/boom/call", json={"arguments": {"x": 1}}, headers=AUTH)
+            assert r.status_code == 200 and r.json().get("is_error") is True
+        # anonymous (unattributed)
+        for _ in range(3):
+            client.post("/tools/echo/call", json={"arguments": {"msg": "anon"}})
+
+        # deterministic flush of the async drain before asserting
+        app.state.analytics._flush_once()
+
+        # --- admin gating ---
+        assert client.get("/admin/analytics/summary").status_code == 401
+        s = client.get("/admin/analytics/summary", headers=AUTH).json()
+
+        # --- rollups reflect the traffic ---
+        assert s["tools"]["echo"]["calls"] == 28
+        assert s["tools"]["boom"]["calls"] == 4 and s["tools"]["boom"]["errors"] == 4
+        assert s["tools"]["boom"]["error_streak"] == 4
+        assert s["total_calls"] == 32 and s["total_errors"] == 4
+        names = [x["name"] for x in s["leaderboards"]["most_called"]]
+        assert names[0] == "echo"
+
+        # --- caller attribution (identity real on HTTP) ---
+        c = s["callers"]
+        assert c["attributed_calls"] == 29          # 25 echo + 4 boom
+        assert 0 < c["identity_coverage_percent"] < 100
+        assert c["by_kind"].get("service") == 29    # admin token -> kind=service
+
+        # --- result audit: errors captured with metadata ---
+        res = client.get("/admin/analytics/results?errors_only=true", headers=AUTH).json()
+        assert res["total"] == 4
+        assert all(r["error_type"] == "RuntimeError" for r in res["results"])
+        assert all(r["caller_fp"] for r in res["results"])
+        # pagination
+        p = client.get("/admin/analytics/results?errors_only=true&limit=2", headers=AUTH).json()
+        assert len(p["results"]) == 2 and p["next_cursor"] == 2
+
+        # --- runtime kill-switch ---
+        ctrl = client.post("/admin/analytics/control", json={"enabled": False},
+                           headers=AUTH).json()
+        assert ctrl["enabled"] is False
+        client.post("/tools/echo/call", json={"arguments": {"msg": "after"}}, headers=AUTH)
+        app.state.analytics._flush_once()
+        s2 = client.get("/admin/analytics/summary", headers=AUTH).json()
+        assert s2["tools"]["echo"]["calls"] == 28   # disabled -> not recorded
+
+        # --- Prometheus /metrics cross-check ---
+        metrics = client.get("/metrics").text
+        assert 'mcp_tool_calls_total{tool="echo"}' in metrics
+        assert 'mcp_tool_errors_total{tool="boom"}' in metrics
+
+
 def test_r1_identity_reaches_wrapper_mcp(tmp_path):
     """Phase-0 gate for the /mcp protocol path: unlike /tools/{name}/call there is
     no enforce() to re-set the ContextVar, so this genuinely tests whether
@@ -446,8 +521,20 @@ def test_r1_identity_reaches_wrapper_mcp(tmp_path):
             transport = StreamableHttpTransport(
                 url=base + "/mcp", headers={"Authorization": "Bearer mysecretadmin"})
             async with Client(transport) as client:
-                return await client.call_tool("echo", {"msg": "hi"})
+                for _ in range(3):
+                    await client.call_tool("echo", {"msg": "hi"})
         asyncio.run(call())
+
+        # metrics reflect the MCP-path calls (poll the async drain via the endpoint)
+        summary = {}
+        for _ in range(40):
+            summary = httpx.get(base + "/admin/analytics/summary",
+                                headers={"Authorization": "Bearer mysecretadmin"},
+                                timeout=2).json()
+            if summary.get("callers", {}).get("attributed_calls", 0) >= 3:
+                break
+            time.sleep(0.1)
+        metrics_text = httpx.get(base + "/metrics", timeout=2).text
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -456,6 +543,10 @@ def test_r1_identity_reaches_wrapper_mcp(tmp_path):
     assert p is not None, "wrapper saw no principal on the /mcp path"
     assert getattr(p, "subject", None) == "admin-token", (
         f"identity did NOT propagate on /mcp: saw subject={getattr(p, 'subject', None)!r}")
+    # the MCP protocol calls were counted AND attributed to the admin principal
+    assert summary["tools"]["echo"]["calls"] >= 3
+    assert summary["callers"]["attributed_calls"] >= 3
+    assert 'mcp_tool_calls_total{tool="echo"}' in metrics_text
 
 
 def test_start_and_stop_drain():
