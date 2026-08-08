@@ -478,7 +478,9 @@ def test_live_analytics_end_to_end_http(tmp_path):
         # --- Prometheus /metrics cross-check ---
         metrics = client.get("/metrics").text
         assert 'mcp_tool_calls_total{tool="echo"}' in metrics
-        assert 'mcp_tool_errors_total{tool="boom"}' in metrics
+        assert 'mcp_tool_errors_total{reason="runtime",tool="boom"}' in metrics  # Phase E taxonomy
+        assert "mcp_tool_duration_seconds_bucket{" in metrics                     # Phase E histogram
+        assert 'le="+Inf"' in metrics
 
 
 def test_r1_identity_reaches_wrapper_mcp(tmp_path):

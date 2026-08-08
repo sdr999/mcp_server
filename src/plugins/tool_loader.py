@@ -222,7 +222,12 @@ class ToolLoader:
                     return result
 
                 except Exception as exc:
-                    METRICS.inc("mcp_tool_errors_total", tool=tool_name)
+                    # Phase E: single-counted error taxonomy. Validation (400) is
+                    # caught at the route before the wrapper runs, so here we only
+                    # see timeout / sandbox / runtime failures.
+                    reason = ("timeout" if isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                              else ("sandbox" if sandbox else "runtime"))
+                    METRICS.inc("mcp_tool_errors_total", tool=tool_name, reason=reason)
                     err = exc
                     raise
                 finally:

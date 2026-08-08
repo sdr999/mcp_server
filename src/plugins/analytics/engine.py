@@ -192,6 +192,10 @@ class AnalyticsEngine:
                                            ttl_seconds=self.cfg.result_ttl_seconds)
             log.info("analytics: persisting to the tenancy DB (analytics_results collection)")
 
+    @property
+    def queue_depth(self) -> int:
+        return len(self._succ) + len(self._err)
+
     # -- neutral seam ------------------------------------------------------
     def subscribe(self) -> None:
         from ..observer import subscribe

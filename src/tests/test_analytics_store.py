@@ -163,3 +163,38 @@ def test_content_policy_strips_bodies_without_permission():
     assert "result_excerpt" not in stripped["results"][0]
     kept = _apply_content_policy({"results": [dict(r) for r in data["results"]]}, allowed=True)
     assert kept["results"][0]["result_excerpt"] == "secret-ish"
+
+
+# -- Phase E: histogram buckets, error taxonomy, self-metrics --------------
+
+def test_legacy_metrics_histogram_render():
+    from legacy_metrics import LegacyMetrics
+    m = LegacyMetrics()
+    m.declare_histogram("lat", (0.01, 0.1, 1.0), "latency")
+    for v in (0.005, 0.05, 0.5, 5.0):    # one in each bucket incl. overflow
+        m.observe("lat", v, tool="t")
+    out = m.render()
+    assert "# TYPE lat histogram" in out
+    # cumulative buckets: le=0.01 ->1, le=0.1 ->2, le=1 ->3, +Inf ->4
+    assert 'lat_bucket{tool="t",le="0.01"} 1' in out
+    assert 'lat_bucket{tool="t",le="0.1"} 2' in out
+    assert 'lat_bucket{tool="t",le="1"} 3' in out
+    assert 'lat_bucket{tool="t",le="+Inf"} 4' in out
+    assert 'lat_count{tool="t"} 4' in out
+
+
+def test_metrics_histogram_quantile_derivable():
+    # a TSDB computes p95 from the bucket series; verify the cumulative counts
+    # are monotonic and the +Inf bucket equals the total (the histogram invariant)
+    from legacy_metrics import LegacyMetrics
+    m = LegacyMetrics()
+    m.declare_histogram("d", (0.01, 0.1, 1.0), "")
+    for _ in range(90):
+        m.observe("d", 0.05)             # ~50ms
+    for _ in range(10):
+        m.observe("d", 2.0)              # slow tail
+    out = m.render()
+    lines = [l for l in out.splitlines() if l.startswith("d_bucket")]
+    counts = [int(l.split()[-1]) for l in lines]
+    assert counts == sorted(counts)      # monotonic non-decreasing
+    assert counts[-1] == 100             # +Inf == total observations

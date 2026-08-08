@@ -176,7 +176,34 @@ directly, so no migration needed there).
 | C durable sinks + redaction + HMAC | ✅ |
 | D caller-dimension cards | ✅ (HTTP + `/mcp`); cluster shared-backend deferred |
 | F reuse tenancy DB (same db, separate collection) | ✅ storage (sqlite/memory/mongo) + RBAC permission gating + org-scoped reads + content policy |
-| E TSDB-native aggregation | ⬜ (specced) |
+| E TSDB-native aggregation (minimal slice) | ✅ histogram buckets + error taxonomy + scrapable self-metrics; label/dashboard-source/plane-unification + OTLP push deferred (need pipeline decision + infra) |
+
+## Phase E (minimal slice) — TSDB-ready metrics, no external infra
+**Commit:** _(this change)_ · **Tests:** +2 · suite 262 passed. Implemented the
+self-contained, in-repo part of the Phase E spec (§20.2); the pipeline-coupled part
+is deferred pending the Prometheus-multiproc-vs-OTLP and dashboard-vs-Grafana decisions.
+
+- **Real latency histogram** (`legacy_metrics.py` + `telemetry/metrics.py`):
+  `declare_histogram(name, buckets)`; `observe` accumulates bucket counts; `render`
+  emits `mcp_tool_duration_seconds_bucket{le=…}` + `_sum` + `_count`. `register_metrics`
+  declares the duration metric as a histogram with explicit buckets — so the **TSDB
+  computes p50/p95/p99 via `histogram_quantile`**, not a percentile faked in-process (R2).
+- **Error taxonomy, single-counted** (`tool_loader.py` + `routes.py`): a `reason`
+  label — `timeout`/`sandbox`/`runtime` at the wrapper; `validation` at the route's
+  400 branch (the wrapper never runs for a schema failure, so no double-count, R6).
+- **Scrapable self-metrics** (`register_metrics`): `mcp_analytics_queue_depth`,
+  `_events_dropped_total`, `_drain_lag_seconds`, `_sink_errors_total`, `_breaker_open`
+  — silent data loss is now alertable, not just visible on the dashboard JSON (P7).
+- Config-safe: additive, flag-free, fail-open. Default `/metrics` behavior otherwise
+  unchanged; existing `mcp_tool_calls_total{tool}` queries still work.
+- **Live-verified:** `/metrics` emits the `_bucket{le=…}` series, `mcp_tool_errors_total
+  {reason="validation",tool="add"}`, and all five `mcp_analytics_*` gauges.
+
+**Still deferred in Phase E (need infra + a decision):** bounded `org_id`/`kind`
+labels on the counters with a cardinality guard (item 3); retiring in-process rollups
+so the dashboard reads the TSDB/Grafana (item 5); unifying the two counter planes
+(item 7); OTLP push export (needs the OpenTelemetry packages installed + a collector).
+These cannot be verified here (no TSDB/collector in the environment).
 
 ## Live end-to-end tests (from the running-server verification)
 The manual live-server run (real uvicorn + admin token + genuine `/mcp` call) was
@@ -193,8 +220,8 @@ captured as automated integration tests so the behavior is regression-guarded:
   appear in `/metrics`.
 
 ## Test summary
-- Analytics suite: **42 tests** (`test_analytics.py` + `test_analytics_store.py`), all passing.
-- Full suite: **260 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
+- Analytics suite: **44 tests** (`test_analytics.py` + `test_analytics_store.py`), all passing.
+- Full suite: **262 passed**, 1 failure (`test_telemetry_bootstrap_lifecycle`) —
   pre-existing and environmental (OpenTelemetry not installed); confirmed to fail
   with these changes stashed.
 
