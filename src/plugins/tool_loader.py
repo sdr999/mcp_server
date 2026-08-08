@@ -28,6 +28,8 @@ from fastmcp.tools import FunctionTool
 
 from metrics import METRICS
 from tools_sdk import TOOL_MARKER
+from .observer import emit, ToolEvent          # neutral seam (no deps) — hot-path safe
+from .identity import get_current_principal
 from .sandbox import ContainerPool, SandboxConfig
 from .signing import ToolVerifier
 
@@ -189,7 +191,6 @@ class ToolLoader:
         @functools.wraps(original)
         async def wrapper(**kwargs):
             from .telemetry import tool_execution_span
-            from .observer import emit, ToolEvent
             start = time.perf_counter()
             METRICS.inc("mcp_tool_calls_total", tool=tool_name)
             ok = False
@@ -237,7 +238,6 @@ class ToolLoader:
                     # unsubscribed; never raises into the call). Principal may be
                     # blank on the /mcp path until the identity-propagation fix.
                     with contextlib.suppress(Exception):
-                        from .identity import get_current_principal
                         emit(ToolEvent(tool=tool_name, duration=dur, ok=ok, error=err,
                                        result=result if ok else None,
                                        principal=get_current_principal()))

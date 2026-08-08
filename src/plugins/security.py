@@ -246,8 +246,12 @@ async def require_permission(request, permission: str):
 
     principal = getattr(request.state, "principal", None)
     if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
-        if await _jwt_ok(request):
-            principal = getattr(request.state, "principal", None)
+        try:
+            if await _jwt_ok(request):
+                principal = getattr(request.state, "principal", None)
+        except Exception:
+            # a misconfigured verifier must deny, never 500 the endpoint
+            log.debug("require_permission: _jwt_ok raised (treated as unauth)", exc_info=True)
 
     perms = getattr(principal, "permissions", None) or set()
     if permission in perms:

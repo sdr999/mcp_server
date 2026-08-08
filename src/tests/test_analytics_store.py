@@ -198,3 +198,52 @@ def test_metrics_histogram_quantile_derivable():
     counts = [int(l.split()[-1]) for l in lines]
     assert counts == sorted(counts)      # monotonic non-decreasing
     assert counts[-1] == 100             # +Inf == total observations
+
+
+# -- production hardening: sink re-buffers on store failure (F1/F2) ---------
+
+def test_tenancy_sink_rebuffers_on_store_failure():
+    from plugins.analytics.sink import TenancyBackedSink
+
+    class FlakyStore:
+        def __init__(self):
+            self.fail = True
+            self.saved = []
+        async def append_analytics(self, rows):
+            if self.fail:
+                raise IOError("db down")
+            self.saved.extend(rows)
+
+    async def run():
+        store = FlakyStore()
+        sink = TenancyBackedSink(store, max_results=100)
+        for i in range(3):
+            sink.append({"ts": 1.0, "tool": "t", "ok": False, "n": i})
+        # first flush fails -> rows must be re-buffered, not lost, and raise
+        try:
+            await sink.aflush()
+            assert False, "expected the store failure to propagate"
+        except IOError:
+            pass
+        # recover: next flush persists the SAME rows (nothing was dropped)
+        store.fail = False
+        await sink.aflush()
+        assert len(store.saved) == 3
+        assert sink.dropped == 0
+    asyncio.run(run())
+
+
+def test_tenancy_sink_buffer_is_bounded():
+    from plugins.analytics.sink import TenancyBackedSink
+
+    class DeadStore:
+        async def append_analytics(self, rows):
+            raise IOError("down")
+
+    async def run():
+        sink = TenancyBackedSink(DeadStore(), max_results=10, max_buffer=50)
+        for i in range(200):                 # flood far past the cap
+            sink.append({"ts": 1.0, "tool": "t", "ok": True, "n": i})
+        assert len(sink._buffer) <= 50       # bounded, no unbounded growth
+        assert sink.dropped > 0              # overflow was counted, not silent
+    asyncio.run(run())

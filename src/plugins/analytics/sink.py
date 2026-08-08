@@ -147,15 +147,21 @@ class TenancyBackedSink:
     ``aquery`` reads back org-scoped for RBAC. A bounded in-memory tail backs the
     sync ``query`` fallback so nothing on the read path blocks."""
 
-    def __init__(self, store, max_results: int = 1000, ttl_seconds: int = 604800):
+    def __init__(self, store, max_results: int = 1000, ttl_seconds: int = 604800,
+                 max_buffer: int = 10000):
         self._store = store
-        self._buffer: Deque[dict] = deque()
+        # Bounded write buffer: unlike a naive queue this can't grow without limit
+        # if the store stalls; overflow is counted, not silently ignored (F2).
+        self._buffer: Deque[dict] = deque(maxlen=max(1, max_buffer))
         self._tail: Deque[dict] = deque(maxlen=max(1, max_results))
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
+        self.dropped = 0
 
     def append(self, row: dict) -> None:
         with self._lock:
+            if self._buffer.maxlen and len(self._buffer) >= self._buffer.maxlen:
+                self.dropped += 1          # oldest buffered row is about to be evicted
             self._buffer.append(row)
             self._tail.append(row)
 
@@ -163,8 +169,19 @@ class TenancyBackedSink:
         with self._lock:
             batch = list(self._buffer)
             self._buffer.clear()
-        if batch:
+        if not batch:
+            return
+        try:
             await self._store.append_analytics(batch)   # durable, shared DB
+        except Exception:
+            # Re-buffer on failure so a transient store outage doesn't lose audit
+            # rows (F1). Bounded: extendleft respects maxlen; count anything the
+            # cap forces us to shed. Re-raise so the engine breaker still counts it.
+            with self._lock:
+                overflow = max(0, (len(self._buffer) + len(batch)) - (self._buffer.maxlen or len(batch)))
+                self._buffer.extendleft(reversed(batch))
+                self.dropped += overflow
+            raise
 
     def query(self, tool: str = "", errors_only: bool = False,
               cursor: int = 0, limit: int = 50) -> dict:

@@ -475,6 +475,7 @@ class AnalyticsEngine:
                     "drain_lag_seconds": round(self.drain_lag, 4),
                     "breaker_open": self.breaker_open,
                     "queue_depth": len(self._succ) + len(self._err),
+                    "sink_dropped": getattr(self._sink, "dropped", 0),
                     "tool_evictions": self._tools.evictions,
                 },
             }
