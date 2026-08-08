@@ -19,7 +19,10 @@ class ABTestManager:
             return key, variants[key]
 
         variant_keys = sorted(variants.keys())
-        hash_val = int(hashlib.md5(f"{tenant_id}:{prompt_name}".encode("utf-8")).hexdigest(), 16) % 100
+        # Hash straight into the variant range. The old intermediate `% 100`
+        # skewed allocation whenever the variant count didn't divide 100 evenly
+        # (e.g. 3 variants), biasing toward lower indices.
+        hash_val = int(hashlib.md5(f"{tenant_id}:{prompt_name}".encode("utf-8")).hexdigest(), 16)
         idx = hash_val % len(variant_keys)
         selected_key = variant_keys[idx]
         return selected_key, variants[selected_key]

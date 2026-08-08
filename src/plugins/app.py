@@ -146,7 +146,11 @@ def build_app(ctx):
     unauthorized_logger = UnauthorizedLogger(unauthorized_log_path)
     app.add_middleware(UnauthorizedLoggingMiddleware, logger=unauthorized_logger)
 
-    # Middleware LIFO ordering: Chaos (innermost) -> Reliability -> Budget -> Identity (outermost)
+    # add_middleware is LIFO: the last one added is the OUTERMOST (runs first on a
+    # request). Actual execution order, outermost -> innermost:
+    #   [ApiKey] -> Identity -> Trace -> Chaos -> Reliability -> Budget -> Unauthorized -> app
+    # Identity is outer to Budget, so request.state.principal (hence the tenant) is
+    # already populated when BudgetEnforcerMiddleware runs.
     app.add_middleware(BudgetEnforcerMiddleware, cost_tracker=cost_tracker)
     app.add_middleware(ReliabilityMiddleware, rate_limiter_registry=rate_limiter_registry)
     app.add_middleware(ChaosMiddleware, chaos_engine=chaos_engine)

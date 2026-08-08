@@ -9,6 +9,12 @@ from typing import Dict, Any, Optional, List
 log = logging.getLogger("MCP_logger")
 
 
+def _version_key(v: str) -> tuple:
+    """Sort key that orders version strings numerically (v1.10.0 > v1.9.0)."""
+    nums = re.findall(r"\d+", v)
+    return tuple(int(n) for n in nums) if nums else (0,)
+
+
 class PromptRepository:
     """Thread-safe versioned prompt template repository."""
 
@@ -47,7 +53,9 @@ class PromptRepository:
                 return None
             if version and version in versions:
                 return dict(versions[version])
-            latest_version = sorted(versions.keys())[-1]
+            # Numeric (semver) ordering, not lexicographic -- otherwise 'v1.10.0'
+            # sorts before 'v1.9.0' and callers get a stale template.
+            latest_version = max(versions.keys(), key=_version_key)
             return dict(versions[latest_version])
 
     def hydrate(self, template: str, variables: Optional[Dict[str, Any]] = None) -> str:

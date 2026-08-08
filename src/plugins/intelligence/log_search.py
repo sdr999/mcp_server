@@ -21,8 +21,12 @@ class LogSearchIndex:
         self._masker = SecretMaskingFilter()
 
     def _clean_text(self, obj: Any) -> str:
-        text = str(obj or "")
-        return self._masker.mask_text(text)
+        # Key-based secret redaction only fires on dicts; stringifying first
+        # bypassed it and left password/api_key/token VALUES in the searchable
+        # index. Redact the dict structurally, THEN stringify + mask bearer tokens.
+        if isinstance(obj, dict):
+            obj = self._masker._redact_dict(obj)
+        return self._masker.mask_text(str(obj or ""))
 
 
     def _tokenize(self, text: str) -> List[str]:

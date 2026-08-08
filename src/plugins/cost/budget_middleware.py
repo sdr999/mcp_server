@@ -22,7 +22,12 @@ class BudgetEnforcerMiddleware(BaseHTTPMiddleware):
         if not tracker:
             return await call_next(request)
 
-        tenant_id = getattr(request.state, "tenant_id", "default")
+        # Derive the tenant from the resolved principal (IdentityMiddleware runs
+        # outer to this one, so request.state.principal is populated). Nothing ever
+        # sets request.state.tenant_id, so the old lookup collapsed every caller
+        # onto a single "default" budget bucket.
+        principal = getattr(request.state, "principal", None)
+        tenant_id = getattr(principal, "org_id", None) or "default"
         current_spend = tracker.get_tenant_spend(tenant_id)
         budget_limit = getattr(request.app.state, "tenant_monthly_budget_usd", self.default_budget_usd)
 
