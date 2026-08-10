@@ -662,8 +662,6 @@ paths:
         '200':
           description: List of prompt templates
 
-          description: Connection Limit Exceeded — Max 10 active SSE streams reached
-
   /admin/tools/onboard:
 
 

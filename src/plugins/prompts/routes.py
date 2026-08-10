@@ -55,7 +55,10 @@ async def get_prompt_variant_handler(request):
 
     name = request.path_params.get("name", "")
     version = request.query_params.get("version")
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    # Sticky A/B allocation is per-tenant; derive it from the resolved principal
+    # (request.state.tenant_id is never set, which made selection effectively global).
+    principal = getattr(request.state, "principal", None)
+    tenant_id = getattr(principal, "org_id", None) or "default"
 
     prompt_data = repo.get_prompt(name=name, version=version)
     if not prompt_data:
