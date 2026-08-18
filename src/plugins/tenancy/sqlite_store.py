@@ -10,9 +10,18 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+import random
+import logging
+
 from plugins.identity import Principal, derive_principal_id, select_tenant_context
 from .base import TenancyStore
 from .models import AuditEntry, Membership, Organization, Role, ToolGrant, ToolOwnership, Workspace
+
+log = logging.getLogger("MCP_logger")
+
+class StoreError(Exception):
+    pass
+
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -25,6 +34,48 @@ class SqliteTenancyStore(TenancyStore):
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self._lock = asyncio.Lock()
+        self._read_only = False
+
+    def _execute_with_retry(self, func, is_write=False):
+        if is_write and self._read_only:
+            log.critical("Attempted write operation while database is in READ_ONLY mode")
+            raise StoreError("Database in READ_ONLY recovery mode")
+            
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except sqlite3.OperationalError as e:
+                err_msg = str(e).lower()
+                if "locked" in err_msg or "busy" in err_msg:
+                    if attempt < max_retries - 1:
+                        time.sleep(random.uniform(0.05, 0.2))
+                        try:
+                            with self._get_conn() as conn:
+                                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                        except Exception:
+                            pass
+                        continue
+                
+                if is_write and ("disk i/o" in err_msg or "readonly" in err_msg or "read-only" in err_msg or "permission" in err_msg):
+                    self._read_only = True
+                    log.critical("Database I/O error, switching to READ_ONLY mode: %s", e)
+                    raise StoreError("Database in READ_ONLY recovery mode") from e
+                
+                if attempt == max_retries - 1:
+                    if is_write and ("locked" in err_msg or "busy" in err_msg):
+                        self._read_only = True
+                        log.critical("Write failed permanently (locked/busy), switching to READ_ONLY mode: %s", e)
+                        raise StoreError("Database in READ_ONLY recovery mode") from e
+                    raise
+            except sqlite3.Error as e:
+                err_msg = str(e).lower()
+                if is_write and ("disk" in err_msg or "io" in err_msg or "read-only" in err_msg or "readonly" in err_msg or "permission" in err_msg):
+                    self._read_only = True
+                    log.critical("Database error, switching to READ_ONLY mode: %s", e)
+                    raise StoreError("Database in READ_ONLY recovery mode") from e
+                raise
+
 
     @contextlib.contextmanager
     def _get_conn(self):
@@ -163,7 +214,7 @@ class SqliteTenancyStore(TenancyStore):
                 cur.execute("CREATE INDEX IF NOT EXISTS ix_analytics_org_ts ON analytics_results (org_id, ts)")
                 conn.commit()
 
-        await asyncio.to_thread(_run_init)
+        await asyncio.to_thread(self._execute_with_retry, _run_init, True)
 
     async def is_empty(self) -> bool:
         def _run():
@@ -171,7 +222,7 @@ class SqliteTenancyStore(TenancyStore):
                 cur = conn.cursor()
                 cur.execute("SELECT (SELECT COUNT(*) FROM organizations) + (SELECT COUNT(*) FROM roles) AS n")
                 return cur.fetchone()["n"] == 0
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def close(self) -> None:
         # Connections are opened per-operation and closed in _get_conn(); nothing
@@ -222,7 +273,7 @@ class SqliteTenancyStore(TenancyStore):
                     permissions=permissions,
                 )
 
-        return await asyncio.to_thread(_query)
+        return await asyncio.to_thread(self._execute_with_retry, _query, False)
 
     async def create_org(self, org_id: str, name: str, settings: Optional[dict] = None) -> Organization:
         now = time.time()
@@ -238,7 +289,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
             return Organization(org_id=org_id, name=name, status="active", created_at=now, settings=settings or {})
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def get_org(self, org_id: str) -> Optional[Organization]:
         def _run():
@@ -256,7 +307,7 @@ class SqliteTenancyStore(TenancyStore):
                     settings=json.loads(r["settings_json"] or "{}"),
                 )
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def list_orgs(self, limit: int = 100, offset: int = 0) -> List[Organization]:
         def _run():
@@ -275,7 +326,7 @@ class SqliteTenancyStore(TenancyStore):
                     for r in rows
                 ]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def delete_org(self, org_id: str) -> bool:
         def _run():
@@ -287,7 +338,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
                 return deleted
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def create_workspace(self, workspace_id: str, org_id: str, name: str) -> Workspace:
         now = time.time()
@@ -302,7 +353,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
             return Workspace(workspace_id=workspace_id, org_id=org_id, name=name, created_at=now)
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def get_workspace(self, workspace_id: str) -> Optional[Workspace]:
         def _run():
@@ -314,7 +365,7 @@ class SqliteTenancyStore(TenancyStore):
                     return None
                 return Workspace(workspace_id=r["workspace_id"], org_id=r["org_id"], name=r["name"], created_at=r["created_at"])
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def list_workspaces(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Workspace]:
         def _run():
@@ -324,7 +375,7 @@ class SqliteTenancyStore(TenancyStore):
                 rows = cur.fetchall()
                 return [Workspace(workspace_id=r["workspace_id"], org_id=r["org_id"], name=r["name"], created_at=r["created_at"]) for r in rows]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def delete_workspace(self, workspace_id: str) -> bool:
         def _run():
@@ -335,7 +386,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
                 return deleted
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def bind_member(
         self,
@@ -356,7 +407,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
             return Membership(principal_id=principal_id, org_id=org_id, role=role, workspace_id=workspace_id)
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def get_memberships(self, principal_id: str) -> List[Membership]:
         def _run():
@@ -374,7 +425,7 @@ class SqliteTenancyStore(TenancyStore):
                     for r in rows
                 ]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def list_org_members(self, org_id: str, limit: int = 100, offset: int = 0) -> List[Membership]:
         def _run():
@@ -392,7 +443,7 @@ class SqliteTenancyStore(TenancyStore):
                     for r in rows
                 ]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def remove_member(
         self,
@@ -417,7 +468,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
                 return deleted
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def get_role(self, role_name: str) -> Optional[Role]:
         def _run():
@@ -429,7 +480,7 @@ class SqliteTenancyStore(TenancyStore):
                     return None
                 return Role(role=r["role"], permissions=json.loads(r["permissions_json"]))
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def list_roles(self, limit: int = 100, offset: int = 0) -> List[Role]:
         def _run():
@@ -439,7 +490,7 @@ class SqliteTenancyStore(TenancyStore):
                 rows = cur.fetchall()
                 return [Role(role=r["role"], permissions=json.loads(r["permissions_json"])) for r in rows]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def save_role(self, role_name: str, permissions: List[str]) -> Role:
         perms_str = json.dumps(permissions)
@@ -451,7 +502,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
             return Role(role=role_name, permissions=permissions)
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def set_tool_ownership(
         self,
@@ -483,7 +534,7 @@ class SqliteTenancyStore(TenancyStore):
                 tags=tags or [],
             )
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def get_tool_ownership(self, tool_name: str) -> Optional[ToolOwnership]:
         def _run():
@@ -502,7 +553,7 @@ class SqliteTenancyStore(TenancyStore):
                     tags=json.loads(r["tags_json"] or "[]"),
                 )
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def add_tool_grant(
         self,
@@ -525,7 +576,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
             return ToolGrant(id=gid, scope_type=scope_type, scope_id=scope_id, effect=effect, match_type=match_type, match_value=match_value, created_at=now)
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def list_tool_grants(self, scope_type: Optional[str] = None, scope_id: Optional[str] = None,
                                limit: int = 500, offset: int = 0) -> List[ToolGrant]:
@@ -560,7 +611,7 @@ class SqliteTenancyStore(TenancyStore):
                     for r in rows
                 ]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def log_audit(
         self,
@@ -597,7 +648,7 @@ class SqliteTenancyStore(TenancyStore):
                 detail=detail,
             )
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def query_audit(self, org_id: Optional[str] = None, limit: int = 50) -> List[AuditEntry]:
         def _run():
@@ -629,7 +680,7 @@ class SqliteTenancyStore(TenancyStore):
                     for r in reversed(rows)
                 ]
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     # -- analytics capability (separate table, same db) --------------------
     _AN_COLS = ("ts", "tool", "ok", "duration_ms", "error_type", "error_msg",
@@ -653,7 +704,7 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
 
         if params:
-            await asyncio.to_thread(_run)
+            await asyncio.to_thread(self._execute_with_retry, _run, True)
 
     async def query_analytics(self, *, org_id: Optional[str] = None, tool: str = "",
                               errors_only: bool = False, limit: int = 50, offset: int = 0) -> dict:
@@ -683,7 +734,7 @@ class SqliteTenancyStore(TenancyStore):
             nxt = offset + limit if offset + limit < total else None
             return {"total": total, "cursor": offset, "next_cursor": nxt, "results": rows}
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, False)
 
     async def purge_analytics(self, cutoff: float) -> int:
         def _run():
@@ -693,4 +744,4 @@ class SqliteTenancyStore(TenancyStore):
                 conn.commit()
                 return cur.rowcount
 
-        return await asyncio.to_thread(_run)
+        return await asyncio.to_thread(self._execute_with_retry, _run, True)

@@ -135,6 +135,14 @@ class AppContext:
     upstream_probe_unhealthy_threshold: int = 3
     upstream_probe_healthy_threshold: int = 2
 
+    # --- Phase 6 Self-Healing & System Resilience ---
+    system_watchdog_enabled: bool = True
+    max_memory_percent: float = 90.0
+    max_cpu_percent: float = 85.0
+    task_job_timeout_sec: float = 300.0
+    task_max_retries: int = 3
+    openapi_auto_coerce: bool = True
+
 
 def make_parser() -> argparse.ArgumentParser:
 
@@ -325,6 +333,12 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         upstream_probe_timeout_sec=float(env.get("MCP_UPSTREAM_PROBE_TIMEOUT_SEC", "3.0")),
         upstream_probe_unhealthy_threshold=int(env.get("MCP_UPSTREAM_PROBE_UNHEALTHY_THRESHOLD", "3")),
         upstream_probe_healthy_threshold=int(env.get("MCP_UPSTREAM_PROBE_HEALTHY_THRESHOLD", "2")),
+        system_watchdog_enabled=env.get("MCP_SYSTEM_WATCHDOG_ENABLED", "true").lower() == "true",
+        max_memory_percent=float(env.get("MCP_MAX_MEMORY_PERCENT", "90.0")),
+        max_cpu_percent=float(env.get("MCP_MAX_CPU_PERCENT", "85.0")),
+        task_job_timeout_sec=float(env.get("MCP_TASK_JOB_TIMEOUT_SEC", "300.0")),
+        task_max_retries=int(env.get("MCP_TASK_MAX_RETRIES", "3")),
+        openapi_auto_coerce=env.get("MCP_OPENAPI_AUTO_COERCE", "true").lower() == "true",
     )
 
 

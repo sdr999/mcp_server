@@ -58,6 +58,38 @@ class OpenAPIToolManager:
         # collection_id -> {"spec": dict, "base_url": str, "tool_names": List[str], "auth_config": dict}
         self.collections: Dict[str, dict] = {}
 
+    def _coerce_arguments(self, schema: dict, arguments: dict) -> Tuple[dict, List[str]]:
+        coerced = dict(arguments)
+        modifications = []
+        properties = schema.get("properties", {})
+        for key, val in list(coerced.items()):
+            prop_schema = properties.get(key, {})
+            expected_type = prop_schema.get("type")
+            if not expected_type:
+                continue
+            
+            if isinstance(val, str):
+                if expected_type in ("integer", "number"):
+                    try:
+                        coerced[key] = int(val) if expected_type == "integer" else float(val)
+                        modifications.append(f"{key}: string -> {expected_type}")
+                    except ValueError:
+                        pass
+                elif expected_type == "boolean":
+                    if val.lower() == "true":
+                        coerced[key] = True
+                        modifications.append(f"{key}: string -> boolean")
+                    elif val.lower() == "false":
+                        coerced[key] = False
+                        modifications.append(f"{key}: string -> boolean")
+                elif expected_type == "array":
+                    coerced[key] = [val]
+                    modifications.append(f"{key}: scalar -> array")
+            elif not isinstance(val, list) and expected_type == "array":
+                coerced[key] = [val]
+                modifications.append(f"{key}: scalar -> array")
+                
+        return coerced, modifications
 
     def load_spec_content(self, spec_input: str) -> dict:
         """Load OpenAPI spec from HTTP URL, file path, or raw JSON/YAML text."""
@@ -266,7 +298,13 @@ class OpenAPIToolManager:
 
         async def openapi_tool_handler(**kwargs):
             cleaned = {k: v for k, v in kwargs.items() if v is not None}
-            return await self.execute_api_call(base_url, operation, auth_config, cleaned)
+            res = await self.execute_api_call(base_url, operation, auth_config, cleaned)
+            if res.get("is_error") or res.get("status_code", 200) >= 400:
+                coerced, mods = self._coerce_arguments(input_schema, cleaned)
+                if mods:
+                    log.warning(f"Auto-coercing OpenAPI arguments for {operation.get('operationId')}: {', '.join(mods)}")
+                    res = await self.execute_api_call(base_url, operation, auth_config, coerced)
+            return res
 
         params = [
             inspect.Parameter(
@@ -333,33 +371,111 @@ class OpenAPIToolManager:
         # JSON Body
         body = arguments.get("body")
 
-        try:
+        async def _do_request(args, q_vars, p_vars, h_vars):
+            p_path = path
+            for k, v in p_vars.items():
+                p_path = p_path.replace(f"{{{k}}}", str(v))
+            req_url = f"{base_url}{p_path}"
+            req_headers = dict(headers)
+            req_headers.update(h_vars)
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 resp = await client.request(
                     method=method,
-                    url=url,
-                    params=query_vars,
-                    headers=headers,
-                    json=body if body is not None else None,
+                    url=req_url,
+                    params=q_vars,
+                    headers=req_headers,
+                    json=args.get("body") if args.get("body") is not None else None,
                 )
-                
                 try:
                     res_data = resp.json()
                 except Exception:
                     res_data = resp.text
+                return resp, res_data
 
-                return {
-                    "operationId": operation["operationId"],
-                    "status_code": resp.status_code,
-                    "is_success": resp.is_success,
-                    "data": res_data,
-                }
+        try:
+            resp, res_data = await _do_request(arguments, query_vars, path_vars, header_vars)
+            
+            # SDE 5 Whitelisted Schema Auto-Coercion on 400 Bad Request
+            if resp.status_code == 400:
+                coerced_args, fixes = self._coerce_arguments(operation, arguments)
+                if fixes:
+                    log.warning("OpenAPI tool %r got HTTP 400; retrying with coerced arguments: %s", operation.get("operationId"), fixes)
+                    # Re-extract path/query/header/body with coerced arguments
+                    c_query_vars, c_path_vars, c_header_vars = {}, {}, {}
+                    for param in operation.get("parameters") or []:
+                        p_name, p_in = param.get("name"), param.get("in")
+                        if p_name and p_name in coerced_args:
+                            val = coerced_args[p_name]
+                            if p_in == "path":
+                                c_path_vars[p_name] = val
+                            elif p_in == "query":
+                                c_query_vars[p_name] = val
+                            elif p_in == "header":
+                                c_header_vars[p_name] = str(val)
+                    retry_resp, retry_res_data = await _do_request(coerced_args, c_query_vars, c_path_vars, c_header_vars)
+                    if retry_resp.is_success or retry_resp.status_code < 400:
+                        return {
+                            "operationId": operation["operationId"],
+                            "status_code": retry_resp.status_code,
+                            "is_success": retry_resp.is_success,
+                            "data": retry_res_data,
+                            "coercions_applied": fixes,
+                        }
+
+            return {
+                "operationId": operation["operationId"],
+                "status_code": resp.status_code,
+                "is_success": resp.is_success,
+                "data": res_data,
+            }
         except Exception as exc:
             return {
                 "operationId": operation["operationId"],
                 "is_error": True,
                 "error": f"HTTP execution failed for {method} {url}: {exc}",
             }
+
+    def _coerce_arguments(self, operation: dict, arguments: dict) -> Tuple[dict, List[str]]:
+        """SDE 5 Whitelisted type coercion helper for OpenAPI arguments."""
+        coerced = dict(arguments)
+        fixes = []
+
+        params_map = {p["name"]: p for p in (operation.get("parameters") or []) if "name" in p}
+        for k, val in list(coerced.items()):
+            param = params_map.get(k)
+            if not param:
+                continue
+            p_schema = param.get("schema") or {}
+            target_type = p_schema.get("type")
+
+            # 1. Stringified numbers ("123" -> 123, "12.3" -> 12.3)
+            if target_type == "integer" and isinstance(val, str):
+                try:
+                    coerced[k] = int(val)
+                    fixes.append(f"Coerced param {k!r} from str '{val}' to int")
+                except ValueError:
+                    pass
+            elif target_type == "number" and isinstance(val, str):
+                try:
+                    coerced[k] = float(val)
+                    fixes.append(f"Coerced param {k!r} from str '{val}' to float")
+                except ValueError:
+                    pass
+            # 2. Stringified booleans ("true"/"false" -> True/False)
+            elif target_type == "boolean" and isinstance(val, str):
+                if val.lower() in ("true", "1"):
+                    coerced[k] = True
+                    fixes.append(f"Coerced param {k!r} from str '{val}' to bool True")
+                elif val.lower() in ("false", "0"):
+                    coerced[k] = False
+                    fixes.append(f"Coerced param {k!r} from str '{val}' to bool False")
+            # 3. Scalar to Array ("val" -> ["val"])
+            elif target_type == "array" and not isinstance(val, list):
+                coerced[k] = [val]
+                fixes.append(f"Coerced param {k!r} from scalar to array [{val!r}]")
+
+        return coerced, fixes
 
     def remove_spec_collection(self, collection_id: str) -> bool:
         """Unregister all tools for a collection and delete spec from disk."""

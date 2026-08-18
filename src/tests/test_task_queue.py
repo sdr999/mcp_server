@@ -88,7 +88,7 @@ class TestInMemoryTaskQueue:
         q = InMemoryTaskQueue(fail_callback, worker_count=1)
         await q.start()
         try:
-            job = Job(tool_name="bad_tool", input_payload={})
+            job = Job(tool_name="bad_tool", input_payload={}, max_retries=0)
             await q.submit(job)
             await asyncio.sleep(0.2)
             result = await q.get_status(job.job_id)

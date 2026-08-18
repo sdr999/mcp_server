@@ -26,6 +26,7 @@ from .watcher import ToolDirectoryWatcher
 from .task_queue import TaskQueueEngine
 from .task_queue.routes import task_queue_routes
 from .upstream_health import UpstreamHealthChecker, upstream_health_routes
+from .system_watchdog import SystemWatchdog
 
 log = logging.getLogger("MCP_logger")
 
@@ -273,6 +274,14 @@ def build_app(ctx):
     )
     app.state.upstream_health_checker = upstream_health
 
+    # --- Phase 6: System Watchdog & Adaptive Load Shedder ---
+    system_watchdog = SystemWatchdog(
+        sample_interval_sec=getattr(ctx, "watchdog_interval_sec", 5.0),
+        max_cpu_percent=getattr(ctx, "max_cpu_percent", 85.0),
+        max_mem_percent=getattr(ctx, "max_mem_percent", 90.0),
+    )
+    app.state.system_watchdog = system_watchdog
+
     # --- Tenancy Store & RBAC Engine (Phase 1 & 2) ---
     from .tenancy import create_tenancy_store
     from .tenancy.seeder import seed_tenancy_store_if_empty
@@ -304,10 +313,12 @@ def build_app(ctx):
         rate_limiter_registry.start_cleanup_task()
         analytics.start()  # background drain task (owned by the lifespan)
 
-        # Phase 5: Start task queue workers and upstream health prober
+        # Phase 5 & 6: Start task queue workers, upstream health prober, and system watchdog
         await task_queue.start()
         if app_.state.upstreams._servers:
             await upstream_health.start()
+        if getattr(ctx, "system_watchdog_enabled", True):
+            await system_watchdog.start()
 
         async def _bootstrap():
             # Initialize tenancy DB and first-start self-seeding
@@ -336,11 +347,13 @@ def build_app(ctx):
             rate_limiter_registry.stop()
             with contextlib.suppress(Exception):
                 await analytics.stop()  # drain-and-flush: no error record is lost
-            # Phase 5: Stop task queue and upstream health prober
+            # Phase 5 & 6: Stop task queue, upstream health prober, and system watchdog
             with contextlib.suppress(Exception):
                 await task_queue.stop()
             with contextlib.suppress(Exception):
                 await upstream_health.stop()
+            with contextlib.suppress(Exception):
+                await system_watchdog.stop()
 
             if HAS_OTEL:
                 shutdown_telemetry()

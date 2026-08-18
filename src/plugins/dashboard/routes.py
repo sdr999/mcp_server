@@ -41,11 +41,13 @@ def _build_dashboard_summary(request) -> dict:
     analytics = getattr(st, "analytics", None)
     analytics_summary = analytics.get_stats() if analytics else {}
 
-    # Phase 5: Task Queue & Upstream Health stats
+    # Phase 5 & 6: Task Queue, Upstream Health & System Watchdog stats
     task_queue = getattr(st, "task_queue", None)
     task_queue_stats = task_queue.get_stats() if task_queue else {}
     health_checker = getattr(st, "upstream_health_checker", None)
     upstream_health_stats = health_checker.get_stats() if health_checker else {}
+    system_watchdog = getattr(st, "system_watchdog", None)
+    watchdog_stats = system_watchdog.get_stats() if system_watchdog else {}
 
     return {
         "server_status": "READY" if getattr(st, "ready", False) else "LOADING",
@@ -68,6 +70,7 @@ def _build_dashboard_summary(request) -> dict:
         "analytics": analytics_summary,
         "task_queue": task_queue_stats,
         "upstream_health": upstream_health_stats,
+        "system_watchdog": watchdog_stats,
     }
 
 

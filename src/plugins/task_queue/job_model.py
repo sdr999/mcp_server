@@ -32,6 +32,10 @@ class Job:
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     execution_time_sec: Optional[float] = None
+    retries_count: int = 0
+    max_retries: int = 3
+    is_dlq: bool = False
+    last_error: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -42,4 +46,8 @@ class Job:
             d["started_at"] = self.started_at.isoformat()
         if self.finished_at:
             d["finished_at"] = self.finished_at.isoformat()
+        d["retries_count"] = self.retries_count
+        d["max_retries"] = self.max_retries
+        d["is_dlq"] = self.is_dlq
+        d["last_error"] = self.last_error
         return d

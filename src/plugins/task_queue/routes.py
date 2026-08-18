@@ -75,9 +75,39 @@ async def admin_jobs_handler(request: Request) -> JSONResponse:
     })
 
 
+async def admin_jobs_dlq_handler(request: Request) -> JSONResponse:
+    if denied := await admin_denied(request):
+        return denied
+        
+    task_queue = getattr(request.app.state, "task_queue", None)
+    if not task_queue:
+        return JSONResponse({"error": "TaskQueueEngine not configured"}, status_code=500)
+        
+    dlq_jobs = task_queue.get_dlq_jobs()
+    return JSONResponse([j.to_dict() for j in dlq_jobs])
+
+
+async def retry_dlq_job_handler(request: Request) -> JSONResponse:
+    if denied := await admin_denied(request):
+        return denied
+        
+    job_id = request.path_params["job_id"]
+    task_queue = getattr(request.app.state, "task_queue", None)
+    if not task_queue:
+        return JSONResponse({"error": "TaskQueueEngine not configured"}, status_code=500)
+        
+    job = await task_queue.retry_dlq_job(job_id)
+    if not job:
+        return JSONResponse({"error": "Job not found in DLQ"}, status_code=404)
+        
+    return JSONResponse({"message": "Job re-enqueued", "job_id": job.job_id})
+
+
 def task_queue_routes() -> List[Route]:
     return [
         Route("/tools/{name}/async_call", endpoint=submit_job_handler, methods=["POST"]),
         Route("/jobs/{job_id}", endpoint=get_job_handler, methods=["GET"]),
         Route("/admin/jobs", endpoint=admin_jobs_handler, methods=["GET"]),
+        Route("/admin/jobs/dlq", endpoint=admin_jobs_dlq_handler, methods=["GET"]),
+        Route("/admin/jobs/dlq/{job_id}/retry", endpoint=retry_dlq_job_handler, methods=["POST"]),
     ]

@@ -102,6 +102,7 @@ class UpstreamRegistry:
         token_url: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        failover_group: Optional[List[str]] = None,
     ) -> None:
         spec = {
             "url": url,
@@ -113,6 +114,7 @@ class UpstreamRegistry:
             "token_url": token_url or None,
             "client_id": client_id or None,
             "client_secret": client_secret or None,
+            "failover_group": failover_group or [],
         }
         self._servers[name] = spec
         if self.storage_file:
@@ -165,13 +167,19 @@ class UpstreamRegistry:
 
 
     # -- proxied operations ------------------------------------------------
-    async def list_tools(self, name: str, health_checker=None) -> List[dict]:
+    async def list_tools(self, name: str, health_checker=None, hop_count: int = 0) -> List[dict]:
         from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
         # Phase 5: Short-circuit if upstream is unhealthy
         if health_checker and not health_checker.is_healthy(name):
+            failover_group = spec.get("failover_group", [])
+            if hop_count <= 1:
+                for backup_name in failover_group:
+                    if health_checker.is_healthy(backup_name):
+                        log.warning("Auto-rerouted call from unhealthy %r to backup %r", name, backup_name)
+                        return await self.list_tools(backup_name, health_checker=health_checker, hop_count=hop_count + 1)
             raise UpstreamError(f"upstream {name!r} is UNHEALTHY — skipping network call")
         with upstream_call_span(name, url=str(spec.get("url", ""))):
             try:
@@ -181,13 +189,19 @@ class UpstreamRegistry:
                 raise UpstreamError(f"could not reach upstream {name!r}: {exc}") from exc
             return [{"name": t.name, "description": getattr(t, "description", None)} for t in tools]
 
-    async def call_tool(self, name: str, tool: str, arguments: Optional[dict], health_checker=None) -> dict:
+    async def call_tool(self, name: str, tool: str, arguments: Optional[dict], health_checker=None, hop_count: int = 0) -> dict:
         from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
         # Phase 5: Short-circuit if upstream is unhealthy
         if health_checker and not health_checker.is_healthy(name):
+            failover_group = spec.get("failover_group", [])
+            if hop_count <= 1:
+                for backup_name in failover_group:
+                    if health_checker.is_healthy(backup_name):
+                        log.warning("Auto-rerouted call from unhealthy %r to backup %r", name, backup_name)
+                        return await self.call_tool(backup_name, tool, arguments, health_checker=health_checker, hop_count=hop_count + 1)
             raise UpstreamError(f"upstream {name!r} is UNHEALTHY — skipping network call")
         with upstream_call_span(f"{name}:{tool}", url=str(spec.get("url", ""))):
             try:

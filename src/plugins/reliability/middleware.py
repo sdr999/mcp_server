@@ -24,6 +24,15 @@ class ReliabilityMiddleware(BaseHTTPMiddleware):
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
+        # Check watchdog load shedding
+        watchdog = getattr(request.app.state, "system_watchdog", None)
+        is_shedding = (watchdog.is_shedding() if watchdog and hasattr(watchdog, "is_shedding") else False) or bool(getattr(request.app.state, "load_shedding", False))
+        if is_shedding and request.url.path not in {"/status", "/metrics", "/health"}:
+            return JSONResponse(
+                {"error": "Service Unavailable", "message": "Server overloaded - shedding load. Please retry shortly."},
+                status_code=503
+            )
+
         # Extract tenant_id from request.state set by IdentityMiddleware (runs before us via LIFO)
         tenant_id = getattr(request.state, "tenant_id", "") or ""
 
