@@ -207,6 +207,131 @@ paths:
 
 
 
+  /tools/{name}/async_call:
+    post:
+      tags:
+        - Tools
+        - Task Queue
+      summary: Submit Asynchronous Tool Call Job
+      description: Submits a tool execution as a background job and returns immediately with a 202 Accepted tracking status URL.
+      operationId: submitAsyncToolJob
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the registered MCP tool
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                arguments:
+                  type: object
+                  description: Key-value parameters passed to the tool
+      responses:
+        '202':
+          description: Job accepted and queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    example: QUEUED
+                  status_url:
+                    type: string
+                    example: /jobs/f0b20cc1-ad6a-4435-ae6d-0fd78195a950
+
+  /jobs/{job_id}:
+    get:
+      tags:
+        - Tools
+        - Task Queue
+      summary: Poll Asynchronous Job Status
+      description: Polls the current lifecycle status, execution time, result, or error of a submitted async job.
+      operationId: getJobStatus
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique UUID of the job
+      responses:
+        '200':
+          description: Job status and execution result
+        '404':
+          description: Job not found
+
+  /admin/jobs:
+    get:
+      tags:
+        - Onboarding & Admin
+        - Task Queue
+      summary: Admin Task Queue Overview & History
+      description: Returns aggregate task queue metrics (queued, running, completed, failed) and recent jobs history.
+      operationId: getAdminJobs
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Task queue stats and recent jobs list
+
+  /admin/jobs/dlq:
+    get:
+      tags:
+        - Onboarding & Admin
+        - Task Queue
+      summary: Admin Dead-Letter Queue (DLQ) Registry
+      description: Returns jobs that failed permanently after max retries were exhausted.
+      operationId: getAdminJobsDLQ
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: List of jobs in the Dead-Letter Queue
+
+  /admin/jobs/dlq/{job_id}/retry:
+    post:
+      tags:
+        - Onboarding & Admin
+        - Task Queue
+      summary: Admin Retry DLQ Job
+      description: Resets retries and re-enqueues a Dead-Letter Queue job for execution.
+      operationId: retryAdminJobDLQ
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Job re-enqueued
+
+  /admin/upstreams/health:
+    get:
+      tags:
+        - Onboarding & Admin
+        - Federation
+      summary: Admin Upstream Node Health Telemetry
+      description: Returns active health probe status (HEALTHY, UNHEALTHY, DEGRADED), consecutive failures, and round-trip latency for all upstreams.
+      operationId: getAdminUpstreamsHealth
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Map of upstream health states
+
   /docs:
     get:
 
