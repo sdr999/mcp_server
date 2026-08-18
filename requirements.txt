@@ -2,7 +2,7 @@
 fastmcp~=3.4
 starlette~=0.35
 uvicorn[standard]~=0.22
-watchdog~=3.0
+watchdog~=6.0
 python-dotenv~=1.0
 
 # --- Plugin runtime dependencies ---
@@ -12,6 +12,11 @@ aiosqlite~=0.20.0
 
 # --- Optional / Web ---
 fastapi~=0.109.0
+
+# --- Phase 5: Optional Task Queue Backends ---
+# Uncomment based on MCP_TASK_QUEUE_BACKEND setting:
+# celery[redis]~=5.4       # MCP_TASK_QUEUE_BACKEND=celery
+# arq~=0.26                # MCP_TASK_QUEUE_BACKEND=arq
 
 # --- Optional Framework Wheels ---
 # Install the local wheels only if your tools need them:

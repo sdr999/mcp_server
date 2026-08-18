@@ -1,0 +1,59 @@
+[2026-08-18T22:15:00+05:30] [INIT] Phase 5 Distributed Task Queue & Active Upstream Health Probing implementation started.
+[2026-08-18T22:15:00+05:30] [SCOPE] Modules to implement:
+  - Component 1: Async Task Queue Engine (src/plugins/task_queue/) — in_memory + celery adapters
+  - Component 2: Active Upstream Health Prober (src/plugins/upstream_health.py) — background probes
+  - Integration: app.py wiring, upstreams.py health gating, dashboard cards, routes
+  - Tests: test_task_queue.py, test_upstream_health.py, full regression suite
+
+[2026-08-18T22:15:10+05:30] [COMPONENT_1] Created src/plugins/task_queue/__init__.py — package exports (Job, JobStatus, TaskQueueEngine).
+[2026-08-18T22:15:20+05:30] [COMPONENT_1] Created src/plugins/task_queue/job_model.py — Job dataclass with uuid4 IDs, JobStatus enum (QUEUED/RUNNING/COMPLETED/FAILED), ISO serialization.
+[2026-08-18T22:15:30+05:30] [COMPONENT_1] Created src/plugins/task_queue/queue_engine.py — TaskQueueBackend ABC, InMemoryTaskQueue (asyncio.Queue + 4-worker pool), TaskQueueEngine facade with pluggable backend dispatch.
+[2026-08-18T22:15:40+05:30] [COMPONENT_1] Created src/plugins/task_queue/celery_adapter.py — CeleryTaskQueueAdapter with lazy celery import, send_task dispatch, AsyncResult status polling.
+[2026-08-18T22:15:50+05:30] [COMPONENT_1] Created src/plugins/task_queue/routes.py — POST /tools/{name}/async_call (202), GET /jobs/{job_id}, GET /admin/jobs (admin-only).
+[2026-08-18T22:16:00+05:30] [COMPONENT_2] Created src/plugins/upstream_health.py — UpstreamHealthChecker with asyncio background probe loop, httpx.AsyncClient, configurable thresholds (unhealthy=3, healthy=2), /status + HEAD fallback, GET /admin/upstreams/health admin route.
+
+[2026-08-18T22:17:00+05:30] [INTEGRATION] Wired Task Queue into app.py:
+  - Imported TaskQueueEngine, task_queue_routes, UpstreamHealthChecker, upstream_health_routes
+  - Created _tool_execute_callback closure for MCP tool execution
+  - Initialized TaskQueueEngine with ctx.task_queue_backend and app_context
+  - Initialized UpstreamHealthChecker with ctx probe config fields
+  - Started task_queue and upstream_health in lifespan startup
+  - Stopped both in lifespan shutdown (contextlib.suppress)
+  - Mounted task_queue_routes() and upstream_health_routes()
+
+[2026-08-18T22:17:30+05:30] [INTEGRATION] Updated src/plugins/upstreams.py:
+  - Added optional health_checker param to list_tools() and call_tool()
+  - Short-circuits with UpstreamError when is_healthy() returns False
+  - No breaking changes: health_checker=None is backward-compatible default
+
+[2026-08-18T22:17:45+05:30] [INTEGRATION] Updated src/plugins/routes.py:
+  - Passes health_checker=st.upstream_health_checker to list_tools/call_tool
+  - Returns 503 (not 502) when upstream is UNHEALTHY
+
+[2026-08-18T22:18:00+05:30] [INTEGRATION] Updated src/plugins/dashboard/routes.py:
+  - Added task_queue stats (queued/running/completed/failed) to dashboard JSON
+  - Added upstream_health stats (total/healthy/unhealthy/degraded/unknown)
+
+[2026-08-18T22:20:00+05:30] [TESTING] Created src/tests/test_task_queue.py — 18 tests covering:
+  - Job model defaults, serialization, enum values
+  - InMemoryTaskQueue: submit+complete lifecycle, failure handling, sorted listing, nonexistent status
+  - TaskQueueEngine: in_memory default, unknown backend fallback, stats, job listing
+  - CeleryAdapter: mocked dispatch, ImportError when celery missing
+  - Route handlers: 202 submit, job status, 404 not found, admin auth
+[2026-08-18T22:20:30+05:30] [TESTING] Created src/tests/test_upstream_health.py — 20 tests covering:
+  - UpstreamHealthState defaults
+  - State machine: success→HEALTHY, failure→UNHEALTHY, recovery, counter resets
+  - is_healthy(): unknown/healthy/unhealthy/unknown status gating
+  - Probe loop: successful probe, failed probe threshold trip, 404 fallback to HEAD
+  - JSON serialization, stats counts, config overrides
+  - Lifecycle: start/stop, double start noop, stop without start noop
+  - Admin route: auth required, auth with token
+
+[2026-08-18T22:23:00+05:30] [VERIFICATION] Phase 5 tests: 38/38 passed (0 failed, 0 errors) in 3.60s.
+[2026-08-18T22:23:00+05:30] [VERIFICATION] Running full regression suite (224+ existing + 38 new tests)...
+[2026-08-18T22:25:00+05:30] [VERIFICATION] Full suite: 306/307 passed in 26.76s.
+  - 1 pre-existing failure: test_telemetry_bootstrap_lifecycle (OTel packages not installed in test env)
+  - 0 Phase 5 regressions
+  - 38 new Phase 5 tests all GREEN
+[2026-08-18T22:25:30+05:30] [STATUS] Phase 5 Implementation FULLY COMPLETED.
+

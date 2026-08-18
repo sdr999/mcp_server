@@ -165,11 +165,14 @@ class UpstreamRegistry:
 
 
     # -- proxied operations ------------------------------------------------
-    async def list_tools(self, name: str) -> List[dict]:
+    async def list_tools(self, name: str, health_checker=None) -> List[dict]:
         from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
+        # Phase 5: Short-circuit if upstream is unhealthy
+        if health_checker and not health_checker.is_healthy(name):
+            raise UpstreamError(f"upstream {name!r} is UNHEALTHY — skipping network call")
         with upstream_call_span(name, url=str(spec.get("url", ""))):
             try:
                 async with self._client(spec) as c:
@@ -178,11 +181,14 @@ class UpstreamRegistry:
                 raise UpstreamError(f"could not reach upstream {name!r}: {exc}") from exc
             return [{"name": t.name, "description": getattr(t, "description", None)} for t in tools]
 
-    async def call_tool(self, name: str, tool: str, arguments: Optional[dict]) -> dict:
+    async def call_tool(self, name: str, tool: str, arguments: Optional[dict], health_checker=None) -> dict:
         from .telemetry import upstream_call_span
         spec = self._servers.get(name)
         if spec is None:
             raise KeyError(name)
+        # Phase 5: Short-circuit if upstream is unhealthy
+        if health_checker and not health_checker.is_healthy(name):
+            raise UpstreamError(f"upstream {name!r} is UNHEALTHY — skipping network call")
         with upstream_call_span(f"{name}:{tool}", url=str(spec.get("url", ""))):
             try:
                 async with self._client(spec) as c:

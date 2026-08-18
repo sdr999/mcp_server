@@ -125,7 +125,19 @@ class AppContext:
     circuit_breaker_threshold: int = 5
     circuit_breaker_recovery_sec: float = 30.0
     alert_webhook_url: Optional[str] = None
+
+    # --- Phase 5 Task Queue & Upstream Health Probing ---
+    task_queue_backend: str = "in_memory"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
+    upstream_probe_interval_sec: float = 15.0
+    upstream_probe_timeout_sec: float = 3.0
+    upstream_probe_unhealthy_threshold: int = 3
+    upstream_probe_healthy_threshold: int = 2
+
+
 def make_parser() -> argparse.ArgumentParser:
+
     p = argparse.ArgumentParser(description="Secure, plugin-based MCP tool server")
     p.add_argument(
         "--config",
@@ -306,7 +318,15 @@ def build_context(argv: Optional[List[str]] = None, base_dir: Optional[Path] = N
         circuit_breaker_threshold=int(env.get("MCP_CIRCUIT_BREAKER_THRESHOLD", "5")),
         circuit_breaker_recovery_sec=float(env.get("MCP_CIRCUIT_BREAKER_RECOVERY_SEC", "30")),
         alert_webhook_url=env.get("MCP_ALERT_WEBHOOK_URL") or None,
+        task_queue_backend=env.get("MCP_TASK_QUEUE_BACKEND", "in_memory").lower(),
+        celery_broker_url=env.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+        celery_result_backend=env.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+        upstream_probe_interval_sec=float(env.get("MCP_UPSTREAM_PROBE_INTERVAL_SEC", "15.0")),
+        upstream_probe_timeout_sec=float(env.get("MCP_UPSTREAM_PROBE_TIMEOUT_SEC", "3.0")),
+        upstream_probe_unhealthy_threshold=int(env.get("MCP_UPSTREAM_PROBE_UNHEALTHY_THRESHOLD", "3")),
+        upstream_probe_healthy_threshold=int(env.get("MCP_UPSTREAM_PROBE_HEALTHY_THRESHOLD", "2")),
     )
+
 
 
 

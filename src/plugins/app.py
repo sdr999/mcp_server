@@ -23,6 +23,9 @@ from .signing import ToolVerifier
 from .tool_loader import ToolLoader, initial_load, prepare_with_timeout
 from .upstreams import UpstreamRegistry
 from .watcher import ToolDirectoryWatcher
+from .task_queue import TaskQueueEngine
+from .task_queue.routes import task_queue_routes
+from .upstream_health import UpstreamHealthChecker, upstream_health_routes
 
 log = logging.getLogger("MCP_logger")
 
@@ -179,6 +182,10 @@ def build_app(ctx):
         app.router.routes.append(route)
     for route in analytics_routes():
         app.router.routes.append(route)
+    for route in task_queue_routes():
+        app.router.routes.append(route)
+    for route in upstream_health_routes():
+        app.router.routes.append(route)
 
 
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
@@ -235,6 +242,37 @@ def build_app(ctx):
     app.state.mcp_transport = transport
     register_metrics(loader, app)
 
+    # --- Phase 5: Task Queue Engine ---
+    async def _tool_execute_callback(tool_name: str, arguments: dict) -> dict:
+        """Execute a tool call through the MCP server for async job processing."""
+        result = await mcp.call_tool(tool_name, arguments)
+        content = [
+            {"type": getattr(c, "type", None), "text": getattr(c, "text", None)}
+            for c in (getattr(result, "content", None) or [])
+        ]
+        return {
+            "tool": tool_name,
+            "is_error": bool(getattr(result, "is_error", False)),
+            "content": content,
+        }
+
+    task_queue = TaskQueueEngine(
+        backend_name=ctx.task_queue_backend,
+        execute_callback=_tool_execute_callback,
+        app_context=ctx,
+    )
+    app.state.task_queue = task_queue
+
+    # --- Phase 5: Upstream Health Prober ---
+    upstream_health = UpstreamHealthChecker(
+        registry=app.state.upstreams,
+        probe_interval_sec=ctx.upstream_probe_interval_sec,
+        probe_timeout_sec=ctx.upstream_probe_timeout_sec,
+        unhealthy_threshold=ctx.upstream_probe_unhealthy_threshold,
+        healthy_threshold=ctx.upstream_probe_healthy_threshold,
+    )
+    app.state.upstream_health_checker = upstream_health
+
     # --- Tenancy Store & RBAC Engine (Phase 1 & 2) ---
     from .tenancy import create_tenancy_store
     from .tenancy.seeder import seed_tenancy_store_if_empty
@@ -266,6 +304,11 @@ def build_app(ctx):
         rate_limiter_registry.start_cleanup_task()
         analytics.start()  # background drain task (owned by the lifespan)
 
+        # Phase 5: Start task queue workers and upstream health prober
+        await task_queue.start()
+        if app_.state.upstreams._servers:
+            await upstream_health.start()
+
         async def _bootstrap():
             # Initialize tenancy DB and first-start self-seeding
             try:
@@ -293,6 +336,11 @@ def build_app(ctx):
             rate_limiter_registry.stop()
             with contextlib.suppress(Exception):
                 await analytics.stop()  # drain-and-flush: no error record is lost
+            # Phase 5: Stop task queue and upstream health prober
+            with contextlib.suppress(Exception):
+                await task_queue.stop()
+            with contextlib.suppress(Exception):
+                await upstream_health.stop()
 
             if HAS_OTEL:
                 shutdown_telemetry()

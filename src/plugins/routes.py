@@ -537,11 +537,12 @@ async def _upstream_tools(request):
         return denied
     server = request.path_params["server"]
     try:
-        tools = await st.upstreams.list_tools(server)
+        tools = await st.upstreams.list_tools(server, health_checker=getattr(st, "upstream_health_checker", None))
     except KeyError:
         return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
     except UpstreamError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=502)
+        sc = 503 if "UNHEALTHY" in str(exc) else 502
+        return JSONResponse({"error": str(exc)}, status_code=sc)
 
     store = getattr(st, "tenancy_store", None)
     evaluator = getattr(st, "policy_evaluator", None)
@@ -568,11 +569,12 @@ async def _upstream_tool_call(request):
     if not isinstance(arguments, dict):
         return JSONResponse({"error": '"arguments" must be a JSON object'}, status_code=400)
     try:
-        result = await st.upstreams.call_tool(server, name, arguments)
+        result = await st.upstreams.call_tool(server, name, arguments, health_checker=getattr(st, "upstream_health_checker", None))
     except KeyError:
         return JSONResponse({"error": f"unknown upstream {server!r}"}, status_code=404)
     except UpstreamError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=502)
+        sc = 503 if "UNHEALTHY" in str(exc) else 502
+        return JSONResponse({"error": str(exc)}, status_code=sc)
     return JSONResponse(result)
 
 
