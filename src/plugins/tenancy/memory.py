@@ -20,11 +20,40 @@ class MemoryTenancyStore(TenancyStore):
         self._tool_ownerships: Dict[str, ToolOwnership] = {}
         self._tool_grants: List[ToolGrant] = []
         self._audit_logs: List[AuditEntry] = []
+        self._analytics: List[dict] = []   # separate "collection" from _audit_logs
         self._grant_counter = 1
         self._audit_counter = 1
 
     async def init_db(self) -> None:
         pass  # In-memory requires no initialization
+
+    # -- analytics capability (separate collection, same store) ------------
+    async def append_analytics(self, rows: List[dict]) -> None:
+        async with self._lock:
+            self._analytics.extend(rows)
+
+    async def query_analytics(self, *, org_id: Optional[str] = None, tool: str = "",
+                              errors_only: bool = False, limit: int = 50, offset: int = 0) -> dict:
+        async with self._lock:
+            rows = list(self._analytics)
+        if org_id is not None:
+            rows = [r for r in rows if r.get("org_id") == org_id]
+        if tool:
+            rows = [r for r in rows if r.get("tool") == tool]
+        if errors_only:
+            rows = [r for r in rows if not r.get("ok")]
+        rows = list(reversed(rows))
+        total = len(rows)
+        limit = max(1, min(500, limit))
+        page = rows[offset:offset + limit]
+        nxt = offset + limit if offset + limit < total else None
+        return {"total": total, "cursor": offset, "next_cursor": nxt, "results": page}
+
+    async def purge_analytics(self, cutoff: float) -> int:
+        async with self._lock:
+            before = len(self._analytics)
+            self._analytics = [r for r in self._analytics if r.get("ts", 0) >= cutoff]
+            return before - len(self._analytics)
 
     async def is_empty(self) -> bool:
         async with self._lock:

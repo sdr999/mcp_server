@@ -141,6 +141,26 @@ class SqliteTenancyStore(TenancyStore):
                     )
                 """
                 )
+                # Analytics result-audit rows -- a SEPARATE table in the SAME db,
+                # never the transactional `audit` table (review R3).
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS analytics_results (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts REAL NOT NULL,
+                        tool TEXT NOT NULL,
+                        ok INTEGER NOT NULL,
+                        duration_ms REAL,
+                        error_type TEXT,
+                        error_msg TEXT,
+                        org_id TEXT,
+                        kind TEXT,
+                        caller_fp TEXT,
+                        result_excerpt TEXT
+                    )
+                """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_analytics_org_ts ON analytics_results (org_id, ts)")
                 conn.commit()
 
         await asyncio.to_thread(_run_init)
@@ -608,5 +628,69 @@ class SqliteTenancyStore(TenancyStore):
                     )
                     for r in reversed(rows)
                 ]
+
+        return await asyncio.to_thread(_run)
+
+    # -- analytics capability (separate table, same db) --------------------
+    _AN_COLS = ("ts", "tool", "ok", "duration_ms", "error_type", "error_msg",
+                "org_id", "kind", "caller_fp", "result_excerpt")
+
+    async def append_analytics(self, rows: List[dict]) -> None:
+        params = [
+            (r.get("ts"), r.get("tool"), 1 if r.get("ok") else 0, r.get("duration_ms"),
+             r.get("error_type"), r.get("error_msg"), r.get("org_id"), r.get("kind"),
+             r.get("caller_fp"), r.get("result_excerpt"))
+            for r in rows
+        ]
+
+        def _run():
+            with self._get_conn() as conn:
+                conn.executemany(
+                    f"INSERT INTO analytics_results ({','.join(self._AN_COLS)}) "
+                    f"VALUES ({','.join('?' * len(self._AN_COLS))})",
+                    params,
+                )
+                conn.commit()
+
+        if params:
+            await asyncio.to_thread(_run)
+
+    async def query_analytics(self, *, org_id: Optional[str] = None, tool: str = "",
+                              errors_only: bool = False, limit: int = 50, offset: int = 0) -> dict:
+        limit = max(1, min(500, limit))
+
+        def _run():
+            where, args = [], []
+            if org_id is not None:
+                where.append("org_id = ?"); args.append(org_id)
+            if tool:
+                where.append("tool = ?"); args.append(tool)
+            if errors_only:
+                where.append("ok = 0")
+            clause = (" WHERE " + " AND ".join(where)) if where else ""
+            with self._get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(f"SELECT COUNT(*) AS c FROM analytics_results{clause}", args)
+                total = cur.fetchone()["c"]
+                cur.execute(
+                    f"SELECT {','.join(self._AN_COLS)} FROM analytics_results{clause} "
+                    f"ORDER BY id DESC LIMIT ? OFFSET ?", (*args, limit, offset))
+                rows = []
+                for r in cur.fetchall():
+                    d = {c: r[c] for c in self._AN_COLS}
+                    d["ok"] = bool(d["ok"])
+                    rows.append(d)
+            nxt = offset + limit if offset + limit < total else None
+            return {"total": total, "cursor": offset, "next_cursor": nxt, "results": rows}
+
+        return await asyncio.to_thread(_run)
+
+    async def purge_analytics(self, cutoff: float) -> int:
+        def _run():
+            with self._get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM analytics_results WHERE ts < ?", (cutoff,))
+                conn.commit()
+                return cur.rowcount
 
         return await asyncio.to_thread(_run)

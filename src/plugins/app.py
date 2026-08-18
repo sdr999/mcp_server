@@ -121,14 +121,46 @@ def build_app(ctx):
     app.state.circuit_breakers = circuit_breakers
     app.state.alert_manager = alert_manager
 
+    # Phase 4 Registries
+    from .cost import CostTracker, BudgetEnforcerMiddleware
+    from .chaos import ChaosEngine, ChaosMiddleware, chaos_routes
+    from .intelligence import LogSearchIndex, intelligence_routes
+    from .prompts import PromptRepository, ABTestManager, prompt_routes
+
+    cost_tracker = CostTracker()
+    chaos_engine = ChaosEngine()
+    log_search_index = LogSearchIndex()
+    prompt_repository = PromptRepository()
+    ab_test_manager = ABTestManager()
+
+    # Analytics plugin (no hard dependency): consumes tool events via the neutral
+    # observer seam. Subscribe once here so hot-reload can't leak subscriptions.
+    from .analytics import AnalyticsEngine, analytics_routes
+    analytics = AnalyticsEngine.from_env(ctx)
+    app.state.analytics = analytics
+    analytics.subscribe()
+
+    app.state.cost_tracker = cost_tracker
+    app.state.chaos_engine = chaos_engine
+    app.state.log_search_index = log_search_index
+    app.state.prompt_repository = prompt_repository
+    app.state.ab_test_manager = ab_test_manager
+    app.state.tenant_monthly_budget_usd = getattr(ctx, "tenant_monthly_budget_usd", 100.0)
+
     # Unauthorized Access Logger
     from .unauthorized_logger import UnauthorizedLogger, UnauthorizedLoggingMiddleware
     unauthorized_log_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "unauthorized_access.json.log"
     unauthorized_logger = UnauthorizedLogger(unauthorized_log_path)
     app.add_middleware(UnauthorizedLoggingMiddleware, logger=unauthorized_logger)
 
-    # Middleware LIFO ordering (C2 fix): ReliabilityMiddleware registered FIRST -> runs innermost (after IdentityMiddleware)
+    # add_middleware is LIFO: the last one added is the OUTERMOST (runs first on a
+    # request). Actual execution order, outermost -> innermost:
+    #   [ApiKey] -> Identity -> Trace -> Chaos -> Reliability -> Budget -> Unauthorized -> app
+    # Identity is outer to Budget, so request.state.principal (hence the tenant) is
+    # already populated when BudgetEnforcerMiddleware runs.
+    app.add_middleware(BudgetEnforcerMiddleware, cost_tracker=cost_tracker)
     app.add_middleware(ReliabilityMiddleware, rate_limiter_registry=rate_limiter_registry)
+    app.add_middleware(ChaosMiddleware, chaos_engine=chaos_engine)
     app.add_middleware(TraceCorrelationMiddleware)
     from .identity import IdentityMiddleware
     app.add_middleware(IdentityMiddleware)
@@ -139,6 +171,15 @@ def build_app(ctx):
         app.router.routes.append(route)
     for route in dashboard_routes():
         app.router.routes.append(route)
+    for route in chaos_routes():
+        app.router.routes.append(route)
+    for route in intelligence_routes():
+        app.router.routes.append(route)
+    for route in prompt_routes():
+        app.router.routes.append(route)
+    for route in analytics_routes():
+        app.router.routes.append(route)
+
 
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
     setup_observability(app=app, log_file=log_file_path)
@@ -201,6 +242,10 @@ def build_app(ctx):
 
     tenancy_store = create_tenancy_store(ctx)
     app.state.tenancy_store = tenancy_store
+    # Reuse the tenancy DB for analytics persistence (separate collection/table)
+    # when MCP_ANALYTICS_STORE=tenancy. No-op for the default in-proc/jsonl sinks.
+    with contextlib.suppress(Exception):
+        analytics.attach_store(tenancy_store)
 
     rbac_cache = DecisionCache(maxsize=getattr(ctx, "rbac_cache_size", 10000), ttl_sec=getattr(ctx, "rbac_cache_ttl", 300.0))
     policy_evaluator = PolicyEvaluator(store=tenancy_store, cache=rbac_cache)
@@ -219,6 +264,7 @@ def build_app(ctx):
             init_telemetry(TelemetryConfig.from_env())
 
         rate_limiter_registry.start_cleanup_task()
+        analytics.start()  # background drain task (owned by the lifespan)
 
         async def _bootstrap():
             # Initialize tenancy DB and first-start self-seeding
@@ -245,6 +291,9 @@ def build_app(ctx):
             watcher.stop()
             worker.cancel()
             rate_limiter_registry.stop()
+            with contextlib.suppress(Exception):
+                await analytics.stop()  # drain-and-flush: no error record is lost
+
             if HAS_OTEL:
                 shutdown_telemetry()
             with contextlib.suppress(asyncio.CancelledError, Exception):

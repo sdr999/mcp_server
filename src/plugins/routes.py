@@ -246,6 +246,10 @@ async def _tool_call(request):
         result = await tool.run(arguments)
     except Exception as exc:
         if _ToolValidationError is not None and isinstance(exc, _ToolValidationError):
+            # Phase E: validation is a route-level concern (the wrapper never runs
+            # for a schema failure), so count it here -> completes the error
+            # taxonomy without double-counting.
+            METRICS.inc("mcp_tool_errors_total", tool=name, reason="validation")
             return JSONResponse({"tool": name, "error": f"invalid arguments: {exc}"}, status_code=400)
         # The call was well-formed but the tool raised: report it in-band (MCP
         # treats tool failures as error results, not transport errors).
@@ -257,8 +261,16 @@ async def _tool_call(request):
 def register_metrics(loader, app) -> None:
     """Declare counters and scrape-time gauges backed by loader/app state."""
     METRICS.declare("mcp_tool_calls_total", "Total tool invocations")
-    METRICS.declare("mcp_tool_errors_total", "Tool invocations that raised")
-    METRICS.declare("mcp_tool_duration_seconds", "Tool execution wall-time")
+    METRICS.declare("mcp_tool_errors_total", "Tool invocations that raised (by reason)")
+    # Phase E: a real histogram (explicit buckets) so the TSDB computes p50/p95/p99
+    # via histogram_quantile, instead of a percentile faked in-process.
+    if hasattr(METRICS, "declare_histogram"):
+        METRICS.declare_histogram(
+            "mcp_tool_duration_seconds",
+            (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+            "Tool execution wall-time")
+    else:
+        METRICS.declare("mcp_tool_duration_seconds", "Tool execution wall-time")
     METRICS.declare("mcp_reloads_total", "Module (re)loads that registered tools")
     METRICS.declare("mcp_load_failures_total", "Module loads that failed or yielded no tools")
     METRICS.declare("mcp_authz_evaluations_total", "Total authorization policy evaluations")
@@ -274,6 +286,23 @@ def register_metrics(loader, app) -> None:
     if onboarding is not None:
         METRICS.declare("mcp_tool_onboards_total", "Onboarding actions by result (onboarded/pending/approved/rejected)")
         METRICS.gauge("mcp_tools_pending", onboarding.pending_count, "Submissions currently held pending review")
+
+    # Phase E: analytics plugin self-metrics as scrapable series, so silent data
+    # loss (dropped events, drain lag, tripped breaker) is alertable, not just
+    # visible on the dashboard JSON.
+    analytics = getattr(app.state, "analytics", None)
+    if analytics is not None:
+        METRICS.gauge("mcp_analytics_queue_depth", lambda: float(analytics.queue_depth),
+                      "Analytics event queue depth (success + error lanes)")
+        METRICS.gauge("mcp_analytics_events_dropped_total",
+                      lambda: float(analytics.dropped_success + analytics.dropped_error),
+                      "Analytics events dropped under backpressure")
+        METRICS.gauge("mcp_analytics_drain_lag_seconds", lambda: float(analytics.drain_lag),
+                      "Analytics background-drain lag")
+        METRICS.gauge("mcp_analytics_sink_errors_total", lambda: float(analytics.sink_errors),
+                      "Analytics sink write failures")
+        METRICS.gauge("mcp_analytics_breaker_open", lambda: 1.0 if analytics.breaker_open else 0.0,
+                      "1 when the analytics sink breaker is open")
 
 
 async def _admin_resync(request):

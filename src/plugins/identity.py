@@ -194,15 +194,21 @@ BUILTIN_ROLE_PERMISSIONS: Dict[str, Set[str]] = {
         "tool:list", "tool:call", "tool:onboard", "tool:manage",
         "upstream:read", "upstream:call", "upstream:manage",
         "member:manage", "role:bind", "org:admin", "workspace:admin", "platform:admin",
+        # analytics: global aggregate dashboards + kill-switch, org-scoped rows, bodies
+        "analytics:admin", "analytics:read", "analytics:read_content",
     },
     "org_admin": {
         "tool:list", "tool:call", "tool:onboard", "tool:manage",
         "upstream:read", "upstream:call", "upstream:manage",
         "member:manage", "role:bind", "org:admin", "workspace:admin",
+        # analytics: own-org result rows incl. captured bodies (NOT global dashboards)
+        "analytics:read", "analytics:read_content",
     },
     "developer": {
         "tool:list", "tool:call", "tool:onboard", "tool:manage",
         "upstream:read", "upstream:call",
+        # analytics: own-org result metadata only (no captured bodies)
+        "analytics:read",
     },
     "agent_consumer": {
         "tool:list", "tool:call", "upstream:read", "upstream:call",

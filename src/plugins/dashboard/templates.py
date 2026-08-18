@@ -34,7 +34,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 20px;
       margin-top: 20px;
     }
@@ -52,7 +52,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       margin-bottom: 10px;
     }
     .metric-value {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: bold;
       color: var(--text);
     }
@@ -96,12 +96,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="metric-value" id="server_ready">CONNECTING</div>
     </div>
     <div class="card">
-      <div class="card-title">Active SSE Connections</div>
+      <div class="card-title">Total Spend (USD)</div>
+      <div class="metric-value" id="total_spend">$0.0000</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chaos Engine</div>
+      <div class="metric-value" id="chaos_status">OFF</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Active SSE Clients</div>
       <div class="metric-value" id="sse_clients">- / 10</div>
     </div>
     <div class="card">
-      <div class="card-title">Rate Limiter Default</div>
-      <div class="metric-value" id="rate_limit_rpm">600 RPM</div>
+      <div class="card-title">Prompt Templates</div>
+      <div class="metric-value" id="total_prompts">0</div>
     </div>
   </div>
 
@@ -123,6 +131,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </tbody>
       </table>
     </div>
+  </div>
+
+  <div class="card" style="grid-column: 1 / -1;">
+    <div class="card-title">Analytics &amp; Insights <span id="an_scope" class="status-badge status-halfopen" style="margin-left:8px;"></span></div>
+    <div id="an_headline" style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:10px;font-size:13px;color:var(--muted);"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;">
+      <div><div class="card-title" style="font-size:12px;">🏆 Most Called</div><table><tbody id="an_lb_calls"></tbody></table></div>
+      <div><div class="card-title" style="font-size:12px;">🐢 Slowest (avg)</div><table><tbody id="an_lb_slow"></tbody></table></div>
+      <div><div class="card-title" style="font-size:12px;">💥 Flakiest</div><table><tbody id="an_lb_flaky"></tbody></table></div>
+      <div><div class="card-title" style="font-size:12px;">📈 Trending</div><table><tbody id="an_lb_trend"></tbody></table></div>
+    </div>
+    <div class="card-title" style="font-size:12px;margin-top:14px;">Per-Tool Latency &amp; Trend</div>
+    <table>
+      <thead><tr><th>Tool</th><th>Calls</th><th>Trend (1h)</th><th>p50</th><th>p95</th><th>p99</th><th>Err streak</th></tr></thead>
+      <tbody id="an_tools"><tr><td colspan="7">No analytics recorded yet</td></tr></tbody>
+    </table>
+    <div class="card-title" style="font-size:12px;margin-top:14px;">Calls by Hour (UTC)</div>
+    <div id="an_heatmap" style="display:flex;gap:2px;align-items:flex-end;height:44px;"></div>
+
+    <div class="card-title" style="font-size:12px;margin-top:14px;">
+      Caller Attribution <span id="an_coverage" style="color:var(--muted);font-weight:normal;"></span>
+    </div>
+    <div id="an_callers" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;"></div>
   </div>
 
   <div class="grid">
@@ -173,8 +204,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById("total_tools").innerText = (data.total_tools !== undefined) ? data.total_tools : "0";
       document.getElementById("server_ready").innerText = data.ready ? "READY" : "LOADING";
       document.getElementById("server_ready").className = "metric-value";
+      document.getElementById("total_spend").innerText = "$" + (data.total_spend_usd || 0.0).toFixed(4);
+      document.getElementById("chaos_status").innerText = data.chaos_enabled ? "ACTIVE ⚡" : "DISABLED";
+      document.getElementById("chaos_status").style.color = data.chaos_enabled ? "var(--amber)" : "var(--text)";
       document.getElementById("sse_clients").innerText = (data.active_sse_clients || 1) + " / 10";
-      document.getElementById("rate_limit_rpm").innerText = (data.rate_limit_default_rpm || 600) + " RPM";
+      document.getElementById("total_prompts").innerText = data.total_prompts || "0";
 
       // Render Per-Tool Execution table
       const toolsTable = document.getElementById("tools_table");
@@ -193,6 +227,85 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
       } else {
         toolsTable.innerHTML = '<tr><td colspan="5">No registered tools or execution metrics recorded yet</td></tr>';
+      }
+
+      // Render Analytics & Insights
+      const an = data.analytics || {};
+      const lb = an.leaderboards || {};
+      const fmtLb = (id, rows, suffix) => {
+        const el = document.getElementById(id);
+        if (!rows || rows.length === 0) { el.innerHTML = '<tr><td>—</td></tr>'; return; }
+        el.innerHTML = rows.map(r => '<tr><td class="key-col">' + r.name +
+          '</td><td>' + r.value + (suffix || "") + '</td></tr>').join("");
+      };
+      if (an.enabled !== undefined) {
+        document.getElementById("an_scope").innerText =
+          (an.scope === "cluster") ? "CLUSTER" : "THIS WORKER";
+        const s = an.self || {};
+        document.getElementById("an_headline").innerHTML =
+          '<span>📞 <b>' + (an.total_calls || 0) + '</b> calls</span>' +
+          '<span>⚡ <b>' + (an.calls_per_min || 0) + '</b>/min</span>' +
+          '<span>🧰 <b>' + (an.tools_tracked || 0) + '</b> tools</span>' +
+          '<span>👥 <b>' + (an.unique_callers_approx || 0) + '</b> callers~</span>' +
+          '<span>📥 q=' + (s.queue_depth || 0) + '</span>' +
+          '<span>🗑️ drops=' + ((s.dropped_success||0)+(s.dropped_error||0)) + '</span>' +
+          '<span>' + (s.breaker_open ? '🔴 breaker' : '🟢 healthy') + '</span>';
+        fmtLb("an_lb_calls", lb.most_called);
+        fmtLb("an_lb_slow", lb.slowest, "ms");
+        fmtLb("an_lb_flaky", lb.flakiest, "%");
+        fmtLb("an_lb_trend", lb.trending, "%");
+        const at = document.getElementById("an_tools");
+        const tools = an.tools || {};
+        const names = Object.keys(tools);
+        if (names.length === 0) {
+          at.innerHTML = '<tr><td colspan="7">No analytics recorded yet</td></tr>';
+        } else {
+          at.innerHTML = names.map(n => {
+            const m = tools[n];
+            const tr = (m.trend === null || m.trend === undefined) ? "—"
+              : (m.trend >= 0 ? "▲ " : "▼ ") + Math.abs(m.trend) + "%";
+            const trColor = (m.trend > 0) ? "var(--green)" : (m.trend < 0 ? "var(--amber)" : "var(--muted)");
+            const p = v => (v === null || v === undefined) ? "—" : v + "ms";
+            return '<tr><td class="key-col">' + n + '</td><td>' + m.calls +
+              '</td><td style="color:' + trColor + '">' + tr + '</td><td>' + p(m.p50_ms) +
+              '</td><td>' + p(m.p95_ms) + '</td><td>' + p(m.p99_ms) +
+              '</td><td>' + (m.error_streak || 0) + '</td></tr>';
+          }).join("");
+        }
+        const hm = an.hour_heatmap || [];
+        const mx = Math.max(1, ...hm);
+        document.getElementById("an_heatmap").innerHTML = hm.map((c, h) => {
+          const pct = Math.round(c / mx * 100);
+          return '<div title="' + h + ':00 UTC — ' + c + ' calls" style="flex:1;height:' +
+            Math.max(3, pct) + '%;background:var(--green);opacity:' +
+            (0.25 + 0.75 * c / mx).toFixed(2) + ';border-radius:2px;"></div>';
+        }).join("");
+
+        // Caller attribution (only meaningful with real identity — P10)
+        const cal = an.callers || {};
+        const cov = cal.identity_coverage_percent || 0;
+        document.getElementById("an_coverage").innerText =
+          "— " + cov + "% of calls attributed (" + (cal.attributed_calls || 0) + ")";
+        const callersEl = document.getElementById("an_callers");
+        if (cov <= 0) {
+          callersEl.innerHTML = '<div style="color:var(--muted);font-size:12px;">' +
+            'No attributed calls yet — traffic is anonymous. Caller cards populate ' +
+            'once authenticated calls arrive.</div>';
+        } else {
+          const kindRows = Object.entries(cal.by_kind || {})
+            .map(([k, v]) => '<tr><td class="key-col">' + k + '</td><td>' + v + '</td></tr>').join("");
+          callersEl.innerHTML =
+            '<div><div class="card-title" style="font-size:12px;">👤 By Agent Kind</div><table><tbody>' +
+              (kindRows || '<tr><td>—</td></tr>') + '</tbody></table></div>' +
+            '<div><div class="card-title" style="font-size:12px;">🏢 By Org</div><table><tbody>' +
+              fmtRows(cal.by_org) + '</tbody></table></div>' +
+            '<div><div class="card-title" style="font-size:12px;">🔑 Top Callers (fp)</div><table><tbody>' +
+              fmtRows(cal.top_callers) + '</tbody></table></div>';
+        }
+      }
+      function fmtRows(rows) {
+        if (!rows || rows.length === 0) return '<tr><td>—</td></tr>';
+        return rows.map(r => '<tr><td class="key-col">' + r.name + '</td><td>' + r.value + '</td></tr>').join("");
       }
 
       // Render Circuit Breaker table
@@ -217,7 +330,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const kvTable = document.getElementById("kv_table");
       kvTable.innerHTML = "";
       for (const [k, v] of Object.entries(data)) {
-        if (k === "circuit_breakers" || k === "tool_metrics") continue;
+        if (k === "circuit_breakers" || k === "tool_metrics" || k === "cost_summary" || k === "chaos_summary" || k === "analytics") continue;
         const valStr = (typeof v === "object") ? JSON.stringify(v) : String(v);
         kvTable.innerHTML += '<tr>' +
           '<td class="key-col">' + k + '</td>' +

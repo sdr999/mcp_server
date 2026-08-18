@@ -32,6 +32,15 @@ def _build_dashboard_summary(request) -> dict:
     registered_tools = [t["name"] for t in loader.catalog()] if loader else []
     tool_metrics = METRICS.get_tool_stats(registered_tools) if hasattr(METRICS, "get_tool_stats") else {}
 
+    cost_tracker = getattr(st, "cost_tracker", None)
+    cost_summary = cost_tracker.get_stats() if cost_tracker else {}
+    chaos_engine = getattr(st, "chaos_engine", None)
+    chaos_summary = chaos_engine.get_stats() if chaos_engine else {}
+    prompt_repo = getattr(st, "prompt_repository", None)
+    prompts_count = len(prompt_repo.list_prompts()) if prompt_repo else 0
+    analytics = getattr(st, "analytics", None)
+    analytics_summary = analytics.get_stats() if analytics else {}
+
     return {
         "server_status": "READY" if getattr(st, "ready", False) else "LOADING",
         "ready": bool(getattr(st, "ready", False)),
@@ -43,9 +52,16 @@ def _build_dashboard_summary(request) -> dict:
         "rate_limit_default_rpm": default_rpm,
         "auth_mode": getattr(st, "auth_type", "none"),
         "mcp_transport": getattr(st, "mcp_transport", "http"),
+        "total_spend_usd": cost_summary.get("total_spend_usd", 0.0),
+        "chaos_enabled": chaos_summary.get("enabled", False),
+        "total_prompts": prompts_count,
         "circuit_breakers": cb_stats,
         "tool_metrics": tool_metrics,
+        "cost_summary": cost_summary,
+        "chaos_summary": chaos_summary,
+        "analytics": analytics_summary,
     }
+
 
 
 

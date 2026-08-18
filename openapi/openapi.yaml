@@ -618,7 +618,49 @@ paths:
         '401':
           description: Unauthorized — Invalid or missing Bearer Admin Token
         '429':
-          description: Connection Limit Exceeded — Max 10 active SSE streams reached
+          description: Too Many Connections
+
+  /admin/chaos:
+    get:
+      tags:
+        - Chaos Engineering
+      summary: Get Chaos Engine Status & Rules
+      description: Returns active chaos fault injection configuration (latency, exception rate, HTTP status errors).
+      operationId: getChaosStatus
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Chaos Engine Status JSON
+
+  /admin/intelligence/search:
+    get:
+      tags:
+        - Intelligence & Search
+      summary: Keyword & TF-IDF Search Over Tool Execution Logs
+      description: Returns matching tool execution log entries from the bounded 1,000-entry in-memory ring buffer with scrubbed PII/secrets.
+      operationId: searchLogs
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Search results JSON
+
+  /admin/prompts:
+    get:
+      tags:
+        - Prompt Management
+      summary: List Registered Prompt Templates
+      description: Returns versioned prompt templates registered in the server prompt repository.
+      operationId: listPrompts
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: List of prompt templates
 
   /admin/tools/onboard:
 

@@ -28,6 +28,8 @@ from fastmcp.tools import FunctionTool
 
 from metrics import METRICS
 from tools_sdk import TOOL_MARKER
+from .observer import emit, ToolEvent          # neutral seam (no deps) — hot-path safe
+from .identity import get_current_principal
 from .sandbox import ContainerPool, SandboxConfig
 from .signing import ToolVerifier
 
@@ -191,6 +193,9 @@ class ToolLoader:
             from .telemetry import tool_execution_span
             start = time.perf_counter()
             METRICS.inc("mcp_tool_calls_total", tool=tool_name)
+            ok = False
+            err: Exception | None = None
+            result = None
 
             # Self-Healing Input Type Coercion (convert string arguments to int/bool/float if typed)
             with contextlib.suppress(Exception):
@@ -209,17 +214,33 @@ class ToolLoader:
             with tool_execution_span(tool_name, sandbox_engine="docker" if sandbox else "none"):
                 try:
                     if sandbox:
-                        return await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
-                    result = original(**kwargs)
-                    if inspect.isawaitable(result):
-                        result = await result
+                        result = await _run_sandboxed(runner, module_name, qualname, kwargs, syspath, timeout, limits)
+                    else:
+                        result = original(**kwargs)
+                        if inspect.isawaitable(result):
+                            result = await result
+                    ok = True
                     return result
 
-                except Exception:
-                    METRICS.inc("mcp_tool_errors_total", tool=tool_name)
+                except Exception as exc:
+                    # Phase E: single-counted error taxonomy. Validation (400) is
+                    # caught at the route before the wrapper runs, so here we only
+                    # see timeout / sandbox / runtime failures.
+                    reason = ("timeout" if isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                              else ("sandbox" if sandbox else "runtime"))
+                    METRICS.inc("mcp_tool_errors_total", tool=tool_name, reason=reason)
+                    err = exc
                     raise
                 finally:
-                    METRICS.observe("mcp_tool_duration_seconds", time.perf_counter() - start, tool=tool_name)
+                    dur = time.perf_counter() - start
+                    METRICS.observe("mcp_tool_duration_seconds", dur, tool=tool_name)
+                    # Analytics plane: emit through the neutral seam (no-op if
+                    # unsubscribed; never raises into the call). Principal may be
+                    # blank on the /mcp path until the identity-propagation fix.
+                    with contextlib.suppress(Exception):
+                        emit(ToolEvent(tool=tool_name, duration=dur, ok=ok, error=err,
+                                       result=result if ok else None,
+                                       principal=get_current_principal()))
 
         return wrapper
 

@@ -22,6 +22,10 @@ def _fmt_labels(key: Tuple[Tuple[str, str], ...]) -> str:
     return "{" + inner + "}"
 
 
+def _fmt_le(b: float) -> str:
+    return repr(float(b)) if b != int(b) else str(int(b))
+
+
 class OTelMetricsShim:
     """Compatibility shim implementing the LegacyMetrics interface over OTel Meter instruments."""
 
@@ -33,9 +37,17 @@ class OTelMetricsShim:
         self._fallback_counters: Dict[Tuple[str, tuple], float] = defaultdict(float)
         self._fallback_sum: Dict[Tuple[str, tuple], float] = defaultdict(float)
         self._fallback_count: Dict[Tuple[str, tuple], float] = defaultdict(float)
+        self._hist_buckets: Dict[str, tuple] = {}
+        self._hist: Dict[Tuple[str, tuple], list] = {}
 
     def declare(self, name: str, help_text: str) -> None:
         self._help[name] = help_text
+
+    def declare_histogram(self, name: str, buckets, help_text: str = "") -> None:
+        """Register explicit histogram buckets. The OTel Histogram uses them as an
+        advisory boundary hint; the scrape fallback accumulates `_bucket` series."""
+        self._help[name] = help_text
+        self._hist_buckets[name] = tuple(buckets)
 
     def inc(self, name: str, value: float = 1.0, **labels) -> None:
         with self._lock:
@@ -56,6 +68,18 @@ class OTelMetricsShim:
             key = (name, _label_key(labels))
             self._fallback_sum[key] += value
             self._fallback_count[key] += 1
+            boundaries = self._hist_buckets.get(name)
+            if boundaries is not None:
+                arr = self._hist.get(key)
+                if arr is None:
+                    arr = [0] * (len(boundaries) + 1)
+                    self._hist[key] = arr
+                idx = len(boundaries)
+                for i, b in enumerate(boundaries):
+                    if value <= b:
+                        idx = i
+                        break
+                arr[idx] += 1
         meter = get_meter("mcp-server")
         if meter:
             try:
@@ -98,13 +122,28 @@ class OTelMetricsShim:
                     pass
             summaries = set(k[0] for k in self._fallback_sum)
             for name in sorted(summaries):
-                _help_type(name, "summary")
-                for (n, key), s in sorted(self._fallback_sum.items()):
-                    if n != name:
-                        continue
-                    lbl = _fmt_labels(key)
-                    lines.append(f"{name}_sum{lbl} {s}")
-                    lines.append(f"{name}_count{lbl} {self._fallback_count[(n, key)]}")
+                boundaries = self._hist_buckets.get(name)
+                if boundaries is not None:
+                    _help_type(name, "histogram")
+                    for (n, key), arr in sorted(self._hist.items()):
+                        if n != name:
+                            continue
+                        cum = 0
+                        for i, b in enumerate(boundaries):
+                            cum += arr[i]
+                            lines.append(f"{name}_bucket{_fmt_labels(key + (('le', _fmt_le(b)),))} {cum}")
+                        cum += arr[len(boundaries)]
+                        lines.append(f"{name}_bucket{_fmt_labels(key + (('le', '+Inf'),))} {cum}")
+                        lines.append(f"{name}_sum{_fmt_labels(key)} {self._fallback_sum[(name, key)]}")
+                        lines.append(f"{name}_count{_fmt_labels(key)} {self._fallback_count[(name, key)]}")
+                else:
+                    _help_type(name, "summary")
+                    for (n, key), s in sorted(self._fallback_sum.items()):
+                        if n != name:
+                            continue
+                        lbl = _fmt_labels(key)
+                        lines.append(f"{name}_sum{lbl} {s}")
+                        lines.append(f"{name}_count{lbl} {self._fallback_count[(n, key)]}")
         return "\n".join(lines) + "\n"
 
     def get_tool_stats(self, tool_names: list[str] | None = None) -> dict[str, dict]:
