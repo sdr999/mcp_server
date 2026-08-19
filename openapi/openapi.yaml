@@ -39,6 +39,12 @@ servers:
   - url: http://localhost:8000
     description: Local MCP Server
 
+security:
+  - AdminTokenAuth: []
+  - XAdminTokenAuth: []
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
 
 tags:
   - name: Authentication & Identity
@@ -73,10 +79,10 @@ paths:
       description: Returns the resolved caller Principal (User ID, Supabase UUID, active tenant org, workspace, roles, and permissions).
       operationId: getWhoAmI
       security:
+        - AdminTokenAuth: []
+        - XAdminTokenAuth: []
         - BearerAuth: []
         - ApiKeyAuth: []
-        - AdminTokenAuth: []
-        - {}
       responses:
         '200':
           description: Resolved Principal identity object
@@ -523,9 +529,10 @@ paths:
       description: Returns server readiness, active transport, auth mode, and tool loading stats.
       operationId: getStatus
       security:
-        - ApiKeyAuth: []
+        - AdminTokenAuth: []
+        - XAdminTokenAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       responses:
         '200':
           description: Server status details
@@ -553,9 +560,10 @@ paths:
       description: Returns all currently registered tools, their descriptions, and parameters.
       operationId: listTools
       security:
-        - ApiKeyAuth: []
+        - AdminTokenAuth: []
+        - XAdminTokenAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       responses:
         '200':
           description: List of registered tools
@@ -584,9 +592,10 @@ paths:
           schema:
             type: string
       security:
-        - ApiKeyAuth: []
+        - AdminTokenAuth: []
+        - XAdminTokenAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -618,9 +627,10 @@ paths:
       description: Scrape Prometheus formatted metrics for tool calls, durations, and errors.
       operationId: getMetrics
       security:
-        - ApiKeyAuth: []
+        - AdminTokenAuth: []
+        - XAdminTokenAuth: []
         - BearerAuth: []
-        - {}
+        - ApiKeyAuth: []
       responses:
         '200':
           description: Prometheus metrics exposition
@@ -1781,18 +1791,22 @@ components:
           type: object
 
   securitySchemes:
-
     ApiKeyAuth:
       type: apiKey
       in: header
       name: Authorization
-      description: API Key authentication header
+      description: Pre-shared static API Key header (MCP_API_KEY_VALUE). Set in server configuration for machine-to-machine auth.
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Bearer JWT token authentication header
+      description: Supabase JWT Bearer token authentication header (received via POST /auth/signin).
     AdminTokenAuth:
       type: http
       scheme: bearer
-      description: Admin token for /admin/* endpoints (MCP_ADMIN_TOKEN)
+      description: Admin super-credential token (MCP_ADMIN_TOKEN). Grants platform superadmin access across all endpoints.
+    XAdminTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Admin super-credential custom header (MCP_ADMIN_TOKEN). Alternate way to supply admin token.

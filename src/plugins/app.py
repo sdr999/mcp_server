@@ -188,6 +188,26 @@ def build_app(ctx):
     for route in upstream_health_routes():
         app.router.routes.append(route)
 
+    # Static UI Serving
+    static_ui_dir = (ctx.base_dir / "static_ui").resolve()
+    if not static_ui_dir.exists():
+        static_ui_dir = (ctx.base_dir / "src" / "static_ui").resolve()
+
+    if static_ui_dir.exists():
+        from starlette.staticfiles import StaticFiles
+        from starlette.routing import Mount, Route
+        from starlette.responses import FileResponse, JSONResponse
+        app.mount("/static_ui", StaticFiles(directory=str(static_ui_dir), html=True), name="static_ui")
+        app.mount("/assets", StaticFiles(directory=str(static_ui_dir / "assets")), name="assets")
+        
+        async def _ui_index(request):
+            index_html = static_ui_dir / "index.html"
+            if index_html.exists():
+                return FileResponse(str(index_html))
+            return JSONResponse({"message": "UI build not found."}, status_code=404)
+
+        app.router.routes.append(Route("/ui", endpoint=_ui_index, methods=["GET"]))
+        app.router.routes.append(Route("/ui/{path:path}", endpoint=_ui_index, methods=["GET"]))
 
     log_file_path = (ctx.tools_dir.parent if ctx.tools_dir else ctx.base_dir) / "logs" / "mcp_server.json.log"
     setup_observability(app=app, log_file=log_file_path)

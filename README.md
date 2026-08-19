@@ -4,6 +4,7 @@ A production-grade, enterprise-ready Model Context Protocol (MCP) Tool Server fe
 
 ## Feature Overview
 
+- **Gamified MCP Citadel Command Center UI**: Immersive Cyberpunk Sci-Fi UI built with React 18, Vite, TypeScript, and Framer Motion. Served directly at `/ui`. Includes Commander leveling, EXP progression, Reactor HUD, Spellbook sandbox, Tool Foundry AI auto-forge, Council Approval Queue, OpenAPI Vault, Realm Gateways, Guild Citadel RBAC, and Battle Chaos Arena.
 - **Distributed Observability & OpenTelemetry Tracing**: Full OpenTelemetry SDK integration (`opentelemetry-api`/`opentelemetry-sdk`), OTLP gRPC export (`http://localhost:4317`), bidirectional `MCPtoOtelBridge`, and backward-compatible Prometheus metrics shim (`src/metrics.py`).
 - **Resilience Engine & Fault Tolerance**: Per-tenant sliding-window rate limiting with automated stale bucket eviction, 3-state circuit breakers (`CLOSED` $\rightarrow$ `OPEN` $\rightarrow$ `HALF_OPEN`), and retry ratio budgets.
 - **Live Admin Reliability Dashboard**: Single-page dark-themed dashboard (`/admin/dashboard`) with real-time SSE metric stream (`/admin/dashboard/stream`) capped at 10 active connections with Bearer token authentication.

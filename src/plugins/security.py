@@ -20,8 +20,10 @@ log = logging.getLogger("MCP_logger")
 
 HEALTH_PATH = "/healthz"
 READY_PATH = "/readyz"
-DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml"}
+DOCS_PATHS = {"/docs", "/swagger", "/openapi.json", "/openapi.yaml", "/ui", "/static_ui", "/assets"}
 EXEMPT_PATHS = {HEALTH_PATH, READY_PATH} | DOCS_PATHS
+
+
 
 
 def build_mcp(ctx) -> Tuple[FastMCP, Optional[JWTVerifier]]:
@@ -63,20 +65,52 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         if request.url.path.startswith(self._protected):
-            provided = request.headers.get(self._header, "")
-            if not hmac.compare_digest(provided, self._value):
+            provided = request.headers.get(self._header, "").strip()
+            if provided.lower().startswith("bearer "):
+                provided = provided[7:].strip()
+            admin_token = getattr(request.app.state, "admin_token", "")
+            x_admin = request.headers.get("x-admin-token", "").strip()
+
+            key_ok = self._value and hmac.compare_digest(provided, self._value)
+            admin_ok = admin_token and (
+                hmac.compare_digest(provided, admin_token)
+                or (x_admin and hmac.compare_digest(x_admin, admin_token))
+            )
+
+            if not (key_ok or admin_ok):
                 request.state.auth_failure_reason = "Invalid API Key header"
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
 
 def _api_key_ok(request) -> bool:
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and (
+        getattr(principal, "subject", "") == "admin-token"
+        or "platform_superadmin" in getattr(principal, "roles", [])
+    ):
+        return True
+
     st = request.app.state
-    provided = request.headers.get(getattr(st, "api_key_header", "authorization"), "")
-    ok = hmac.compare_digest(provided, getattr(st, "api_key_value", ""))
-    if not ok:
-        request.state.auth_failure_reason = "Invalid API Key header"
-    return ok
+    header_name = getattr(st, "api_key_header", "authorization")
+    provided = request.headers.get(header_name, "").strip()
+    if provided.lower().startswith("bearer "):
+        provided = provided[7:].strip()
+
+    api_key_val = getattr(st, "api_key_value", "")
+    if api_key_val and hmac.compare_digest(provided, api_key_val):
+        return True
+
+    admin_token = getattr(st, "admin_token", "")
+    if admin_token and hmac.compare_digest(provided, admin_token):
+        return True
+
+    x_admin = request.headers.get("x-admin-token", "").strip()
+    if admin_token and x_admin and hmac.compare_digest(x_admin, admin_token):
+        return True
+
+    request.state.auth_failure_reason = "Invalid API Key header"
+    return False
 
 
 async def _jwt_ok(request) -> bool:
@@ -242,6 +276,17 @@ async def require_permission(request, permission: str):
     provided = (authz[7:].strip() if authz.lower().startswith("bearer ")
                 else request.headers.get("x-admin-token", "").strip()) or request.query_params.get("token", "").strip()
     if token and provided and hmac.compare_digest(provided, token):
+        principal = getattr(request.state, "principal", None)
+        if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
+            from .identity import create_superadmin_principal, current_principal_var, sanitize_header_value
+            app_state = getattr(request.app, "state", None)
+            tenant_header_name = getattr(app_state, "tenant_header", "X-Tenant-Id") if app_state else "X-Tenant-Id"
+            workspace_header_name = getattr(app_state, "workspace_header", "X-Workspace-Id") if app_state else "X-Workspace-Id"
+            active_org = sanitize_header_value(request.headers.get(tenant_header_name), "default")
+            active_ws = sanitize_header_value(request.headers.get(workspace_header_name), "default")
+            principal = create_superadmin_principal(org_id=active_org, workspace_id=active_ws)
+            request.state.principal = principal
+            current_principal_var.set(principal)
         return None  # static admin token == platform_superadmin
 
     principal = getattr(request.state, "principal", None)
@@ -272,9 +317,19 @@ async def admin_denied(request):
     authz = request.headers.get("authorization", "")
     provided = (authz[7:].strip() if authz.lower().startswith("bearer ") else request.headers.get("x-admin-token", "").strip()) or request.query_params.get("token", "").strip()
 
-
     # 1. Match static MCP_ADMIN_TOKEN
     if token and provided and hmac.compare_digest(provided, token):
+        principal = getattr(request.state, "principal", None)
+        if principal is None or getattr(principal, "subject", "anonymous") == "anonymous":
+            from .identity import create_superadmin_principal, current_principal_var, sanitize_header_value
+            app_state = getattr(request.app, "state", None)
+            tenant_header_name = getattr(app_state, "tenant_header", "X-Tenant-Id") if app_state else "X-Tenant-Id"
+            workspace_header_name = getattr(app_state, "workspace_header", "X-Workspace-Id") if app_state else "X-Workspace-Id"
+            active_org = sanitize_header_value(request.headers.get(tenant_header_name), "default")
+            active_ws = sanitize_header_value(request.headers.get(workspace_header_name), "default")
+            principal = create_superadmin_principal(org_id=active_org, workspace_id=active_ws)
+            request.state.principal = principal
+            current_principal_var.set(principal)
         return None
 
 

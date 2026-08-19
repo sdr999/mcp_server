@@ -170,15 +170,23 @@ def merge_env(os_env, fallbacks: dict) -> dict:
 
 
 def load_environment(base_dir: Path) -> dict:
-    """Build the process env. When the (optional) agentic framework is present,
-    alias the result onto ``global_variables.env`` so framework-authored tool
-    modules read the same configuration. The server core does not depend on it."""
-    env_path = base_dir / "config" / ".env"
-    fallbacks = dotenv_values(str(env_path)) if env_path.exists() else {}
+    """Build the process env by searching candidate .env files in order."""
+    candidate_paths = [
+        base_dir / "config" / ".env",
+        base_dir / ".env",
+        base_dir.parent / "config" / ".env",
+        base_dir.parent / ".env",
+    ]
+    fallbacks = {}
+    for p in candidate_paths:
+        if p.exists():
+            fallbacks.update(dotenv_values(str(p)))
+
     env = merge_env(os.environ, fallbacks)
     if global_variables is not None:
         global_variables.env = env
     return env
+
 
 
 def decode_config_path(raw: str, base_dir: Path) -> Tuple[str, Path]:

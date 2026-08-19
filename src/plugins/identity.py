@@ -321,11 +321,17 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         principal: Optional[Principal] = None
         is_admin_token = False
 
-        # 1. Check Authorization header (accept Bearer <token> or raw <token>)
+        # 1. Check for Admin Token via Authorization header, X-Admin-Token header, or ?token= query param
         authz = request.headers.get("authorization", "").strip()
         bearer_token = authz[7:].strip() if authz.lower().startswith("bearer ") else authz
+        x_admin_token = request.headers.get("x-admin-token", "").strip()
+        query_token = request.query_params.get("token", "").strip()
 
-        if admin_token and bearer_token and hmac.compare_digest(bearer_token, admin_token):
+        if admin_token and (
+            (bearer_token and hmac.compare_digest(bearer_token, admin_token))
+            or (x_admin_token and hmac.compare_digest(x_admin_token, admin_token))
+            or (query_token and hmac.compare_digest(query_token, admin_token))
+        ):
             principal = create_superadmin_principal(org_id=active_org, workspace_id=active_ws)
             is_admin_token = True  # bootstrap superadmin; not subject to store overlay
 
