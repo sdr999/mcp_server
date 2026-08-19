@@ -53,6 +53,14 @@ tags:
     description: Upstream MCP server federation
   - name: Observability & Dashboard
     description: Live reliability metrics, OpenTelemetry status, and SSE dashboard stream
+  - name: Analytics
+    description: Tool execution analytics, usage timeseries, leaderboards, and telemetry control
+  - name: Chaos Engineering
+    description: Fault injection simulation, latency rules, and error rate controls
+  - name: Intelligence & Search
+    description: Log search over scrubbed execution history
+  - name: Prompt Management
+    description: Versioned prompt templates and A/B testing variant resolution
 
 
 paths:
@@ -759,6 +767,45 @@ paths:
         '200':
           description: Chaos Engine Status JSON
 
+  /admin/chaos/enable:
+    post:
+      tags:
+        - Chaos Engineering
+      summary: Enable Chaos Fault Injection
+      description: Activates fault injection middleware.
+      operationId: enableChaos
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Chaos enabled
+
+  /admin/chaos/disable:
+    post:
+      tags:
+        - Chaos Engineering
+      summary: Disable Chaos Fault Injection
+      description: Deactivates fault injection middleware.
+      operationId: disableChaos
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Chaos disabled
+
+  /admin/chaos/rules:
+    post:
+      tags:
+        - Chaos Engineering
+      summary: Configure Chaos Fault Rules
+      description: Sets latency injection ms, failure rate, or error status code rules.
+      operationId: configureChaosRules
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Rules updated
+
   /admin/intelligence/search:
     get:
       tags:
@@ -783,6 +830,111 @@ paths:
       security:
         - BearerAuth: []
         - AdminTokenAuth: []
+      responses:
+        '200':
+          description: List of prompt templates
+    post:
+      tags:
+        - Prompt Management
+      summary: Register Prompt Template
+      description: Registers or updates a versioned prompt template.
+      operationId: registerPrompt
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Prompt registered
+
+  /admin/prompts/{name}/variant:
+    get:
+      tags:
+        - Prompt Management
+      summary: Resolve Prompt Variant (A/B Testing)
+      description: Resolves prompt variant using deterministic A/B testing hash for a caller or session.
+      operationId: getPromptVariant
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Resolved prompt variant payload
+
+  /admin/analytics/summary:
+    get:
+      tags:
+        - Analytics
+      summary: Get Analytics Aggregate Summary
+      description: Returns total executions, total latency, success rate, and error breakdown.
+      operationId: getAnalyticsSummary
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Analytics summary JSON
+
+  /admin/analytics/tools/{name}/timeseries:
+    get:
+      tags:
+        - Analytics
+      summary: Tool Execution Timeseries
+      description: Returns time-binned call count and latency metrics for a specific tool.
+      operationId: getToolTimeseries
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Timeseries data JSON
+
+  /admin/analytics/leaderboard:
+    get:
+      tags:
+        - Analytics
+      summary: Tool Execution Leaderboard
+      description: Returns tools ranked by execution frequency, latency, or error count.
+      operationId: getAnalyticsLeaderboard
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Leaderboard JSON
+
+  /admin/analytics/results:
+    get:
+      tags:
+        - Analytics
+      summary: Analytics Execution Log Results
+      description: Returns raw execution logs recorded in the analytics store.
+      operationId: getAnalyticsResults
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Execution logs list
+
+  /admin/analytics/control:
+    post:
+      tags:
+        - Analytics
+      summary: Analytics Engine Control
+      description: Enables, disables, or flushes the background analytics drain loop.
+      operationId: controlAnalytics
+      security:
+        - AdminTokenAuth: []
+      responses:
+        '200':
+          description: Analytics control response
       responses:
         '200':
           description: List of prompt templates
