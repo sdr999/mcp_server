@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import confetti from 'canvas-confetti';
-import { api } from './services/api';
-import { sseManager } from './services/sse';
 import { Navbar } from './components/common/Navbar';
 import { Sidebar } from './components/common/Sidebar';
 import { AuthPortal } from './components/auth/AuthPortal';
+import { api } from './services/api';
+import { sseManager } from './services/sse';
+import confetti from 'canvas-confetti';
+
+// Modules
 import { SystemHUD } from './components/dashboard/SystemHUD';
 import { NeuralFirehose } from './components/dashboard/NeuralFirehose';
 import { ToolSpellbook } from './components/tools/ToolSpellbook';
@@ -15,15 +17,13 @@ import { FederationGateways } from './components/federation/FederationGateways';
 import { GuildCitadel } from './components/tenancy/GuildCitadel';
 import { ChaosArena } from './components/analytics/ChaosArena';
 import { PromptVault } from './components/prompts/PromptVault';
-
 import { sfx } from './services/soundEffects';
+import { toolUsageTracker } from './services/toolUsageTracker';
 
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('mcp_token'));
   const [user, setUser] = useState<any | null>(null);
-  const [userExp, setUserExp] = useState<number>(3450);
-  const [userLevel, setUserLevel] = useState<number>(12);
-  const [activeTab, setActiveTab] = useState<string>('spellbook');
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [sseConnected, setSseConnected] = useState<boolean>(false);
 
@@ -34,10 +34,20 @@ export function App() {
         .then(res => setUser(res.data))
         .catch(() => {});
 
-      // Connect SSE stream
+      // Connect SSE stream and listen for tool execution telemetry
       sseManager.connect();
-      const unsub = sseManager.subscribe(() => {
+      const unsubSSE = sseManager.subscribe((event) => {
         setSseConnected(sseManager.getStatus());
+
+        // Parse tool invocation from telemetry event (agent execution)
+        const toolName = event.details?.tool || 
+          (event.details?.path && event.details?.path.includes('/tools/') 
+            ? event.details.path.split('/tools/')[1]?.split('/')[0] 
+            : null);
+
+        if (toolName) {
+          toolUsageTracker.recordUsage(toolName);
+        }
       });
 
       // Fetch pending queue count for sidebar badge
@@ -50,7 +60,7 @@ export function App() {
         .catch(() => {});
 
       return () => {
-        unsub();
+        unsubSSE();
       };
     }
   }, [token]);
@@ -63,24 +73,15 @@ export function App() {
     setUser(null);
   };
 
-  const handleExpGain = (gained: number) => {
-    setUserExp(prev => {
-      const updated = prev + gained;
-      const nextLevelThreshold = userLevel * 1000;
-      if (updated >= nextLevelThreshold) {
-        setUserLevel(lvl => lvl + 1);
-        sfx.playLevelUpSound();
-        // Trigger Gamified Confetti Level-Up effect!
-        try {
-          confetti({
-            particleCount: 120,
-            spread: 80,
-            origin: { y: 0.6 }
-          });
-        } catch (e) {}
-      }
-      return updated;
-    });
+  const handleReward = () => {
+    sfx.playVictorySound();
+    try {
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.6 }
+      });
+    } catch (e) {}
   };
 
   if (!token) {
@@ -97,17 +98,15 @@ export function App() {
   return (
     <div style={{
       minHeight: '100vh',
-      backgroundColor: '#070e1e',
+      backgroundColor: '#070a10',
       color: '#f8fafc',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: 'var(--font-game)'
+      fontFamily: 'var(--font-body)'
     }}>
       {/* Top Navbar HUD */}
       <Navbar
         user={user}
-        userExp={userExp}
-        userLevel={userLevel}
         onLogout={handleLogout}
         sseConnected={sseConnected}
       />
@@ -159,16 +158,16 @@ export function App() {
             </div>
           </div>
 
-          {activeTab === 'dashboard' && <SystemHUD />}
+          {activeTab === 'dashboard' && <SystemHUD onNavigateTab={setActiveTab} />}
           {activeTab === 'firehose' && <NeuralFirehose />}
-          {activeTab === 'spellbook' && <ToolSpellbook onExpGain={handleExpGain} />}
-          {activeTab === 'foundry' && <ToolFoundry onExpGain={handleExpGain} />}
-          {activeTab === 'queue' && <ApprovalQueue onExpGain={handleExpGain} />}
-          {activeTab === 'openapi' && <OpenAPIVault onExpGain={handleExpGain} />}
-          {activeTab === 'federation' && <FederationGateways onExpGain={handleExpGain} />}
-          {activeTab === 'tenancy' && <GuildCitadel onExpGain={handleExpGain} />}
-          {activeTab === 'chaos' && <ChaosArena onExpGain={handleExpGain} />}
-          {activeTab === 'prompts' && <PromptVault onExpGain={handleExpGain} />}
+          {activeTab === 'spellbook' && <ToolSpellbook onExpGain={handleReward} />}
+          {activeTab === 'foundry' && <ToolFoundry onExpGain={handleReward} />}
+          {activeTab === 'queue' && <ApprovalQueue onExpGain={handleReward} />}
+          {activeTab === 'openapi' && <OpenAPIVault onExpGain={handleReward} />}
+          {activeTab === 'federation' && <FederationGateways onExpGain={handleReward} />}
+          {activeTab === 'tenancy' && <GuildCitadel onExpGain={handleReward} />}
+          {activeTab === 'chaos' && <ChaosArena onExpGain={handleReward} />}
+          {activeTab === 'prompts' && <PromptVault onExpGain={handleReward} />}
         </main>
       </div>
     </div>

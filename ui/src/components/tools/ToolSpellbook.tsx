@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock, Copy, Check, Terminal, Cpu, Radio, Shield, Zap } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock, Copy, Check, Terminal, Cpu, Radio, Shield, Zap, Flame, Award, Trophy, ArrowUpDown } from 'lucide-react';
 import { api } from '../../services/api';
 import { SchemaForm } from '../common/SchemaForm';
 import { sfx } from '../../services/soundEffects';
+import { toolUsageTracker, ToolMastery } from '../../services/toolUsageTracker';
 
 export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onExpGain }) => {
   const [tools, setTools] = useState<any[]>([]);
@@ -14,6 +15,8 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
   const [lastSubmittedArgs, setLastSubmittedArgs] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [toolStatsVersion, setToolStatsVersion] = useState(0);
+  const [sortBy, setSortBy] = useState<'rank' | 'level' | 'name'>('rank');
 
   const fetchCatalog = async () => {
     try {
@@ -38,6 +41,10 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
 
   useEffect(() => {
     fetchCatalog();
+    const unsub = toolUsageTracker.subscribe(() => {
+      setToolStatsVersion(v => v + 1);
+    });
+    return unsub;
   }, []);
 
   const handleSelectTool = (tool: any) => {
@@ -60,6 +67,10 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
       const duration = Math.round(performance.now() - startTime);
       setExecutionDuration(duration);
       const isError = Boolean(res.data?.is_error);
+      
+      // Record usage for tool level calculation
+      toolUsageTracker.recordUsage(selectedTool.name, duration);
+
       setExecutionResult({
         success: !isError,
         data: res.data
@@ -83,10 +94,40 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     }
   };
 
-  const filteredTools = tools.filter(t => 
-    t.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Build ranked tools map
+  const toolNames = useMemo(() => tools.map(t => t.name), [tools]);
+  const rankedToolsList = useMemo(() => toolUsageTracker.getRankedTools(toolNames), [toolNames, toolStatsVersion]);
+  const ranksMap = useMemo(() => {
+    const map = new Map<string, ToolMastery>();
+    rankedToolsList.forEach(item => {
+      map.set(item.name, item);
+    });
+    return map;
+  }, [rankedToolsList]);
+
+  // Filter & Sort
+  const processedTools = useMemo(() => {
+    let list = tools.filter(t => 
+      t.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    list.sort((a, b) => {
+      const statsA = ranksMap.get(a.name) || toolUsageTracker.getToolStats(a.name);
+      const statsB = ranksMap.get(b.name) || toolUsageTracker.getToolStats(b.name);
+
+      if (sortBy === 'rank') {
+        return (statsA.rank ?? 999) - (statsB.rank ?? 999);
+      }
+      if (sortBy === 'level') {
+        if (statsB.level !== statsA.level) return statsB.level - statsA.level;
+        return statsB.calls - statsA.calls;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    return list;
+  }, [tools, searchQuery, sortBy, ranksMap]);
 
   const generateSampleArgs = (tool: any) => {
     const props = tool?.parameters?.properties || tool?.inputSchema?.properties || {};
@@ -127,6 +168,8 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const selectedStats = selectedTool ? (ranksMap.get(selectedTool.name) || toolUsageTracker.getToolStats(selectedTool.name)) : null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       {/* Header */}
@@ -149,9 +192,56 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
               </span>
             </h3>
             <p className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem' }}>
-              SELECT MODULE • SPECIFY PARAMETER PAYLOAD • EXECUTE TACTICAL PROTOCOL
+              TOOL MASTERY & RANKINGS TRACKED LIVE ACROSS AGENT & MANUAL INVOCATIONS
             </p>
           </div>
+        </div>
+
+        {/* Sort by Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span className="font-title" style={{ fontSize: '0.7rem', color: '#64748b' }}>SORT:</span>
+          <button
+            onClick={() => { sfx.playTapSound(); setSortBy('rank'); }}
+            style={{
+              background: sortBy === 'rank' ? '#0284c7' : '#0a0f1a',
+              color: sortBy === 'rank' ? '#ffffff' : '#94a3b8',
+              border: `1px solid ${sortBy === 'rank' ? '#38bdf8' : '#1e2c45'}`,
+              borderRadius: '0.25rem',
+              padding: '0.3rem 0.6rem',
+              fontSize: '0.7rem',
+              cursor: 'pointer'
+            }}
+          >
+            🏆 Rank
+          </button>
+          <button
+            onClick={() => { sfx.playTapSound(); setSortBy('level'); }}
+            style={{
+              background: sortBy === 'level' ? '#0284c7' : '#0a0f1a',
+              color: sortBy === 'level' ? '#ffffff' : '#94a3b8',
+              border: `1px solid ${sortBy === 'level' ? '#38bdf8' : '#1e2c45'}`,
+              borderRadius: '0.25rem',
+              padding: '0.3rem 0.6rem',
+              fontSize: '0.7rem',
+              cursor: 'pointer'
+            }}
+          >
+            ⚡ Level
+          </button>
+          <button
+            onClick={() => { sfx.playTapSound(); setSortBy('name'); }}
+            style={{
+              background: sortBy === 'name' ? '#0284c7' : '#0a0f1a',
+              color: sortBy === 'name' ? '#ffffff' : '#94a3b8',
+              border: `1px solid ${sortBy === 'name' ? '#38bdf8' : '#1e2c45'}`,
+              borderRadius: '0.25rem',
+              padding: '0.3rem 0.6rem',
+              fontSize: '0.7rem',
+              cursor: 'pointer'
+            }}
+          >
+            🔤 Name
+          </button>
         </div>
       </div>
 
@@ -188,13 +278,15 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
               <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.8rem' }}>
                 INITIALIZING MODULE SENSORS...
               </div>
-            ) : filteredTools.length === 0 ? (
+            ) : processedTools.length === 0 ? (
               <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.8rem' }}>
                 NO MATCHING TACTICAL MODULES FOUND
               </div>
             ) : (
-              filteredTools.map(tool => {
+              processedTools.map(tool => {
                 const isSelected = selectedTool?.name === tool.name;
+                const stats = ranksMap.get(tool.name) || toolUsageTracker.getToolStats(tool.name);
+                const rankNum = stats.rank ?? 99;
 
                 return (
                   <div
@@ -202,26 +294,60 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                     onClick={() => handleSelectTool(tool)}
                     className="sc-card"
                     style={{
-                      padding: '1rem',
-                      borderColor: isSelected ? '#00f0ff' : '#1e2c45',
+                      padding: '0.85rem 1rem',
+                      borderColor: isSelected ? '#00f0ff' : stats.calls > 0 && rankNum <= 3 ? '#ff9f1c' : '#1e2c45',
                       boxShadow: isSelected ? '0 0 20px rgba(0, 240, 255, 0.35)' : undefined,
                       background: isSelected ? 'linear-gradient(180deg, #16243d 0%, #0c1424 100%)' : undefined
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span className="sc-status-led" />
+                        {/* Rank Badge */}
+                        <span className="font-title" style={{
+                          fontSize: '10px',
+                          padding: '0.125rem 0.4rem',
+                          borderRadius: '0.25rem',
+                          background: rankNum === 1 ? 'linear-gradient(180deg, #fbbf24, #d97706)' : rankNum === 2 ? 'linear-gradient(180deg, #e2e8f0, #94a3b8)' : rankNum === 3 ? 'linear-gradient(180deg, #fdba74, #ea580c)' : '#0f172a',
+                          color: rankNum <= 3 ? '#000000' : '#94a3b8',
+                          fontWeight: 700,
+                          border: `1px solid ${rankNum <= 3 ? '#fbbf24' : '#334155'}`
+                        }}>
+                          #{rankNum}
+                        </span>
+
                         <h4 className="font-title" style={{ fontSize: '0.85rem', color: '#ffffff', margin: 0 }}>
                           {tool.name}
                         </h4>
                       </div>
-                      <span className="font-mono" style={{ fontSize: '10px', color: '#00f0ff', background: 'rgba(0, 240, 255, 0.1)', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', border: '1px solid rgba(0, 240, 255, 0.3)' }}>
-                        READY
-                      </span>
+
+                      {/* Tool Level & Invocations Badge */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span className="font-title" style={{ 
+                          fontSize: '10px', 
+                          color: stats.level >= 4 ? '#fbbf24' : stats.level >= 3 ? '#a855f7' : stats.level >= 2 ? '#38bdf8' : '#94a3b8',
+                          background: 'rgba(0, 0, 0, 0.4)', 
+                          padding: '0.15rem 0.45rem', 
+                          borderRadius: '0.25rem', 
+                          border: `1px solid ${stats.level >= 4 ? '#d97706' : stats.level >= 3 ? '#7e22ce' : stats.level >= 2 ? '#0284c7' : '#334155'}`
+                        }}>
+                          LVL {stats.level} ({stats.calls} ⚡)
+                        </span>
+                      </div>
                     </div>
+
                     <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                       {tool.description || 'Tactical MCP protocol module.'}
                     </p>
+
+                    {/* Tool Level Progress Bar */}
+                    <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ flex: 1, height: '4px', backgroundColor: '#070a10', borderRadius: '2px', overflow: 'hidden', border: '1px solid #1e2c45' }}>
+                        <div style={{ width: `${stats.progressPercent}%`, height: '100%', background: stats.level >= 4 ? 'linear-gradient(90deg, #d97706, #fbbf24)' : 'linear-gradient(90deg, #0284c7, #38bdf8)' }} />
+                      </div>
+                      <span className="font-mono" style={{ fontSize: '9px', color: '#64748b' }}>
+                        {stats.calls}/{stats.nextLevelCalls}
+                      </span>
+                    </div>
                   </div>
                 );
               })
@@ -231,9 +357,9 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
 
         {/* Right Column: Tactical Execution Station */}
         <div className="hud-panel" style={{ gridColumn: 'span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {selectedTool ? (
+          {selectedTool && selectedStats ? (
             <>
-              {/* Selected Module Header */}
+              {/* Selected Module Header with Tool Mastery & Rank */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #1e2c45', paddingBottom: '0.85rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <div style={{
@@ -253,6 +379,43 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                       {selectedTool.description || 'Target and execute protocol on MCP cluster.'}
                     </p>
                   </div>
+                </div>
+
+                {/* Tool Level & Total Invocations Badge */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <div style={{
+                      background: 'rgba(251, 191, 36, 0.15)',
+                      border: '1px solid rgba(251, 191, 36, 0.4)',
+                      borderRadius: '0.375rem',
+                      padding: '0.25rem 0.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      color: '#fbbf24',
+                      fontSize: '0.75rem'
+                    }}>
+                      <Trophy style={{ width: '0.85rem', height: '0.85rem' }} />
+                      <span className="font-title">RANK #{selectedStats.rank ?? 1}</span>
+                    </div>
+                    <div style={{
+                      background: 'rgba(255, 159, 28, 0.15)',
+                      border: '1px solid rgba(255, 159, 28, 0.4)',
+                      borderRadius: '0.375rem',
+                      padding: '0.25rem 0.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      color: '#ff9f1c',
+                      fontSize: '0.75rem'
+                    }}>
+                      <Award style={{ width: '0.85rem', height: '0.85rem' }} />
+                      <span className="font-title">LVL {selectedStats.level}</span>
+                    </div>
+                  </div>
+                  <span className="font-mono" style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                    {selectedStats.calls} total invocations ({selectedStats.levelTitle})
+                  </span>
                 </div>
               </div>
 
