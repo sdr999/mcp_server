@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock } from 'lucide-react';
+import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock, Copy, Check, Terminal } from 'lucide-react';
 import { api } from '../../services/api';
 import { SchemaForm } from '../common/SchemaForm';
 
@@ -10,7 +10,10 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
   const [executing, setExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<any | null>(null);
   const [executionDuration, setExecutionDuration] = useState<number | null>(null);
+  const [lastSubmittedArgs, setLastSubmittedArgs] = useState<any>({});
   const [loading, setLoading] = useState(true);
+  const [activeViewMode, setActiveViewMode] = useState<'structured' | 'raw' | 'curl'>('structured');
+  const [copied, setCopied] = useState(false);
 
   const fetchCatalog = async () => {
     try {
@@ -42,6 +45,7 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     setExecuting(true);
     setExecutionResult(null);
     setExecutionDuration(null);
+    setLastSubmittedArgs(formData);
 
     const startTime = performance.now();
     try {
@@ -49,11 +53,11 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
       const duration = Math.round(performance.now() - startTime);
       setExecutionDuration(duration);
       setExecutionResult({
-        success: true,
+        success: !res.data?.is_error,
         data: res.data
       });
       // Award 100 EXP on successful spell cast!
-      if (onExpGain) onExpGain(100);
+      if (onExpGain && !res.data?.is_error) onExpGain(100);
     } catch (err: any) {
       const duration = Math.round(performance.now() - startTime);
       setExecutionDuration(duration);
@@ -70,6 +74,20 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     t.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     t.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const getCurlCommand = () => {
+    if (!selectedTool) return '';
+    const token = localStorage.getItem('mcp_token') || 'mysecretadmin';
+    const baseUrl = window.location.origin;
+    const bodyStr = JSON.stringify({ arguments: lastSubmittedArgs || {} }, null, 2);
+    return `curl -X 'POST' \\\n  '${baseUrl}/tools/${selectedTool.name}/call' \\\n  -H 'accept: application/json' \\\n  -H 'Authorization: Bearer ${token}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${bodyStr}'`;
+  };
+
+  const copyCurl = () => {
+    navigator.clipboard.writeText(getCurlCommand());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -125,6 +143,7 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                   onClick={() => {
                     setSelectedTool(t);
                     setExecutionResult(null);
+                    setLastSubmittedArgs({});
                   }}
                   className="hud-panel"
                   style={{
@@ -182,7 +201,8 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
 
               {/* Execution Result Box */}
               {executionResult && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
+                  {/* Status & Timing Bar */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {executionResult.success ? (
@@ -197,17 +217,162 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                         </>
                       )}
                     </span>
-                    {executionDuration !== null && (
-                      <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <Clock style={{ width: '0.875rem', height: '0.875rem', color: '#22d3ee' }} />
-                        {executionDuration} ms
-                      </span>
-                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      {executionDuration !== null && (
+                        <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <Clock style={{ width: '0.875rem', height: '0.875rem', color: '#22d3ee' }} />
+                          {executionDuration} ms
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#67e8f9', overflow: 'auto', maxHeight: '18rem', margin: 0 }}>
-                    {JSON.stringify(executionResult.data || executionResult.error, null, 2)}
-                  </pre>
+                  {/* Result View Mode Selector Tabs */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.5rem' }}>
+                    <button
+                      onClick={() => setActiveViewMode('structured')}
+                      style={{
+                        background: activeViewMode === 'structured' ? 'rgba(0, 240, 255, 0.2)' : 'transparent',
+                        border: activeViewMode === 'structured' ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid transparent',
+                        color: activeViewMode === 'structured' ? '#00f0ff' : '#94a3b8',
+                        padding: '0.25rem 0.625rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.75rem',
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Structured View
+                    </button>
+                    <button
+                      onClick={() => setActiveViewMode('raw')}
+                      style={{
+                        background: activeViewMode === 'raw' ? 'rgba(0, 240, 255, 0.2)' : 'transparent',
+                        border: activeViewMode === 'raw' ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid transparent',
+                        color: activeViewMode === 'raw' ? '#00f0ff' : '#94a3b8',
+                        padding: '0.25rem 0.625rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.75rem',
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Raw JSON
+                    </button>
+                    <button
+                      onClick={() => setActiveViewMode('curl')}
+                      style={{
+                        background: activeViewMode === 'curl' ? 'rgba(0, 240, 255, 0.2)' : 'transparent',
+                        border: activeViewMode === 'curl' ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid transparent',
+                        color: activeViewMode === 'curl' ? '#00f0ff' : '#94a3b8',
+                        padding: '0.25rem 0.625rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.75rem',
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem'
+                      }}
+                    >
+                      <Terminal style={{ width: '0.75rem', height: '0.75rem' }} />
+                      cURL Command
+                    </button>
+                  </div>
+
+                  {/* View Mode Content */}
+                  {activeViewMode === 'structured' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {/* Structured Content Card */}
+                      {executionResult.data?.structured_content && (
+                        <div style={{
+                          background: 'rgba(15, 23, 42, 0.8)',
+                          border: '1px solid rgba(0, 240, 255, 0.3)',
+                          borderRadius: '0.375rem',
+                          padding: '0.75rem 1rem'
+                        }}>
+                          <div className="font-mono" style={{ fontSize: '0.7rem', color: '#00f0ff', textTransform: 'uppercase', marginBottom: '0.5rem', fontWeight: 700 }}>
+                            STRUCTURED CONTENT
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.5rem' }}>
+                            {Object.entries(executionResult.data.structured_content).map(([k, v]) => (
+                              <div key={k} style={{ background: 'rgba(0,0,0,0.4)', padding: '0.5rem', borderRadius: '0.25rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                <div className="font-mono" style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{k}</div>
+                                <div className="font-mono" style={{ fontSize: '1rem', fontWeight: 700, color: '#34d399' }}>
+                                  {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Content Blocks */}
+                      {executionResult.data?.content && Array.isArray(executionResult.data.content) && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {executionResult.data.content.map((item: any, idx: number) => (
+                            <div key={idx} style={{
+                              background: '#020617',
+                              border: '1px solid #1e293b',
+                              borderRadius: '0.375rem',
+                              padding: '0.75rem'
+                            }}>
+                              <div className="font-mono" style={{ fontSize: '0.65rem', color: '#64748b', marginBottom: '0.25rem' }}>
+                                CONTENT [{item.type || 'text'}]
+                              </div>
+                              <pre className="font-mono" style={{ margin: 0, fontSize: '0.85rem', color: '#38bdf8', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                {item.text || JSON.stringify(item)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Fallback if data is not structured format */}
+                      {!executionResult.data?.structured_content && !executionResult.data?.content && (
+                        <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#67e8f9', overflow: 'auto', maxHeight: '18rem', margin: 0 }}>
+                          {JSON.stringify(executionResult.data || executionResult.error, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+
+                  {activeViewMode === 'raw' && (
+                    <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#67e8f9', overflow: 'auto', maxHeight: '18rem', margin: 0 }}>
+                      {JSON.stringify(executionResult.data || executionResult.error, null, 2)}
+                    </pre>
+                  )}
+
+                  {activeViewMode === 'curl' && (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        onClick={copyCurl}
+                        style={{
+                          position: 'absolute',
+                          top: '0.5rem',
+                          right: '0.5rem',
+                          background: 'rgba(0, 240, 255, 0.15)',
+                          border: '1px solid rgba(0, 240, 255, 0.4)',
+                          color: '#00f0ff',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '0.25rem',
+                          fontSize: '0.7rem',
+                          fontFamily: 'var(--font-mono)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem'
+                        }}
+                      >
+                        {copied ? <Check style={{ width: '0.75rem', height: '0.75rem', color: '#34d399' }} /> : <Copy style={{ width: '0.75rem', height: '0.75rem' }} />}
+                        {copied ? 'COPIED!' : 'COPY cURL'}
+                      </button>
+                      <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', paddingRight: '6rem', fontSize: '0.75rem', color: '#a7f3d0', overflow: 'auto', margin: 0 }}>
+                        {getCurlCommand()}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -222,3 +387,4 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     </div>
   );
 };
+

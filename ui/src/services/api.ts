@@ -105,7 +105,12 @@ export const api = {
 
   // Tools & Execution
   getToolsCatalog: () => apiClient.get('/tools'),
-  callTool: (name: string, payload: any) => apiClient.post(`/tools/${name}/call`, payload),
+  callTool: (name: string, payload: any) => {
+    const body = (payload && typeof payload === 'object' && 'arguments' in payload)
+      ? payload
+      : { arguments: payload || {} };
+    return apiClient.post(`/tools/${name}/call`, body);
+  },
 
   // Tool Onboarding & Lifecycle
   onboardTool: (data: any) => apiClient.post('/admin/tools/onboard', data),
@@ -131,7 +136,12 @@ export const api = {
   // Federation / Upstream Servers
   getUpstreams: () => apiClient.get('/mcp/upstreams'),
   getUpstreamTools: (server: string) => apiClient.get(`/mcp/upstreams/${server}/tools`),
-  callUpstreamTool: (server: string, name: string, payload: any) => apiClient.post(`/mcp/upstreams/${server}/tools/${name}/call`, payload),
+  callUpstreamTool: (server: string, name: string, payload: any) => {
+    const body = (payload && typeof payload === 'object' && 'arguments' in payload)
+      ? payload
+      : { arguments: payload || {} };
+    return apiClient.post(`/mcp/upstreams/${server}/tools/${name}/call`, body);
+  },
   addUpstream: (data: any) => apiClient.post('/admin/mcp/upstreams', data),
   removeUpstream: (server: string) => apiClient.post(`/admin/mcp/upstreams/${server}/remove`),
 
