@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock, Copy, Check, Terminal, Sparkles, Flame, Shield } from 'lucide-react';
+import { Wand2, Search, Play, CheckCircle2, AlertTriangle, Code2, Clock, Copy, Check, Terminal, Cpu, Radio, Shield, Zap } from 'lucide-react';
 import { api } from '../../services/api';
 import { SchemaForm } from '../common/SchemaForm';
 import { sfx } from '../../services/soundEffects';
@@ -13,9 +13,7 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
   const [executionDuration, setExecutionDuration] = useState<number | null>(null);
   const [lastSubmittedArgs, setLastSubmittedArgs] = useState<any>({});
   const [loading, setLoading] = useState(true);
-  const [activeViewMode, setActiveViewMode] = useState<'structured' | 'raw' | 'curl'>('structured');
   const [copied, setCopied] = useState(false);
-  const [rarityFilter, setRarityFilter] = useState<'ALL' | 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY'>('ALL');
 
   const fetchCatalog = async () => {
     try {
@@ -32,7 +30,7 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
         setTools(list);
       }
     } catch (e) {
-      console.error('Failed to load tool spellbook catalog', e);
+      console.error('Failed to load tactical module catalog', e);
     } finally {
       setLoading(false);
     }
@@ -41,32 +39,6 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
   useEffect(() => {
     fetchCatalog();
   }, []);
-
-  const getToolRarity = (tool: any): 'common' | 'rare' | 'epic' | 'legendary' => {
-    const name = tool.name?.toLowerCase() || '';
-    if (name.includes('weather') || name.includes('gpt') || name.includes('ai') || name.includes('forecast')) return 'legendary';
-    if (name.includes('calc') || name.includes('add') || name.includes('crypto') || name.includes('auth')) return 'epic';
-    if (name.includes('echo') || name.includes('ping') || name.includes('time') || name.includes('check')) return 'rare';
-    return 'common';
-  };
-
-  const getToolElixir = (tool: any): number => {
-    const rarity = getToolRarity(tool);
-    if (rarity === 'legendary') return 5;
-    if (rarity === 'epic') return 4;
-    if (rarity === 'rare') return 3;
-    return 2;
-  };
-
-  const getToolEmoji = (tool: any): string => {
-    const name = tool.name?.toLowerCase() || '';
-    if (name.includes('weather')) return '⚡';
-    if (name.includes('calc') || name.includes('add') || name.includes('math')) return '🔮';
-    if (name.includes('ping') || name.includes('echo')) return '🏹';
-    if (name.includes('ai') || name.includes('prompt')) return '🧙‍♂️';
-    if (name.includes('auth') || name.includes('security')) return '🛡️';
-    return '🧪';
-  };
 
   const handleSelectTool = (tool: any) => {
     sfx.playCardSelectSound();
@@ -111,13 +83,10 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     }
   };
 
-  const filteredTools = tools.filter(t => {
-    const matchesSearch = t.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const rarity = getToolRarity(t).toUpperCase();
-    const matchesRarity = rarityFilter === 'ALL' || rarity === rarityFilter;
-    return matchesSearch && matchesRarity;
-  });
+  const filteredTools = tools.filter(t => 
+    t.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const generateSampleArgs = (tool: any) => {
     const props = tool?.parameters?.properties || tool?.inputSchema?.properties || {};
@@ -160,145 +129,98 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      {/* Clash Royale Arena Header */}
+      {/* Header */}
       <div className="hud-panel" style={{ padding: '1rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{
             padding: '0.65rem',
-            borderRadius: '0.75rem',
-            background: 'linear-gradient(180deg, #f472b6, #db2777)',
-            border: '2px solid #fbcfe8',
-            boxShadow: '0 4px 10px rgba(219, 39, 119, 0.4)'
+            borderRadius: '0.375rem',
+            background: 'rgba(0, 240, 255, 0.12)',
+            border: '1px solid rgba(0, 240, 255, 0.4)',
+            color: '#00f0ff'
           }}>
-            <Wand2 style={{ width: '1.5rem', height: '1.5rem', color: '#ffffff' }} />
+            <Cpu style={{ width: '1.5rem', height: '1.5rem' }} />
           </div>
           <div>
-            <h3 className="font-title" style={{ fontSize: '1.2rem', color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              🃏 BATTLE DECK (TOOL SPELLBOOK)
-              <span className="trophy-badge" style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}>
-                {tools.length} CARDS IN DECK
+            <h3 className="font-title" style={{ fontSize: '1.15rem', color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              TACTICAL DEPLOYABLE MODULES
+              <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', background: 'rgba(0, 240, 255, 0.15)', border: '1px solid #00f0ff', color: '#00f0ff', borderRadius: '0.25rem' }}>
+                {tools.length} MODULES ARMED
               </span>
             </h3>
-            <p className="font-game" style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem' }}>
-              SELECT A SPELL CARD • LOAD ELIXIR PARAMETERS • CAST INTO ARENA
+            <p className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem' }}>
+              SELECT MODULE • SPECIFY PARAMETER PAYLOAD • EXECUTE TACTICAL PROTOCOL
             </p>
           </div>
         </div>
-
-        {/* Rarity Filter Tabs */}
-        <div style={{ display: 'flex', gap: '0.35rem', background: '#0c172c', padding: '0.25rem', borderRadius: '0.5rem', border: '1px solid #2a3e66' }}>
-          {(['ALL', 'COMMON', 'RARE', 'EPIC', 'LEGENDARY'] as const).map(rarity => (
-            <button
-              key={rarity}
-              onClick={() => {
-                sfx.playTapSound();
-                setRarityFilter(rarity);
-              }}
-              className="font-title"
-              style={{
-                fontSize: '0.7rem',
-                padding: '0.3rem 0.65rem',
-                borderRadius: '0.375rem',
-                border: 'none',
-                cursor: 'pointer',
-                background: rarityFilter === rarity ? '#0284c7' : 'transparent',
-                color: rarityFilter === rarity ? '#ffffff' : '#94a3b8',
-                boxShadow: rarityFilter === rarity ? '0 2px 4px rgba(0,0,0,0.5)' : 'none'
-              }}
-            >
-              {rarity}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Main Grid: Card Deck (Left) & Spell Cast Workbench (Right) */}
+      {/* Main Grid: Modules List (Left) & Tactical Execution Station (Right) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.5rem' }}>
-        {/* Left Column: Battle Cards Deck */}
+        {/* Left Column: Modules List */}
         <div style={{ gridColumn: 'span 5', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* Search Box */}
           <div style={{ position: 'relative' }}>
-            <Search style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', width: '1rem', height: '1rem', color: '#38bdf8' }} />
+            <Search style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', width: '1rem', height: '1rem', color: '#00f0ff' }} />
             <input
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search spells, tools, weapons..."
-              className="font-game"
+              placeholder="Search tactical modules..."
+              className="font-mono"
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
-                backgroundColor: '#0c172c',
-                border: '2px solid #2a3e66',
-                borderRadius: '0.625rem',
+                backgroundColor: '#0a0f1a',
+                border: '1px solid #1e2c45',
+                borderRadius: '0.375rem',
                 padding: '0.6rem 1rem 0.6rem 2.5rem',
-                fontSize: '0.85rem',
+                fontSize: '0.8rem',
                 color: '#ffffff',
-                outline: 'none',
-                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.5)'
+                outline: 'none'
               }}
             />
           </div>
 
-          {/* Card Deck Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', maxHeight: '650px', overflowY: 'auto', paddingRight: '0.25rem' }}>
+          {/* Module Cards Grid */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', maxHeight: '650px', overflowY: 'auto', paddingRight: '0.25rem' }}>
             {loading ? (
-              <div className="font-title" style={{ gridColumn: 'span 2', textAlign: 'center', padding: '3rem 0', color: '#94a3b8', fontSize: '0.85rem' }}>
-                SHUFFLING DECK...
+              <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.8rem' }}>
+                INITIALIZING MODULE SENSORS...
               </div>
             ) : filteredTools.length === 0 ? (
-              <div className="font-title" style={{ gridColumn: 'span 2', textAlign: 'center', padding: '3rem 0', color: '#94a3b8', fontSize: '0.85rem' }}>
-                NO CARDS FOUND IN THIS ARENA
+              <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.8rem' }}>
+                NO MATCHING TACTICAL MODULES FOUND
               </div>
             ) : (
               filteredTools.map(tool => {
-                const rarity = getToolRarity(tool);
-                const elixir = getToolElixir(tool);
-                const emoji = getToolEmoji(tool);
                 const isSelected = selectedTool?.name === tool.name;
 
                 return (
                   <div
                     key={tool.name}
                     onClick={() => handleSelectTool(tool)}
-                    className={`cr-card cr-card-${rarity}`}
+                    className="sc-card"
                     style={{
-                      padding: '0.85rem',
-                      transform: isSelected ? 'translateY(-4px) scale(1.03)' : undefined,
-                      borderColor: isSelected ? '#fde047' : undefined,
-                      boxShadow: isSelected ? '0 0 20px rgba(253, 224, 71, 0.6)' : undefined
+                      padding: '1rem',
+                      borderColor: isSelected ? '#00f0ff' : '#1e2c45',
+                      boxShadow: isSelected ? '0 0 20px rgba(0, 240, 255, 0.35)' : undefined,
+                      background: isSelected ? 'linear-gradient(180deg, #16243d 0%, #0c1424 100%)' : undefined
                     }}
                   >
-                    {/* Top Badges: Elixir Cost & Rarity Tag */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                      <div className="elixir-badge" title={`${elixir} Elixir Cost`}>
-                        {elixir}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span className="sc-status-led" />
+                        <h4 className="font-title" style={{ fontSize: '0.85rem', color: '#ffffff', margin: 0 }}>
+                          {tool.name}
+                        </h4>
                       </div>
-                      <span className="level-badge">
-                        LVL 12
+                      <span className="font-mono" style={{ fontSize: '10px', color: '#00f0ff', background: 'rgba(0, 240, 255, 0.1)', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', border: '1px solid rgba(0, 240, 255, 0.3)' }}>
+                        READY
                       </span>
                     </div>
-
-                    {/* Card Icon & Artwork Frame */}
-                    <div style={{
-                      height: '4rem',
-                      background: 'radial-gradient(circle, #1e293b 0%, #0c172c 100%)',
-                      borderRadius: '0.5rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      marginBottom: '0.5rem'
-                    }}>
-                      <span style={{ fontSize: '2rem', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.6))' }}>{emoji}</span>
-                    </div>
-
-                    {/* Card Title & Rarity */}
-                    <h4 className="font-title" style={{ fontSize: '0.85rem', color: '#ffffff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {tool.name}
-                    </h4>
-                    <p className="font-game" style={{ fontSize: '0.7rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: '2rem' }}>
-                      {tool.description || 'Deploys a specialized MCP tool spell.'}
+                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {tool.description || 'Tactical MCP protocol module.'}
                     </p>
                   </div>
                 );
@@ -307,69 +229,66 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
           </div>
         </div>
 
-        {/* Right Column: Active Card Cast Workbench */}
+        {/* Right Column: Tactical Execution Station */}
         <div className="hud-panel" style={{ gridColumn: 'span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {selectedTool ? (
             <>
-              {/* Selected Spell Header */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid #2a3e66', paddingBottom: '0.85rem' }}>
+              {/* Selected Module Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #1e2c45', paddingBottom: '0.85rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <div className="elixir-badge" style={{ width: '2.25rem', height: '2.25rem', fontSize: '1rem' }}>
-                    {getToolElixir(selectedTool)}
+                  <div style={{
+                    padding: '0.5rem',
+                    borderRadius: '0.375rem',
+                    background: 'rgba(0, 240, 255, 0.12)',
+                    border: '1px solid rgba(0, 240, 255, 0.4)',
+                    color: '#00f0ff'
+                  }}>
+                    <Zap style={{ width: '1.25rem', height: '1.25rem' }} />
                   </div>
                   <div>
-                    <h3 className="font-title" style={{ fontSize: '1.25rem', color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {selectedTool.name}
-                      <span className={`level-badge`} style={{ textTransform: 'uppercase' }}>
-                        {getToolRarity(selectedTool)} SPELL
-                      </span>
+                    <h3 className="font-title" style={{ fontSize: '1.15rem', color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      MODULE: {selectedTool.name}
                     </h3>
-                    <p className="font-game" style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem' }}>
-                      {selectedTool.description || 'Target and execute spell on MCP host.'}
+                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.2rem' }}>
+                      {selectedTool.description || 'Target and execute protocol on MCP cluster.'}
                     </p>
                   </div>
-                </div>
-
-                <div className="trophy-badge" style={{ fontSize: '0.75rem' }}>
-                  ⭐ MASTERY I
                 </div>
               </div>
 
               {/* Sample Execution Reference Panel */}
-              <div style={{ backgroundColor: '#0c172c', border: '2px solid #2a3e66', borderRadius: '0.625rem', padding: '1rem' }}>
+              <div style={{ backgroundColor: '#070a10', border: '1px solid #1e2c45', borderRadius: '0.375rem', padding: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span className="font-title" style={{ fontSize: '0.75rem', color: '#fde047' }}>
-                    ⚡ RUNTIME COMMAND SNIPPET
+                  <span className="font-title" style={{ fontSize: '0.75rem', color: '#00f0ff' }}>
+                    TERMINAL COMMAND SNIPPET
                   </span>
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button
-                      onClick={() => handleCopy(getSampleCode(selectedTool, 'curl'))}
-                      className="font-title"
-                      style={{
-                        background: '#0284c7',
-                        border: '1px solid #38bdf8',
-                        borderRadius: '0.375rem',
-                        color: '#ffffff',
-                        fontSize: '0.7rem',
-                        padding: '0.2rem 0.6rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.25rem'
-                      }}
-                    >
-                      {copied ? <Check style={{ width: '0.75rem', height: '0.75rem' }} /> : <Copy style={{ width: '0.75rem', height: '0.75rem' }} />}
-                      {copied ? 'COPIED!' : 'COPY cURL'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleCopy(getSampleCode(selectedTool, 'curl'))}
+                    className="font-title"
+                    style={{
+                      background: '#0284c7',
+                      border: '1px solid #38bdf8',
+                      borderRadius: '0.25rem',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      padding: '0.2rem 0.6rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    {copied ? <Check style={{ width: '0.75rem', height: '0.75rem' }} /> : <Copy style={{ width: '0.75rem', height: '0.75rem' }} />}
+                    {copied ? 'COPIED!' : 'COPY cURL'}
+                  </button>
                 </div>
-                <pre className="font-mono" style={{ backgroundColor: '#070e1e', padding: '0.6rem', borderRadius: '0.375rem', fontSize: '0.7rem', color: '#38bdf8', overflow: 'auto', maxHeight: '6rem', margin: 0 }}>
+                <pre className="font-mono" style={{ backgroundColor: '#04060a', padding: '0.6rem', borderRadius: '0.25rem', fontSize: '0.7rem', color: '#38bdf8', overflow: 'auto', maxHeight: '6rem', margin: 0 }}>
                   {getSampleCode(selectedTool, 'curl')}
                 </pre>
               </div>
 
               {/* Parameter Form */}
-              <div style={{ backgroundColor: '#0c172c', border: '2px solid #2a3e66', borderRadius: '0.625rem', padding: '1.25rem' }}>
+              <div style={{ backgroundColor: '#070a10', border: '1px solid #1e2c45', borderRadius: '0.375rem', padding: '1.25rem' }}>
                 <SchemaForm
                   schema={selectedTool.parameters || selectedTool.inputSchema || {}}
                   onSubmit={handleToolExecute}
@@ -380,24 +299,24 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
               {/* Execution Results View */}
               {executionResult && (
                 <div style={{
-                  backgroundColor: executionResult.success ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  border: `2px solid ${executionResult.success ? '#22c55e' : '#ef4444'}`,
-                  borderRadius: '0.625rem',
+                  backgroundColor: executionResult.success ? 'rgba(16, 185, 129, 0.08)' : 'rgba(244, 63, 94, 0.08)',
+                  border: `1px solid ${executionResult.success ? '#10b981' : '#f43f5e'}`,
+                  borderRadius: '0.375rem',
                   padding: '1.25rem'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                    <h4 className="font-title" style={{ fontSize: '1rem', color: executionResult.success ? '#4ade80' : '#f87171', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {executionResult.success ? <CheckCircle2 style={{ width: '1.25rem', height: '1.25rem' }} /> : <AlertTriangle style={{ width: '1.25rem', height: '1.25rem' }} />}
-                      {executionResult.success ? 'VICTORY! SPELL CAST SUCCESSFUL' : 'SPELL DEFLECTED (ERROR)'}
+                    <h4 className="font-title" style={{ fontSize: '0.95rem', color: executionResult.success ? '#34d399' : '#fb7185', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {executionResult.success ? <CheckCircle2 style={{ width: '1.15rem', height: '1.15rem' }} /> : <AlertTriangle style={{ width: '1.15rem', height: '1.15rem' }} />}
+                      {executionResult.success ? 'PROTOCOL COMPLETED: 200 OK' : 'EXECUTION FAILED'}
                     </h4>
                     {executionDuration && (
-                      <span className="font-title" style={{ fontSize: '0.75rem', color: '#fde047', background: '#0c172c', padding: '0.2rem 0.5rem', borderRadius: '0.375rem', border: '1px solid #ca8a04' }}>
-                        ⏱️ {executionDuration}ms
+                      <span className="font-mono" style={{ fontSize: '0.75rem', color: '#00f0ff', background: '#0a0f1a', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #1e2c45' }}>
+                        ⏱️ {executionDuration} ms
                       </span>
                     )}
                   </div>
 
-                  <pre className="font-mono" style={{ backgroundColor: '#070e1e', padding: '0.75rem', borderRadius: '0.5rem', fontSize: '0.75rem', color: executionResult.success ? '#86efac' : '#fca5a5', overflow: 'auto', maxHeight: '14rem', margin: 0 }}>
+                  <pre className="font-mono" style={{ backgroundColor: '#04060a', padding: '0.75rem', borderRadius: '0.25rem', fontSize: '0.75rem', color: executionResult.success ? '#6ee7b7' : '#fca5a5', overflow: 'auto', maxHeight: '14rem', margin: 0 }}>
                     {JSON.stringify(executionResult.data || executionResult.error, null, 2)}
                   </pre>
                 </div>
@@ -405,8 +324,8 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
             </>
           ) : (
             <div className="font-title" style={{ textAlign: 'center', padding: '6rem 0', color: '#64748b' }}>
-              <span style={{ fontSize: '3rem', display: 'block', marginBottom: '1rem' }}>🃏</span>
-              SELECT A SPELL CARD FROM YOUR BATTLE DECK ON THE LEFT
+              <Cpu style={{ width: '2.5rem', height: '2.5rem', margin: '0 auto 0.75rem auto', color: '#1e2c45' }} />
+              SELECT A TACTICAL MODULE ON THE LEFT TO ARMED STATION
             </div>
           )}
         </div>

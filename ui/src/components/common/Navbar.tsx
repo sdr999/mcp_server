@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Volume2, VolumeX, LogOut, Flame, Sparkles } from 'lucide-react';
+import { Shield, Volume2, VolumeX, LogOut, Radio, Cpu, Activity, Terminal } from 'lucide-react';
 import { sfx } from '../../services/soundEffects';
 
 interface NavbarProps {
@@ -28,7 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header style={{
-      borderBottom: '3px solid #2a3e66',
+      borderBottom: '1px solid #1e2c45',
       padding: '0.65rem 1.5rem',
       display: 'flex',
       alignItems: 'center',
@@ -36,44 +36,44 @@ export const Navbar: React.FC<NavbarProps> = ({
       position: 'sticky',
       top: 0,
       zIndex: 50,
-      backgroundColor: '#0c172c',
-      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)'
+      backgroundColor: '#0a0f1a',
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.7)'
     }}>
-      {/* Brand & Arena Title */}
+      {/* Brand & Orbital Status */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: '2.75rem',
-          height: '2.75rem',
-          borderRadius: '0.75rem',
-          background: 'linear-gradient(180deg, #fde047 0%, #ca8a04 100%)',
-          border: '2px solid #fef08a',
-          boxShadow: '0 4px 10px rgba(133, 77, 14, 0.5)'
+          width: '2.5rem',
+          height: '2.5rem',
+          borderRadius: '0.375rem',
+          background: 'linear-gradient(180deg, #0284c7, #0369a1)',
+          border: '1px solid #38bdf8',
+          boxShadow: '0 0 15px rgba(0, 240, 255, 0.35)'
         }}>
-          <span style={{ fontSize: '1.5rem', filter: 'drop-shadow(0 2px 2px rgba(0,0,0,0.5))' }}>👑</span>
+          <Radio className="animate-pulse" style={{ width: '1.35rem', height: '1.35rem', color: '#ffffff' }} />
         </div>
         <div>
           <h1 className="font-title" style={{
-            fontSize: '1.35rem',
+            fontSize: '1.2rem',
             color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
             margin: 0
           }}>
-            MCP CITADEL
+            MCP ORBITAL COMMAND
             <span style={{
               fontSize: '0.65rem',
               padding: '0.15rem 0.5rem',
-              borderRadius: '0.375rem',
-              background: 'linear-gradient(180deg, #38bdf8, #0369a1)',
-              color: '#ffffff',
-              border: '1px solid #bae6fd'
-            }}>ARENA 15</span>
+              borderRadius: '0.25rem',
+              background: 'rgba(0, 240, 255, 0.15)',
+              color: '#00f0ff',
+              border: '1px solid rgba(0, 240, 255, 0.4)'
+            }}>TACTICAL OS v2.0</span>
           </h1>
-          <p className="font-game" style={{
+          <p className="font-mono" style={{
             fontSize: '0.75rem',
             color: '#94a3b8',
             display: 'flex',
@@ -82,147 +82,127 @@ export const Navbar: React.FC<NavbarProps> = ({
             margin: 0
           }}>
             <span style={{
-              width: '0.5rem',
-              height: '0.5rem',
-              borderRadius: '9999px',
-              backgroundColor: sseConnected ? '#22c55e' : '#ef4444',
-              boxShadow: sseConnected ? '0 0 8px #22c55e' : 'none'
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              backgroundColor: sseConnected ? '#10b981' : '#f43f5e',
+              boxShadow: sseConnected ? '0 0 8px #10b981' : 'none'
             }} />
-            {sseConnected ? 'NEURAL ARENA ACTIVE' : 'RECONNECTING STREAM...'}
+            {sseConnected ? 'RADAR TELEMETRY: ARMED' : 'RECONNECTING COMMS...'}
           </p>
         </div>
       </div>
 
-      {/* Gamified Clash Royale Arena Stats Bar */}
+      {/* Tactical Telemetry Gauges */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: '1.25rem',
-        backgroundColor: '#13223f',
+        backgroundColor: '#0d131f',
         padding: '0.4rem 1.25rem',
-        borderRadius: '0.75rem',
-        border: '2px solid #2a3e66',
-        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.4)'
+        borderRadius: '0.5rem',
+        border: '1px solid #1e2c45'
       }}>
-        {/* King Level Badge */}
+        {/* Clearance Rank */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <div style={{
-            background: 'linear-gradient(180deg, #38bdf8, #0284c7)',
+            background: 'rgba(245, 158, 11, 0.15)',
             padding: '0.35rem 0.6rem',
-            borderRadius: '0.5rem',
-            border: '1.5px solid #bae6fd',
-            boxShadow: '0 2px 6px rgba(2, 132, 199, 0.4)',
-            color: '#ffffff',
+            borderRadius: '0.375rem',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            color: '#fbbf24',
             display: 'flex',
             alignItems: 'center',
             gap: '0.35rem'
           }}>
-            <span style={{ fontSize: '1rem' }}>👑</span>
-            <span className="font-title" style={{ fontSize: '0.875rem' }}>LVL {userLevel}</span>
+            <Shield style={{ width: '1rem', height: '1rem' }} />
+            <span className="font-title" style={{ fontSize: '0.8rem' }}>CLEARANCE LVL {userLevel}</span>
           </div>
           <div>
-            <div className="font-title" style={{ fontSize: '0.75rem', color: '#fde047' }}>
-              {userExp} / {nextLevelExp} <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}>XP</span>
+            <div className="font-mono" style={{ fontSize: '0.75rem', color: '#fbbf24' }}>
+              {userExp} / {nextLevelExp} <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}>EXP</span>
             </div>
-            {/* XP Progress Bar */}
-            <div style={{ width: '6.5rem', height: '6px', backgroundColor: '#070e1e', borderRadius: '3px', overflow: 'hidden', border: '1px solid #ca8a04', marginTop: '2px' }}>
-              <div style={{ width: `${expProgress}%`, height: '100%', background: 'linear-gradient(90deg, #fde047, #ca8a04)' }} />
+            <div style={{ width: '6.5rem', height: '5px', backgroundColor: '#070a10', borderRadius: '2px', overflow: 'hidden', border: '1px solid #78350f', marginTop: '2px' }}>
+              <div style={{ width: `${expProgress}%`, height: '100%', background: 'linear-gradient(90deg, #00f0ff, #fbbf24)' }} />
             </div>
           </div>
         </div>
 
-        {/* Trophies Counter */}
-        <div className="trophy-badge" title="Trophy League">
-          <span style={{ fontSize: '1rem' }}>🏆</span>
-          <span>4,850</span>
-        </div>
-
-        {/* Elixir Mana Tank */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div className="elixir-badge">💧</div>
+        {/* Reactor Power Output */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '1rem', borderLeft: '1px solid #1e2c45' }}>
+          <Cpu style={{ width: '1.1rem', height: '1.1rem', color: '#00f0ff' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div className="font-title" style={{ fontSize: '0.7rem', color: '#f472b6' }}>
-              ELIXIR: <strong style={{ color: '#ffffff' }}>10/10</strong>
-            </div>
-            <div className="elixir-bar-outer" style={{ width: '5.5rem', height: '8px' }}>
-              <div className="elixir-bar-inner" style={{ width: '100%' }} />
-            </div>
+            <span className="font-title" style={{ fontSize: '0.7rem', color: '#00f0ff' }}>REACTOR OUTPUT</span>
+            <span className="font-mono" style={{ fontSize: '0.8rem', fontWeight: 700, color: '#34d399' }}>100% NOMINAL</span>
           </div>
         </div>
 
-        {/* Gold & Gems */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.75rem', borderLeft: '2px solid #2a3e66' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#fde047' }} className="font-title">
-            <span style={{ fontSize: '0.9rem' }}>🪙</span>
-            <span style={{ fontSize: '0.8rem' }}>48.2K</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#38bdf8' }} className="font-title">
-            <span style={{ fontSize: '0.9rem' }}>💎</span>
-            <span style={{ fontSize: '0.8rem' }}>1,250</span>
+        {/* Uplink Latency */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '1rem', borderLeft: '1px solid #1e2c45' }}>
+          <Activity style={{ width: '1.1rem', height: '1.1rem', color: '#10b981' }} />
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span className="font-title" style={{ fontSize: '0.7rem', color: '#94a3b8' }}>ORBITAL LATENCY</span>
+            <span className="font-mono" style={{ fontSize: '0.8rem', fontWeight: 700, color: '#38bdf8' }}>1.2 ms</span>
           </div>
         </div>
       </div>
 
-      {/* Audio Toggle, Profile & Sign Out */}
+      {/* Audio Comms & Session Control */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        {/* Sound FX Toggle Button */}
         <button
           onClick={handleToggleSound}
           style={{
-            background: muted ? '#1e293b' : '#0284c7',
-            border: '2px solid #38bdf8',
-            borderRadius: '0.5rem',
-            padding: '0.5rem',
-            color: '#ffffff',
+            background: muted ? '#1e293b' : 'rgba(0, 240, 255, 0.1)',
+            border: '1px solid rgba(0, 240, 255, 0.3)',
+            borderRadius: '0.375rem',
+            padding: '0.45rem',
+            color: '#00f0ff',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 3px 0 #0369a1'
+            justifyContent: 'center'
           }}
-          title={muted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+          title={muted ? 'Enable Comms Audio' : 'Mute Comms Audio'}
         >
           {muted ? <VolumeX style={{ width: '1.1rem', height: '1.1rem' }} /> : <Volume2 style={{ width: '1.1rem', height: '1.1rem' }} />}
         </button>
 
-        {/* User Card */}
+        {/* User Badge */}
         <div style={{ textAlign: 'right' }}>
           <div className="font-title" style={{
-            fontSize: '0.875rem',
+            fontSize: '0.85rem',
             color: 'white',
             display: 'flex',
             alignItems: 'center',
             gap: '0.35rem',
             justifyContent: 'flex-end'
           }}>
-            <Shield style={{ width: '0.875rem', height: '0.875rem', color: '#fde047' }} />
-            {user?.sub || user?.username || 'Grand Master'}
+            {user?.sub || user?.username || 'Commander'}
           </div>
-          <div className="font-game" style={{
+          <div className="font-mono" style={{
             fontSize: '0.7rem',
-            color: '#38bdf8',
-            textTransform: 'uppercase',
-            fontWeight: 700
+            color: '#00f0ff',
+            textTransform: 'uppercase'
           }}>
-            {user?.roles?.[0] || 'CLAN LEADER'}
+            {user?.roles?.[0] || 'ORBITAL OPERATOR'}
           </div>
         </div>
 
-        {/* Sign Out 3D Red Button */}
+        {/* Disconnect Button */}
         <button
           onClick={() => {
             sfx.playTapSound();
             onLogout();
           }}
-          className="btn-cr btn-cr-red"
+          className="btn-sc btn-sc-crimson"
           style={{
             fontSize: '0.75rem',
             padding: '0.45rem 0.85rem'
           }}
-          title="Leave the Arena"
+          title="Disconnect from Command Station"
         >
           <LogOut style={{ width: '0.875rem', height: '0.875rem' }} />
-          <span>EXIT</span>
+          <span>DISCONNECT</span>
         </button>
       </div>
     </header>
