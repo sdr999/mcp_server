@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Volume2, VolumeX, LogOut, Flame, Sparkles } from 'lucide-react';
+import { Shield, Volume2, VolumeX, LogOut, Radio, Cpu, Activity, Globe, Disc } from 'lucide-react';
 import { sfx } from '../../services/soundEffects';
 
 interface NavbarProps {
@@ -28,7 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header style={{
-      borderBottom: '3px solid #2a3e66',
+      borderBottom: '1px solid rgba(42, 62, 102, 0.8)',
       padding: '0.65rem 1.5rem',
       display: 'flex',
       alignItems: 'center',
@@ -36,44 +36,44 @@ export const Navbar: React.FC<NavbarProps> = ({
       position: 'sticky',
       top: 0,
       zIndex: 50,
-      backgroundColor: '#0c172c',
-      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)'
+      backgroundColor: '#090e18',
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.6)'
     }}>
-      {/* Brand & Arena Title */}
+      {/* Brand & Citadel Station Info */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: '2.75rem',
-          height: '2.75rem',
-          borderRadius: '0.75rem',
-          background: 'linear-gradient(180deg, #fde047 0%, #ca8a04 100%)',
-          border: '2px solid #fef08a',
-          boxShadow: '0 4px 10px rgba(133, 77, 14, 0.5)'
+          width: '2.5rem',
+          height: '2.5rem',
+          borderRadius: '0.375rem',
+          background: 'linear-gradient(180deg, #e5a93b 0%, #b45309 100%)',
+          border: '1px solid #fde047',
+          boxShadow: '0 0 15px rgba(229, 169, 59, 0.35)'
         }}>
-          <span style={{ fontSize: '1.5rem', filter: 'drop-shadow(0 2px 2px rgba(0,0,0,0.5))' }}>👑</span>
+          <Disc className="animate-spin" style={{ width: '1.35rem', height: '1.35rem', color: '#ffffff', animationDuration: '8s' }} />
         </div>
         <div>
           <h1 className="font-title" style={{
-            fontSize: '1.35rem',
+            fontSize: '1.25rem',
             color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
             margin: 0
           }}>
-            MCP CITADEL
+            ASTRAHUS CITADEL OS
             <span style={{
               fontSize: '0.65rem',
               padding: '0.15rem 0.5rem',
-              borderRadius: '0.375rem',
-              background: 'linear-gradient(180deg, #38bdf8, #0369a1)',
-              color: '#ffffff',
-              border: '1px solid #bae6fd'
-            }}>ARENA 15</span>
+              borderRadius: '0.25rem',
+              background: 'rgba(56, 189, 248, 0.15)',
+              color: '#38bdf8',
+              border: '1px solid rgba(56, 189, 248, 0.4)'
+            }}>SECURITY 0.0</span>
           </h1>
-          <p className="font-game" style={{
+          <p className="font-mono" style={{
             fontSize: '0.75rem',
             color: '#94a3b8',
             display: 'flex',
@@ -82,147 +82,125 @@ export const Navbar: React.FC<NavbarProps> = ({
             margin: 0
           }}>
             <span style={{
-              width: '0.5rem',
-              height: '0.5rem',
-              borderRadius: '9999px',
-              backgroundColor: sseConnected ? '#22c55e' : '#ef4444',
-              boxShadow: sseConnected ? '0 0 8px #22c55e' : 'none'
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              backgroundColor: sseConnected ? '#10b981' : '#f43f5e',
+              boxShadow: sseConnected ? '0 0 8px #10b981' : 'none'
             }} />
-            {sseConnected ? 'NEURAL ARENA ACTIVE' : 'RECONNECTING STREAM...'}
+            {sseConnected ? 'CITADEL WARP RELAY ONLINE' : 'RELAY OFFLINE'}
           </p>
         </div>
       </div>
 
-      {/* Gamified Clash Royale Arena Stats Bar */}
+      {/* Station Capacitor & Credits Telemetry */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: '1.25rem',
-        backgroundColor: '#13223f',
+        backgroundColor: '#0c121e',
         padding: '0.4rem 1.25rem',
-        borderRadius: '0.75rem',
-        border: '2px solid #2a3e66',
-        boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.4)'
+        borderRadius: '0.5rem',
+        border: '1px solid rgba(42, 62, 102, 0.8)'
       }}>
-        {/* King Level Badge */}
+        {/* Pilot License Rank */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <div style={{
-            background: 'linear-gradient(180deg, #38bdf8, #0284c7)',
+            background: 'rgba(229, 169, 59, 0.15)',
             padding: '0.35rem 0.6rem',
-            borderRadius: '0.5rem',
-            border: '1.5px solid #bae6fd',
-            boxShadow: '0 2px 6px rgba(2, 132, 199, 0.4)',
-            color: '#ffffff',
+            borderRadius: '0.375rem',
+            border: '1px solid rgba(229, 169, 59, 0.4)',
+            color: '#e5a93b',
             display: 'flex',
             alignItems: 'center',
             gap: '0.35rem'
           }}>
-            <span style={{ fontSize: '1rem' }}>👑</span>
-            <span className="font-title" style={{ fontSize: '0.875rem' }}>LVL {userLevel}</span>
+            <Shield style={{ width: '1rem', height: '1rem' }} />
+            <span className="font-title" style={{ fontSize: '0.8rem' }}>LICENSE RANK {userLevel}</span>
           </div>
           <div>
-            <div className="font-title" style={{ fontSize: '0.75rem', color: '#fde047' }}>
-              {userExp} / {nextLevelExp} <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}>XP</span>
+            <div className="font-mono" style={{ fontSize: '0.75rem', color: '#e5a93b' }}>
+              {userExp} / {nextLevelExp} <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}>SP</span>
             </div>
-            {/* XP Progress Bar */}
-            <div style={{ width: '6.5rem', height: '6px', backgroundColor: '#070e1e', borderRadius: '3px', overflow: 'hidden', border: '1px solid #ca8a04', marginTop: '2px' }}>
-              <div style={{ width: `${expProgress}%`, height: '100%', background: 'linear-gradient(90deg, #fde047, #ca8a04)' }} />
+            <div style={{ width: '6.5rem', height: '5px', backgroundColor: '#060911', borderRadius: '2px', overflow: 'hidden', border: '1px solid #78350f', marginTop: '2px' }}>
+              <div style={{ width: `${expProgress}%`, height: '100%', background: 'linear-gradient(90deg, #38bdf8, #e5a93b)' }} />
             </div>
           </div>
         </div>
 
-        {/* Trophies Counter */}
-        <div className="trophy-badge" title="Trophy League">
-          <span style={{ fontSize: '1rem' }}>🏆</span>
-          <span>4,850</span>
-        </div>
-
-        {/* Elixir Mana Tank */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div className="elixir-badge">💧</div>
+        {/* Capacitor Energy */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '1rem', borderLeft: '1px solid rgba(42, 62, 102, 0.8)' }}>
+          <Cpu style={{ width: '1.1rem', height: '1.1rem', color: '#38bdf8' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div className="font-title" style={{ fontSize: '0.7rem', color: '#f472b6' }}>
-              ELIXIR: <strong style={{ color: '#ffffff' }}>10/10</strong>
-            </div>
-            <div className="elixir-bar-outer" style={{ width: '5.5rem', height: '8px' }}>
-              <div className="elixir-bar-inner" style={{ width: '100%' }} />
-            </div>
+            <span className="font-title" style={{ fontSize: '0.7rem', color: '#38bdf8' }}>CAPACITOR</span>
+            <span className="font-mono" style={{ fontSize: '0.8rem', fontWeight: 700, color: '#34d399' }}>100% (STABLE)</span>
           </div>
         </div>
 
-        {/* Gold & Gems */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.75rem', borderLeft: '2px solid #2a3e66' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#fde047' }} className="font-title">
-            <span style={{ fontSize: '0.9rem' }}>🪙</span>
-            <span style={{ fontSize: '0.8rem' }}>48.2K</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#38bdf8' }} className="font-title">
-            <span style={{ fontSize: '0.9rem' }}>💎</span>
-            <span style={{ fontSize: '0.8rem' }}>1,250</span>
+        {/* ISK Credits */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '1rem', borderLeft: '1px solid rgba(42, 62, 102, 0.8)' }}>
+          <div className="font-title" style={{ fontSize: '0.85rem', color: '#fde047' }}>
+            🪙 48,250,000 <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>ISK</span>
           </div>
         </div>
       </div>
 
-      {/* Audio Toggle, Profile & Sign Out */}
+      {/* Comms Audio & Station Undock */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        {/* Sound FX Toggle Button */}
         <button
           onClick={handleToggleSound}
           style={{
-            background: muted ? '#1e293b' : '#0284c7',
-            border: '2px solid #38bdf8',
-            borderRadius: '0.5rem',
-            padding: '0.5rem',
-            color: '#ffffff',
+            background: muted ? '#1e293b' : 'rgba(56, 189, 248, 0.1)',
+            border: '1px solid rgba(56, 189, 248, 0.3)',
+            borderRadius: '0.375rem',
+            padding: '0.45rem',
+            color: '#38bdf8',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 3px 0 #0369a1'
+            justifyContent: 'center'
           }}
-          title={muted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+          title={muted ? 'Enable Station Audio' : 'Mute Station Audio'}
         >
           {muted ? <VolumeX style={{ width: '1.1rem', height: '1.1rem' }} /> : <Volume2 style={{ width: '1.1rem', height: '1.1rem' }} />}
         </button>
 
-        {/* User Card */}
+        {/* Pilot ID */}
         <div style={{ textAlign: 'right' }}>
           <div className="font-title" style={{
-            fontSize: '0.875rem',
+            fontSize: '0.9rem',
             color: 'white',
             display: 'flex',
             alignItems: 'center',
             gap: '0.35rem',
             justifyContent: 'flex-end'
           }}>
-            <Shield style={{ width: '0.875rem', height: '0.875rem', color: '#fde047' }} />
-            {user?.sub || user?.username || 'Grand Master'}
+            {user?.sub || user?.username || 'Fleet Commander'}
           </div>
-          <div className="font-game" style={{
+          <div className="font-mono" style={{
             fontSize: '0.7rem',
-            color: '#38bdf8',
-            textTransform: 'uppercase',
-            fontWeight: 700
+            color: '#e5a93b',
+            textTransform: 'uppercase'
           }}>
-            {user?.roles?.[0] || 'CLAN LEADER'}
+            {user?.roles?.[0] || 'STATION MASTER'}
           </div>
         </div>
 
-        {/* Sign Out 3D Red Button */}
+        {/* Undock / Exit */}
         <button
           onClick={() => {
             sfx.playTapSound();
             onLogout();
           }}
-          className="btn-cr btn-cr-red"
+          className="btn-eve btn-eve-crimson"
           style={{
             fontSize: '0.75rem',
             padding: '0.45rem 0.85rem'
           }}
-          title="Leave the Arena"
+          title="Undock from Station"
         >
           <LogOut style={{ width: '0.875rem', height: '0.875rem' }} />
-          <span>EXIT</span>
+          <span>UNDOCK</span>
         </button>
       </div>
     </header>
