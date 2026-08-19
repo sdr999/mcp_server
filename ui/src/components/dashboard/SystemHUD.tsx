@@ -355,11 +355,15 @@ export const SystemHUD: React.FC<SystemHUDProps> = ({ onNavigateTab }) => {
             {logsList.length === 0 ? (
               <span style={{ color: '#64748b' }}># No system logs recorded. Reactor operating nominally.</span>
             ) : (
-              logsList.map((log, idx) => (
-                <div key={idx} style={{ color: log.includes('ERR') || log.includes('40') ? '#fb7185' : '#e2e8f0' }}>
-                  {log}
-                </div>
-              ))
+              logsList.map((log, idx) => {
+                const logStr = typeof log === 'string' ? log : (log?.message || JSON.stringify(log));
+                const isErr = logStr.includes('ERR') || logStr.includes('40') || logStr.includes('50') || logStr.includes('error');
+                return (
+                  <div key={idx} style={{ color: isErr ? '#fb7185' : '#e2e8f0' }}>
+                    {logStr}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

@@ -8,7 +8,8 @@ interface SchemaFormProps {
 
 export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loading }) => {
   const properties = schema?.properties || schema?.parameters?.properties || schema?.inputSchema?.properties || {};
-  const requiredFields: string[] = schema?.required || schema?.parameters?.required || schema?.inputSchema?.required || [];
+  const rawReq = schema?.required || schema?.parameters?.required || schema?.inputSchema?.required;
+  const requiredFields: string[] = Array.isArray(rawReq) ? rawReq : [];
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [rawJsonMode, setRawJsonMode] = useState(false);
   const [rawJsonStr, setRawJsonStr] = useState('{}');
