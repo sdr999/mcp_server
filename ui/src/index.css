@@ -1,46 +1,32 @@
 @charset "UTF-8";
 
 :root {
-  /* Clash Royale Color Palette */
-  --cr-arena-bg: #070e1e;
-  --cr-card-bg: #13223f;
-  --cr-card-inner: #0c172c;
-  --cr-border-stone: #2a3e66;
-  
-  --cr-blue-light: #38bdf8;
-  --cr-blue-main: #0284c7;
-  --cr-blue-dark: #0369a1;
-  --cr-blue-bevel: #0c4a6e;
-  
-  --cr-gold-light: #fde047;
-  --cr-gold-main: #eab308;
-  --cr-gold-dark: #ca8a04;
-  --cr-gold-bevel: #854d0e;
+  /* Portal / Aperture Science Testing Facility Palette */
+  --ap-bg-facility: #0b0d13;
+  --ap-panel-bg: #121722;
+  --ap-panel-inner: #0a0d14;
+  --ap-panel-border: #1e2638;
 
-  --cr-elixir-light: #f472b6;
-  --cr-elixir-main: #db2777;
-  --cr-elixir-dark: #be185d;
-  --cr-elixir-bevel: #831843;
+  --ap-blue-glow: #00a6ed;
+  --ap-blue-main: #0088cc;
+  --ap-blue-bevel: #005580;
 
-  --cr-green-light: #4ade80;
-  --cr-green-main: #22c55e;
-  --cr-green-dark: #16a34a;
-  --cr-green-bevel: #14532d;
+  --ap-orange-glow: #ff7700;
+  --ap-orange-main: #e66a00;
+  --ap-orange-bevel: #994700;
 
-  --cr-red-light: #f87171;
-  --cr-red-main: #ef4444;
-  --cr-red-dark: #dc2626;
-  --cr-red-bevel: #7f1d1d;
+  --ap-green-main: #10b981;
+  --ap-green-bevel: #064e3b;
 
-  /* Card Rarities */
-  --rarity-common: #94a3b8;
-  --rarity-rare: #f59e0b;
-  --rarity-epic: #a855f7;
-  --rarity-legendary: #06b6d4;
+  --ap-red-main: #f43f5e;
+  --ap-red-bevel: #881337;
+
+  --ap-text-main: #f1f5f9;
+  --ap-text-muted: #94a3b8;
 
   /* Typography */
-  --font-title: 'Lilita One', 'Orbitron', cursive, sans-serif;
-  --font-game: 'Fredoka', 'Rajdhani', sans-serif;
+  --font-title: 'Space Grotesk', 'Rajdhani', sans-serif;
+  --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
@@ -51,295 +37,149 @@
 }
 
 body {
-  background-color: var(--cr-arena-bg);
-  color: #f8fafc;
-  font-family: var(--font-game);
-  font-size: 15px;
+  background-color: var(--ap-bg-facility);
+  color: var(--ap-text-main);
+  font-family: var(--font-body);
+  font-size: 14px;
   min-height: 100vh;
   overflow-x: hidden;
   background-image: 
-    radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.18) 0%, transparent 60%),
-    radial-gradient(circle at 10% 90%, rgba(219, 39, 119, 0.12) 0%, transparent 50%),
-    radial-gradient(circle at 90% 90%, rgba(234, 179, 8, 0.12) 0%, transparent 50%);
+    radial-gradient(circle at 10% 20%, rgba(0, 166, 237, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(255, 119, 0, 0.08) 0%, transparent 40%);
 }
 
 /* =========================================================================
-   3D TACTILE CLASH ROYALE BUTTONS
+   PORTAL / APERTURE BUTTONS
    ========================================================================= */
-.btn-cr {
+.btn-portal {
   font-family: var(--font-title);
-  font-size: 0.875rem;
-  letter-spacing: 0.05em;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  border-radius: 0.625rem;
-  padding: 0.65rem 1.25rem;
+  border-radius: 0.375rem;
+  padding: 0.6rem 1.25rem;
   cursor: pointer;
   outline: none;
-  border: 2px solid rgba(255, 255, 255, 0.35);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
-  position: relative;
-  overflow: hidden;
-  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
+  transition: all 0.12s ease;
   user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Gloss reflection on top half of button */
-.btn-cr::after {
+.btn-portal:active:not(:disabled) {
+  transform: translateY(2px) !important;
+}
+
+.btn-portal:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Blue Portal Button */
+.btn-portal-blue {
+  background: linear-gradient(180deg, #00a6ed 0%, #0077b6 100%);
+  border-color: #7dd3fc;
+  color: #ffffff;
+  box-shadow: 0 3px 0 var(--ap-blue-bevel), 0 0 15px rgba(0, 166, 237, 0.4);
+}
+.btn-portal-blue:hover:not(:disabled) {
+  background: linear-gradient(180deg, #38bdf8 0%, #00a6ed 100%);
+  box-shadow: 0 3px 0 var(--ap-blue-bevel), 0 0 25px rgba(0, 166, 237, 0.6);
+}
+
+/* Orange Portal Button */
+.btn-portal-orange {
+  background: linear-gradient(180deg, #ff7700 0%, #cc5f00 100%);
+  border-color: #fdba74;
+  color: #ffffff;
+  box-shadow: 0 3px 0 var(--ap-orange-bevel), 0 0 15px rgba(255, 119, 0, 0.4);
+}
+.btn-portal-orange:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fb923c 0%, #ff7700 100%);
+  box-shadow: 0 3px 0 var(--ap-orange-bevel), 0 0 25px rgba(255, 119, 0, 0.6);
+}
+
+/* Emerald Green Success Button */
+.btn-portal-green {
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+  border-color: #6ee7b7;
+  color: #ffffff;
+  box-shadow: 0 3px 0 var(--ap-green-bevel);
+}
+
+/* Crimson Error / Abort Button */
+.btn-portal-crimson {
+  background: linear-gradient(180deg, #f43f5e 0%, #e11d48 100%);
+  border-color: #fca5a5;
+  color: #ffffff;
+  box-shadow: 0 3px 0 var(--ap-red-bevel);
+}
+
+/* Legacy Aliases */
+.btn-cr-gold { @extend .btn-portal-orange; }
+.btn-cr-blue { @extend .btn-portal-blue; }
+.btn-cr-elixir { @extend .btn-portal-orange; }
+.btn-cr-green { @extend .btn-portal-green; }
+.btn-cr-red { @extend .btn-portal-crimson; }
+.btn-neon-cyan { @extend .btn-portal-blue; }
+.btn-neon-magenta { @extend .btn-portal-orange; }
+
+/* =========================================================================
+   APERTURE LAB HUD PANELS
+   ========================================================================= */
+.hud-panel {
+  background: var(--ap-panel-bg);
+  border: 1px solid var(--ap-panel-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.hud-panel::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  height: 45%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.05) 100%);
-  border-radius: 0.5rem 0.5rem 0 0;
-  pointer-events: none;
+  width: 3px;
+  height: 100%;
+  background: var(--ap-blue-glow);
 }
 
-/* Button Active / Press Down State */
-.btn-cr:active:not(:disabled) {
-  transform: translateY(4px) !important;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.8) !important;
+.hud-panel-orange::before {
+  background: var(--ap-orange-glow);
 }
 
-.btn-cr:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  filter: grayscale(0.5);
-}
-
-/* 1. Gold / Primary Yellow Button */
-.btn-cr-gold {
-  background: linear-gradient(180deg, var(--cr-gold-light) 0%, var(--cr-gold-main) 50%, var(--cr-gold-dark) 100%);
-  color: #ffffff;
-  border-color: #fef08a;
-  box-shadow: 0 5px 0 var(--cr-gold-bevel), 0 8px 15px rgba(0, 0, 0, 0.4);
-}
-.btn-cr-gold:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* 2. Royal Blue Button */
-.btn-cr-blue {
-  background: linear-gradient(180deg, var(--cr-blue-light) 0%, var(--cr-blue-main) 50%, var(--cr-blue-dark) 100%);
-  color: #ffffff;
-  border-color: #bae6fd;
-  box-shadow: 0 5px 0 var(--cr-blue-bevel), 0 8px 15px rgba(0, 0, 0, 0.4);
-}
-.btn-cr-blue:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* 3. Elixir Magenta Button */
-.btn-cr-elixir {
-  background: linear-gradient(180deg, var(--cr-elixir-light) 0%, var(--cr-elixir-main) 50%, var(--cr-elixir-dark) 100%);
-  color: #ffffff;
-  border-color: #fbcfe8;
-  box-shadow: 0 5px 0 var(--cr-elixir-bevel), 0 8px 15px rgba(0, 0, 0, 0.4);
-}
-.btn-cr-elixir:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* 4. Green Upgrade / Deploy Button */
-.btn-cr-green {
-  background: linear-gradient(180deg, var(--cr-green-light) 0%, var(--cr-green-main) 50%, var(--cr-green-dark) 100%);
-  color: #ffffff;
-  border-color: #bbf7d0;
-  box-shadow: 0 5px 0 var(--cr-green-bevel), 0 8px 15px rgba(0, 0, 0, 0.4);
-}
-.btn-cr-green:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* 5. Red Discard / Cancel Button */
-.btn-cr-red {
-  background: linear-gradient(180deg, var(--cr-red-light) 0%, var(--cr-red-main) 50%, var(--cr-red-dark) 100%);
-  color: #ffffff;
-  border-color: #fecaca;
-  box-shadow: 0 5px 0 var(--cr-red-bevel), 0 8px 15px rgba(0, 0, 0, 0.4);
-}
-.btn-cr-red:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* Legacy button fallbacks */
-.btn-neon-cyan { @extend .btn-cr-blue; }
-.btn-neon-magenta { @extend .btn-cr-elixir; }
-
-/* =========================================================================
-   CLASH ROYALE PANELS & HUD CONTAINERS
-   ========================================================================= */
-.hud-panel {
-  background: var(--cr-card-bg);
-  border: 2px solid var(--cr-border-stone);
-  border-radius: 0.75rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.15);
-  position: relative;
-  overflow: hidden;
-  transition: all 0.2s ease-in-out;
-}
-
-.hud-panel-inner {
-  background: var(--cr-card-inner);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.5rem;
-}
-
-/* =========================================================================
-   BATTLE CARDS & RARITY TIERS
-   ========================================================================= */
-.cr-card {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-  border-radius: 0.75rem;
-  border: 3px solid var(--rarity-common);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
-  position: relative;
-  overflow: hidden;
-  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.18s ease;
+/* Aperture Protocol Card */
+.ap-test-card {
+  background: #0d121c;
+  border: 1px solid var(--ap-panel-border);
+  border-radius: 0.375rem;
+  padding: 1rem;
+  transition: all 0.15s ease;
   cursor: pointer;
 }
 
-.cr-card:hover {
-  transform: translateY(-6px) scale(1.02);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.7);
-}
-
-.cr-card-common {
-  border-color: #94a3b8;
-}
-
-.cr-card-rare {
-  border-color: #f59e0b;
-  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.25);
-}
-
-.cr-card-epic {
-  border-color: #c084fc;
-  box-shadow: 0 6px 16px rgba(192, 132, 252, 0.3);
-}
-
-/* Legendary Holographic Shimmer */
-.cr-card-legendary {
-  border-color: #38bdf8;
-  box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
-  position: relative;
-}
-
-.cr-card-legendary::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    45deg,
-    transparent 20%,
-    rgba(255, 0, 128, 0.2) 35%,
-    rgba(0, 240, 255, 0.25) 50%,
-    rgba(255, 215, 0, 0.2) 65%,
-    transparent 80%
-  );
-  transform: rotate(25deg);
-  animation: legendaryShimmer 4s infinite linear;
-  pointer-events: none;
-}
-
-@keyframes legendaryShimmer {
-  0% { transform: translateY(-100%) rotate(25deg); }
-  100% { transform: translateY(100%) rotate(25deg); }
-}
-
-/* Elixir Droplet Badge */
-.elixir-badge {
-  background: radial-gradient(circle at 35% 35%, #f472b6, #be185d);
-  color: #ffffff;
-  font-family: var(--font-title);
-  font-weight: 900;
-  font-size: 0.75rem;
-  border-radius: 9999px;
-  width: 1.6rem;
-  height: 1.6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px solid #fbcfe8;
-  box-shadow: 0 2px 6px rgba(190, 24, 93, 0.6);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-}
-
-/* King Level / Mastery Badge */
-.level-badge {
-  background: linear-gradient(180deg, #38bdf8, #0369a1);
-  border: 1.5px solid #bae6fd;
-  color: #ffffff;
-  font-family: var(--font-title);
-  font-size: 0.65rem;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.375rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.8);
-}
-
-/* Trophy & Reward Badges */
-.trophy-badge {
-  background: linear-gradient(180deg, #fde047, #ca8a04);
-  border: 1.5px solid #fef08a;
-  color: #ffffff;
-  font-family: var(--font-title);
-  font-size: 0.85rem;
-  padding: 0.25rem 0.65rem;
-  border-radius: 0.5rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  box-shadow: 0 3px 6px rgba(133, 77, 14, 0.4);
-  text-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.5);
-}
-
-/* Liquid Elixir Bar */
-.elixir-bar-outer {
-  width: 100%;
-  height: 14px;
-  background: #0f172a;
-  border-radius: 7px;
-  overflow: hidden;
-  border: 2px solid #be185d;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
-}
-
-.elixir-bar-inner {
-  height: 100%;
-  background: linear-gradient(90deg, #db2777, #f472b6);
-  box-shadow: 0 0 12px #f472b6;
-  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-}
-
-.elixir-bar-inner::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 50%;
-  background: rgba(255, 255, 255, 0.3);
+.ap-test-card:hover {
+  border-color: #00a6ed;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 166, 237, 0.25);
 }
 
 /* Typography Headings */
 h1, h2, h3, h4, .font-title {
   font-family: var(--font-title);
-  letter-spacing: 0.03em;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.02em;
+  font-weight: 700;
 }
 
-.font-game {
-  font-family: var(--font-game);
+.font-game, .font-body {
+  font-family: var(--font-body);
 }
 
 .font-mono {
@@ -348,17 +188,16 @@ h1, h2, h3, h4, .font-title {
 
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #070e1e;
+  background: #0b0d13;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3e66;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #1e2638;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--cr-blue-main);
+  background: #00a6ed;
 }

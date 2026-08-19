@@ -11,7 +11,9 @@ import {
   ScrollText,
   Radio,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  FlaskConical,
+  TestTube
 } from 'lucide-react';
 import { sfx } from '../../services/soundEffects';
 
@@ -35,16 +37,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const toggle = onToggleCollapse ?? (() => setCollapsedInternal(!collapsedInternal));
 
   const navItems = [
-    { id: 'dashboard', label: 'Arena HUD', icon: Activity, badge: 'LIVE', emoji: '⚔️' },
-    { id: 'spellbook', label: 'Battle Deck (Tools)', icon: Wand2, emoji: '🃏' },
-    { id: 'firehose', label: 'Neural Stream', icon: Radio, emoji: '⚡' },
-    { id: 'foundry', label: 'Tool Forge (AI)', icon: Hammer, emoji: '🔨' },
-    { id: 'queue', label: 'Council Approvals', icon: Clock, count: pendingCount, emoji: '👑' },
-    { id: 'openapi', label: 'OpenAPI Vault', icon: ScrollText, emoji: '📜' },
-    { id: 'federation', label: 'Realm Gateways', icon: Globe2, emoji: '🌐' },
-    { id: 'tenancy', label: 'Clan Citadel (RBAC)', icon: Users2, emoji: '🏰' },
-    { id: 'chaos', label: 'Chaos Arena', icon: Swords, emoji: '💥' },
-    { id: 'prompts', label: 'Archmage Prompts', icon: ShieldCheck, emoji: '✨' },
+    { id: 'dashboard', label: 'Test Chamber Overview', icon: Activity, badge: 'LAB' },
+    { id: 'spellbook', label: 'Aperture Protocols (Tools)', icon: FlaskConical },
+    { id: 'firehose', label: 'Telemetry Stream', icon: Radio },
+    { id: 'foundry', label: 'Protocol Synthesis (AI)', icon: Hammer },
+    { id: 'queue', label: 'Safety Review Queue', icon: Clock, count: pendingCount },
+    { id: 'openapi', label: 'OpenAPI Blueprint Vault', icon: ScrollText },
+    { id: 'federation', label: 'Quantum Relay Gateways', icon: Globe2 },
+    { id: 'tenancy', label: 'Candidate Cohorts (RBAC)', icon: Users2 },
+    { id: 'chaos', label: 'Chamber Stress Simulation', icon: Swords },
+    { id: 'prompts', label: 'GLaDOS Directives', icon: ShieldCheck },
   ];
 
   const handleTabSelect = (id: string) => {
@@ -62,11 +64,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
-      backgroundColor: '#0c172c',
-      borderRight: '3px solid #2a3e66',
+      backgroundColor: '#0c0f17',
+      borderRight: '1px solid #1e2638',
       transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease',
       zIndex: 40,
-      boxShadow: '4px 0 15px rgba(0,0,0,0.5)'
+      boxShadow: '4px 0 20px rgba(0,0,0,0.5)'
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         <div style={{ 
@@ -82,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               color: '#94a3b8',
               textTransform: 'uppercase'
             }}>
-              ARENA COMMANDS
+              CHAMBER MODULES
             </span>
           )}
           <button
@@ -91,18 +93,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               toggle();
             }}
             style={{
-              background: '#13223f',
-              border: '2px solid #38bdf8',
-              color: '#38bdf8',
-              borderRadius: '0.5rem',
+              background: '#121722',
+              border: '1px solid #1e2638',
+              color: '#00a6ed',
+              borderRadius: '0.375rem',
               padding: '0.35rem',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 0 #0369a1'
+              justifyContent: 'center'
             }}
-            title={collapsed ? 'Expand Arena Menu' : 'Collapse Arena Menu'}
+            title={collapsed ? 'Expand Lab Menu' : 'Collapse Lab Menu'}
           >
             {collapsed ? <ChevronRight style={{ width: '1rem', height: '1rem' }} /> : <ChevronLeft style={{ width: '1rem', height: '1rem' }} />}
           </button>
@@ -110,6 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           {navItems.map(item => {
+            const Icon = item.icon;
             const isActive = activeTab === item.id;
 
             return (
@@ -123,48 +125,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   alignItems: 'center',
                   justifyContent: collapsed ? 'center' : 'space-between',
                   padding: collapsed ? '0.75rem 0' : '0.625rem 0.875rem',
-                  borderRadius: '0.625rem',
+                  borderRadius: '0.375rem',
                   fontSize: '0.85rem',
-                  fontFamily: 'var(--font-game)',
+                  fontFamily: 'var(--font-title)',
                   fontWeight: isActive ? 700 : 500,
+                  letterSpacing: '0.02em',
                   transition: 'all 0.12s ease',
-                  backgroundColor: isActive ? 'linear-gradient(180deg, #0284c7, #0369a1)' : '#13223f',
-                  background: isActive ? 'linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)' : '#13223f',
-                  color: isActive ? '#ffffff' : '#cbd5e1',
-                  border: isActive ? '2px solid #bae6fd' : '2px solid #2a3e66',
-                  boxShadow: isActive ? '0 4px 0 #0c4a6e, 0 6px 12px rgba(2, 132, 199, 0.4)' : '0 2px 0 #0a1128',
-                  transform: isActive ? 'translateY(-1px)' : 'none',
+                  backgroundColor: isActive ? 'rgba(0, 166, 237, 0.15)' : 'transparent',
+                  color: isActive ? '#00a6ed' : '#94a3b8',
+                  border: isActive ? '1px solid #00a6ed' : '1px solid transparent',
+                  boxShadow: isActive ? '0 0 15px rgba(0, 166, 237, 0.25)' : 'none',
                   cursor: 'pointer',
                   position: 'relative'
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '1.15rem' }}>{item.emoji}</span>
-                  {!collapsed && <span className="font-game" style={{ fontSize: '0.875rem' }}>{item.label}</span>}
+                  <Icon style={{ width: '1.1rem', height: '1.1rem', color: isActive ? '#00a6ed' : '#64748b' }} />
+                  {!collapsed && <span>{item.label}</span>}
                 </div>
 
                 {!collapsed && item.badge && (
-                  <span className="font-title" style={{
+                  <span className="font-mono" style={{
                     fontSize: '9px',
-                    padding: '0.15rem 0.4rem',
+                    padding: '0.125rem 0.375rem',
                     borderRadius: '0.25rem',
-                    backgroundColor: '#16a34a',
-                    color: '#ffffff',
-                    border: '1px solid #4ade80'
+                    backgroundColor: 'rgba(255, 119, 0, 0.15)',
+                    color: '#ff7700',
+                    border: '1px solid rgba(255, 119, 0, 0.4)'
                   }}>
                     {item.badge}
                   </span>
                 )}
 
                 {item.count !== undefined && item.count > 0 && (
-                  <span className="font-title" style={{
+                  <span className="font-mono" style={{
                     fontSize: '0.75rem',
-                    padding: collapsed ? '0.15rem 0.35rem' : '0.15rem 0.5rem',
-                    borderRadius: '9999px',
-                    backgroundColor: '#ef4444',
+                    fontWeight: 700,
+                    padding: collapsed ? '0.125rem 0.375rem' : '0.125rem 0.5rem',
+                    borderRadius: '0.25rem',
+                    backgroundColor: '#f43f5e',
                     color: 'white',
-                    border: '1px solid #fca5a5',
-                    boxShadow: '0 2px 4px rgba(239, 68, 68, 0.6)',
+                    boxShadow: '0 0 8px #f43f5e',
                     position: collapsed ? 'absolute' : 'static',
                     top: collapsed ? '2px' : 'auto',
                     right: collapsed ? '2px' : 'auto'
@@ -178,32 +179,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
 
-      {/* Arena Trophy Rating Footer */}
       <div style={{
         paddingTop: '0.75rem',
-        borderTop: '2px solid #2a3e66',
+        borderTop: '1px solid #1e2638',
         textAlign: 'center'
       }}>
         {!collapsed ? (
           <div style={{
-            background: '#13223f',
+            background: '#121722',
             padding: '0.5rem',
-            borderRadius: '0.5rem',
-            border: '1px solid #2a3e66'
+            borderRadius: '0.375rem',
+            border: '1px solid #1e2638'
           }}>
-            <div className="font-title" style={{ fontSize: '0.75rem', color: '#fde047' }}>
-              👑 ROYAL PASS ACTIVE
+            <div className="font-title" style={{ fontSize: '0.75rem', color: '#ff7700' }}>
+              🔬 APERTURE PROTOCOL
             </div>
-            <div className="font-game" style={{
+            <div className="font-mono" style={{
               fontSize: '0.65rem',
-              color: '#38bdf8',
+              color: '#64748b',
               marginTop: '0.15rem'
             }}>
-              SEASON 15 • CITADEL LEAGUE
+              TESTING IN PROGRESS
             </div>
           </div>
         ) : (
-          <div className="font-title" style={{ fontSize: '10px', color: '#fde047' }}>👑</div>
+          <div className="font-title" style={{ fontSize: '10px', color: '#ff7700' }}>LAB</div>
         )}
       </div>
     </aside>
