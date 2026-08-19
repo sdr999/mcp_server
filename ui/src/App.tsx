@@ -127,8 +127,39 @@ export function App() {
           overflowY: 'auto',
           maxWidth: '80rem',
           margin: '0 auto',
-          width: '100%'
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1rem'
         }}>
+          {/* Breadcrumb & Navigation Context Bar */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.5rem 1rem',
+            background: 'rgba(15, 23, 42, 0.5)',
+            border: '1px solid rgba(30, 41, 59, 0.8)',
+            borderRadius: '0.375rem',
+            fontSize: '0.75rem',
+            color: '#94a3b8',
+            fontFamily: 'var(--font-mono)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ color: '#00f0ff', fontWeight: 700 }}>CITADEL OS</span>
+              <span>/</span>
+              <span style={{ color: '#ff0055', textTransform: 'uppercase' }}>MODULE</span>
+              <span>/</span>
+              <span style={{ color: '#ffffff', fontWeight: 700, textTransform: 'uppercase' }}>{activeTab}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: sseConnected ? '#34d399' : '#f43f5e' }}>
+                <span className={sseConnected ? 'animate-ping' : ''} style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: sseConnected ? '#34d399' : '#f43f5e' }} />
+                {sseConnected ? 'TELEMETRY ONLINE' : 'OFFLINE'}
+              </span>
+            </div>
+          </div>
+
           {activeTab === 'dashboard' && <SystemHUD />}
           {activeTab === 'firehose' && <NeuralFirehose />}
           {activeTab === 'spellbook' && <ToolSpellbook onExpGain={handleExpGain} />}
