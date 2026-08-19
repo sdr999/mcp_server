@@ -9,6 +9,49 @@ interface NavbarProps {
   sseConnected: boolean;
 }
 
+// Role Hierarchy: Higher rank = higher priority displayed on the command interface
+const ROLE_HIERARCHY: Record<string, { rank: number; label: string; color: string; bg: string }> = {
+  platform_superadmin: { rank: 100, label: 'PLATFORM SUPERADMIN', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' },
+  superadmin: { rank: 100, label: 'SUPERADMIN', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' },
+  platform_admin: { rank: 90, label: 'PLATFORM ADMIN', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' },
+  admin: { rank: 85, label: 'COMMANDER (ADMIN)', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' },
+  org_admin: { rank: 80, label: 'FLEET ADMIRAL (ORG ADMIN)', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' },
+  workspace_admin: { rank: 70, label: 'STATION CAPTAIN (WS ADMIN)', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' },
+  developer: { rank: 60, label: 'ORBITAL ENGINEER (DEV)', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)' },
+  tool_creator: { rank: 50, label: 'FORGE SPECIALIST', color: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' },
+  operator: { rank: 40, label: 'TACTICAL OPERATOR', color: '#00f0ff', bg: 'rgba(0, 240, 255, 0.15)' },
+  member: { rank: 40, label: 'CREW MEMBER', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.15)' },
+  agent_consumer: { rank: 30, label: 'AGENT CONSUMER', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' },
+  viewer: { rank: 20, label: 'OBSERVER (VIEWER)', color: '#64748b', bg: 'rgba(100, 116, 139, 0.15)' },
+};
+
+function getHighestPriorityRole(roles?: string[]): { label: string; color: string; bg: string } {
+  if (!roles || !Array.isArray(roles) || roles.length === 0) {
+    return { label: 'ORBITAL OPERATOR', color: '#00f0ff', bg: 'rgba(0, 240, 255, 0.15)' };
+  }
+
+  let highestRank = -1;
+  let highestRole = { label: roles[0].toUpperCase(), color: '#00f0ff', bg: 'rgba(0, 240, 255, 0.15)' };
+
+  for (const r of roles) {
+    if (typeof r !== 'string') continue;
+    const normalized = r.toLowerCase().trim().replace(/-/g, '_');
+    const match = ROLE_HIERARCHY[normalized];
+    const rank = match ? match.rank : 10;
+
+    if (rank > highestRank) {
+      highestRank = rank;
+      highestRole = match || {
+        label: r.toUpperCase().replace(/_/g, ' '),
+        color: '#00f0ff',
+        bg: 'rgba(0, 240, 255, 0.15)'
+      };
+    }
+  }
+
+  return highestRole;
+}
+
 export const Navbar: React.FC<NavbarProps> = ({
   user,
   onLogout,
@@ -30,6 +73,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     const isNowMuted = sfx.toggleMute();
     setMuted(isNowMuted);
   };
+
+  // Determine user display identity & highest priority role
+  const activeRole = getHighestPriorityRole(user?.roles);
+  const emailStr = user?.metadata?.email || user?.email;
+  const usernameStr = user?.username || user?.metadata?.name || user?.name;
+  const subjectStr = user?.subject ? `${user.subject.slice(0, 8)}...` : null;
+
+  const displayName = usernameStr || (emailStr ? emailStr.split('@')[0] : subjectStr) || 'Commander';
 
   return (
     <header style={{
@@ -145,7 +196,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Audio & Session Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
         <button
           onClick={handleToggleSound}
           style={{
@@ -164,8 +215,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           {muted ? <VolumeX style={{ width: '1rem', height: '1rem' }} /> : <Volume2 style={{ width: '1rem', height: '1rem' }} />}
         </button>
 
-        {/* User Identity */}
-        <div style={{ textAlign: 'right' }}>
+        {/* User Identity & Priority Role Badge */}
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.15rem' }}>
           <div className="font-title" style={{
             fontSize: '0.8rem',
             color: 'white',
@@ -174,14 +225,20 @@ export const Navbar: React.FC<NavbarProps> = ({
             gap: '0.35rem',
             justifyContent: 'flex-end'
           }}>
-            {user?.sub || user?.username || 'Commander'}
+            {displayName}
           </div>
           <div className="font-mono" style={{
-            fontSize: '0.65rem',
-            color: '#00f0ff',
-            textTransform: 'uppercase'
+            fontSize: '0.625rem',
+            color: activeRole.color,
+            backgroundColor: activeRole.bg,
+            border: `1px solid ${activeRole.color}`,
+            borderRadius: '0.25rem',
+            padding: '0.1rem 0.4rem',
+            textTransform: 'uppercase',
+            fontWeight: 700,
+            letterSpacing: '0.05em'
           }}>
-            {user?.roles?.[0] || 'ORBITAL OPERATOR'}
+            {activeRole.label}
           </div>
         </div>
 
