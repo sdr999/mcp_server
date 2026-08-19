@@ -29,12 +29,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTab, 
   setActiveTab, 
   pendingCount = 0,
-  isCollapsed = false,
+  isCollapsed,
   onToggleCollapse
 }) => {
   const [collapsedInternal, setCollapsedInternal] = useState(false);
-  const collapsed = isCollapsed ?? collapsedInternal;
-  const toggle = onToggleCollapse ?? (() => setCollapsedInternal(!collapsedInternal));
+  const collapsed = isCollapsed !== undefined ? isCollapsed : collapsedInternal;
+  const toggle = onToggleCollapse ?? (() => setCollapsedInternal(prev => !prev));
 
   const navItems = [
     { id: 'dashboard', label: 'Tactical HUD', icon: Activity, badge: 'ACTIVE' },
