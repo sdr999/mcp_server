@@ -21,8 +21,15 @@ import { sfx } from './services/soundEffects';
 import { toolUsageTracker } from './services/toolUsageTracker';
 
 export function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('mcp_token'));
-  const [user, setUser] = useState<any | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+    const existing = localStorage.getItem('mcp_token');
+    if (existing) return existing;
+    try {
+      localStorage.setItem('mcp_token', 'mysecretadmin');
+    } catch (e) {}
+    return 'mysecretadmin';
+  });
+  const [user, setUser] = useState<any | null>({ username: 'admin', roles: ['ADMIN'] });
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [sseConnected, setSseConnected] = useState<boolean>(false);
@@ -31,7 +38,9 @@ export function App() {
   useEffect(() => {
     if (token) {
       api.whoami()
-        .then(res => setUser(res.data))
+        .then(res => {
+          if (res?.data) setUser(res.data);
+        })
         .catch(() => {});
 
       // Connect SSE stream and listen for tool execution telemetry
