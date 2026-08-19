@@ -86,6 +86,15 @@ treated as unset, so the fallback still applies). A missing `config/.env` is fin
 | `MCP_CIRCUIT_BREAKER_ENABLED` | `true` | 3-state circuit breaker protection |
 | `MCP_CIRCUIT_BREAKER_THRESHOLD` | `5` | Failures before opening circuit |
 | `MCP_ALERT_WEBHOOK_URL` | — | Webhook alert target URL |
+| `MCP_TASK_QUEUE_BACKEND` | `in_memory` | Task queue backend: `in_memory` \| `celery` \| `arq` |
+| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | `redis://localhost:6379/0` | Celery Redis broker and result backend URLs |
+| `MCP_UPSTREAM_PROBE_INTERVAL_SEC` | `15.0` | Cadence for active upstream health probes |
+| `MCP_UPSTREAM_PROBE_TIMEOUT_SEC` | `3.0` | Upstream probe HTTP request timeout |
+| `MCP_UPSTREAM_PROBE_UNHEALTHY_THRESHOLD` / `HEALTHY_THRESHOLD` | `3` / `2` | Consecutive failure/success thresholds for health status |
+| `MCP_SYSTEM_WATCHDOG_ENABLED` | `true` | Adaptive load shedding watchdog toggle |
+| `MCP_MAX_CPU_PERCENT` / `MCP_MAX_MEMORY_PERCENT` | `85.0` / `90.0` | Resource usage thresholds that trigger load shedding |
+| `MCP_TASK_JOB_TIMEOUT_SEC` / `MCP_TASK_MAX_RETRIES` | `300.0` / `3` | Zombie job timeout and max execution retries |
+| `MCP_OPENAPI_AUTO_COERCE` | `true` | Enable whitelisted parameter auto-coercion on OpenAPI HTTP 400 |
 
 ---
 
@@ -97,15 +106,21 @@ treated as unset, so the fallback still applies). A missing `config/.env` is fin
 | GET | `/readyz` | none (exempt) | Readiness — `200` only after the initial load; `503` while loading |
 | GET | `/status` | api_key* | `{ready, auth, stats:{loaded_modules, total_tools, failed_modules, disabled_tools, failures}}` |
 | GET | `/tools` | api_key* | Tool catalog: `[{name, module, description, tags}]` |
+| POST | `/tools/{name}/async_call` | api_key* | Submit long-running tool call as async job (`202 Accepted`) |
+| GET | `/jobs/{job_id}` | none | Poll lifecycle status, execution timing, or result of an async job |
 | GET | `/metrics` | api_key* | Prometheus metrics (see §6) |
 | GET | `/admin/dashboard` | admin token | Single-page HTML live reliability & telemetry dashboard |
 | GET | `/admin/dashboard/stream` | admin token | Real-time SSE metric & circuit breaker status stream (max 10 connections) |
+| GET | `/admin/jobs` | admin token | Task queue performance stats and recent job execution history |
+| GET | `/admin/jobs/dlq` | admin token | List jobs currently residing in the Dead-Letter Queue (DLQ) |
+| POST | `/admin/jobs/dlq/{job_id}/retry` | admin token | Re-enqueue a Dead-Letter Queue job for execution |
+| GET | `/admin/upstreams/health` | admin token | Real-time health probe telemetry for all federated upstream servers |
 | POST | `/admin/resync` | admin token | Force an immediate Azure sync |
 | POST | `/admin/reload/{name}` | admin token | Reload the module that owns a tool |
 | POST | `/admin/tool/{name}/disable` | admin token | Unregister a tool and keep it unregistered across reloads |
 | POST | `/admin/tool/{name}/enable` | admin token | Re-enable and reload a disabled tool |
 | GET | `/sse` | per `MCP_AUTH_TYPE` | MCP SSE stream (clients connect here) |
-| POST | `/messages/` | per `MCP_AUTH_TYPE` | MCP JSON-RPC channel; the exact URL (with `session_id`) is handed to the client during the SSE handshake — not called by hand |
+| POST | `/messages/` | per `MCP_AUTH_TYPE` | MCP JSON-RPC channel |
 
 
 \* `/status`, `/tools`, `/metrics` require the MCP credential in both `api_key` and

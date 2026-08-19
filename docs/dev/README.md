@@ -35,7 +35,11 @@ src/
     ├── dependency_risk.py  # pip-dependency risk scoring          (doc 06)
     ├── onboarding.py       # risk-gated tool onboarding           (doc 07)
     ├── cli.py              # --validate / --sign                  (doc 08)
-    └── upstreams.py        # federation to remote MCP servers     (doc 09)
+    ├── upstreams.py        # federation to remote MCP servers     (doc 09)
+    ├── task_queue/         # async task queue engine (in_memory/celery)
+    ├── upstream_health.py  # active background upstream health prober
+    ├── system_watchdog.py  # adaptive load shedding hysteresis watchdog
+    └── auto_healer.py      # AST auto-fixer & schema coercion engine
 ```
 
 ## The documents
@@ -48,9 +52,10 @@ src/
 | 04 | [App Assembly & Hot-Reload](04-app-and-hot-reload.md) | `app.py`, `watcher.py`, `notifications.py`: lifespan, prepare/commit split, the reload drain, locks |
 | 05 | [HTTP API & Metrics](05-http-api-metrics.md) | `routes.py`, `metrics.py`: every endpoint, the metrics registry |
 | 06 | [Dependency Risk](06-dependency-risk.md) | `dependency_risk.py`: scoring heuristics, PyPI lookup, canonicalization |
-| 07 | [Tool Onboarding](07-tool-onboarding.md) | `onboarding.py`: the full flow, exposure policy, manifest, conflicts, audit |
+| 07 | [Tool Onboarding](07-onboarding.md) | `onboarding.py`: the full flow, exposure policy, manifest, conflicts, audit |
 | 08 | [CLI & Sandbox](08-cli-and-sandbox.md) | `cli.py`, `tool_runner.py`: validate/sign, subprocess sandbox |
-| 09 | [Federation](09-federation.md) | `upstreams.py`: list/call tools on remote MCP servers |
+| 09 | [Federation & Health](09-federation.md) | `upstreams.py`, `upstream_health.py`: list/call remote upstreams, active probes, failover rerouting |
+| 10 | [Task Queue & Self-Healing](../SELF_HEALING_AND_TASK_QUEUE_GUIDE.md) | `task_queue/`, `system_watchdog.py`: async 202 jobs, zombie reaper, DLQ, hysteresis load shedder |
 
 ## The one mental model to hold
 

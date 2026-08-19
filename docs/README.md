@@ -13,6 +13,7 @@ Pick a starting point by what you're trying to do.
 ## By task
 
 | Convert OpenAPI REST API specs into live MCP tools | [OPENAPI_PLUGIN_GUIDE.md](OPENAPI_PLUGIN_GUIDE.md) |
+| Configure Async Task Queue, Zombie Reaper, Upstream Failover & System Watchdog | [SELF_HEALING_AND_TASK_QUEUE_GUIDE.md](SELF_HEALING_AND_TASK_QUEUE_GUIDE.md) |
 | Configure OpenTelemetry, Rate Limits, Circuit Breakers & Live Dashboard | [RELIABILITY_OBSERVABILITY_GUIDE.md](RELIABILITY_OBSERVABILITY_GUIDE.md) |
 | Run / configure `src/main.py` (local server) | [MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md) |
 | Run / configure the Azure-backed server + all shared features | [MCP_SERVER_FEATURES.md](MCP_SERVER_FEATURES.md) |
@@ -29,6 +30,8 @@ Pick a starting point by what you're trying to do.
 
 ### Operational guides (how to run & configure)
 
+- **[SELF_HEALING_AND_TASK_QUEUE_GUIDE.md](SELF_HEALING_AND_TASK_QUEUE_GUIDE.md)** — Distributed Task Queue & Enterprise Self-Healing Infrastructure:
+  async jobs (`202 Accepted`), pluggable backends (`in_memory`, `celery`, `arq`), active upstream health prober, 1-hop failover rerouting, zombie job reaper, bounded DLQ, SQLite WAL checkpoint lock recovery, hysteresis load shedder, and OpenAPI schema coercion.
 - **[OPENAPI_PLUGIN_GUIDE.md](OPENAPI_PLUGIN_GUIDE.md)** — the OpenAPI Spec Native Plugin:
   registering specs (URL, local file, raw JSON/YAML text), explicit signature generation, auth modes, tool catalog synchronization, and mock testing.
 - **[MCP_MAIN_SERVER.md](MCP_MAIN_SERVER.md)** — the plugin-based local server:
