@@ -42,9 +42,11 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
     setStatusMsg(null);
 
     try {
-      const payload: any = { collection_id: collectionId };
-      if (specUrl) payload.url = specUrl;
-      if (specContent) payload.spec = JSON.parse(specContent);
+      const payload: any = {
+        collection_id: collectionId,
+        spec: specContent || specUrl
+      };
+      if (specUrl) payload.base_url = specUrl;
 
       await api.registerOpenAPISpec(payload);
       setStatusMsg({ type: 'success', text: `OpenAPI Spec '${collectionId}' registered! Tools auto-generated.` });
@@ -54,7 +56,7 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
       fetchSpecs();
       if (onExpGain) onExpGain(200);
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to register OpenAPI spec.' });
+      setStatusMsg({ type: 'error', text: err.response?.data?.error || err.response?.data?.detail || 'Failed to register OpenAPI spec.' });
     } finally {
       setActionLoading(false);
     }

@@ -19,22 +19,27 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
     setProposal(null);
 
     try {
+      const generatedSource = mode === 'code' 
+        ? sourceCode 
+        : `@tool\ndef ${toolName.trim().replace(/\s+/g, '_') || 'custom_tool'}() -> str:\n    """${promptText.replace(/"/g, '\\"')}"""\n    return "Tool executed: ${promptText.replace(/"/g, '\\"')}"\n`;
+
       const payload = {
-        name: toolName,
-        mode,
-        prompt: promptText,
-        source_code: mode === 'code' ? sourceCode : undefined
+        name: toolName.trim().replace(/\s+/g, '_'),
+        source: generatedSource,
+        requirements: [],
+        overwrite: false,
+        auto_heal: true
       };
       const res = await api.onboardTool(payload);
-      if (res.data?.proposal) {
-        setProposal(res.data.proposal);
-        setStatusMsg({ type: 'success', text: 'AI Tool proposal generated! Review code below before forging.' });
+      if (res.data?.status === 'pending') {
+        setProposal(res.data);
+        setStatusMsg({ type: 'success', text: 'Tool held in pending queue for approval.' });
       } else {
         setStatusMsg({ type: 'success', text: `MCP Tool '${toolName}' successfully forged and loaded!` });
         if (onExpGain) onExpGain(250);
       }
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.response?.data?.detail || 'Tool onboarding failed.' });
+      setStatusMsg({ type: 'error', text: err.response?.data?.error || err.response?.data?.detail || 'Tool onboarding failed.' });
     } finally {
       setLoading(false);
     }
@@ -43,10 +48,15 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
   const handleValidateSource = async () => {
     try {
       setLoading(true);
-      const res = await api.validateSource({ source_code: sourceCode });
+      const payload = {
+        name: toolName || 'validate_tool',
+        source: sourceCode,
+        requirements: []
+      };
+      const res = await api.validateSource(payload);
       setValidationResult(res.data);
     } catch (err: any) {
-      setValidationResult({ valid: false, error: err.response?.data?.detail || 'Validation failed' });
+      setValidationResult({ valid: false, error: err.response?.data?.error || err.response?.data?.detail || 'Validation failed' });
     } finally {
       setLoading(false);
     }
@@ -56,12 +66,19 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
     if (!proposal) return;
     try {
       setLoading(true);
-      await api.acceptProposal({ proposal_id: proposal.id || proposal.name || toolName });
+      const payload = {
+        name: proposal.name || toolName,
+        source: proposal.code || proposal.source_code || proposal.source || sourceCode,
+        requirements: proposal.requirements || [],
+        overwrite: true,
+        auto_heal: true
+      };
+      await api.acceptProposal(payload);
       setStatusMsg({ type: 'success', text: 'Proposal accepted! Tool forged into runtime spellbook.' });
       setProposal(null);
       if (onExpGain) onExpGain(500);
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to accept proposal.' });
+      setStatusMsg({ type: 'error', text: err.response?.data?.error || err.response?.data?.detail || 'Failed to accept proposal.' });
     } finally {
       setLoading(false);
     }
