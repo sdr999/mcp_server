@@ -8,6 +8,7 @@ interface StatCardProps {
   icon: LucideIcon;
   color?: 'cyan' | 'magenta' | 'gold' | 'green' | 'blue';
   trend?: string;
+  onClick?: () => void;
 }
 
 export const StatCard: React.FC<StatCardProps> = ({
@@ -16,7 +17,8 @@ export const StatCard: React.FC<StatCardProps> = ({
   subtext,
   icon: Icon,
   color = 'blue',
-  trend
+  trend,
+  onClick
 }) => {
   const colorMap = {
     cyan: {
@@ -54,12 +56,18 @@ export const StatCard: React.FC<StatCardProps> = ({
   const theme = colorMap[color] || colorMap.blue;
 
   return (
-    <div className="hud-panel" style={{
-      padding: '1.25rem',
-      background: '#13223f',
-      border: '2px solid #2a3e66',
-      boxShadow: '0 6px 16px rgba(0, 0, 0, 0.5)'
-    }}>
+    <div 
+      onClick={onClick}
+      className="hud-panel" 
+      style={{
+        padding: '1.25rem',
+        background: '#13223f',
+        border: '2px solid #2a3e66',
+        boxShadow: '0 6px 16px rgba(0, 0, 0, 0.5)',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'transform 0.15s ease, border-color 0.15s ease'
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="font-title" style={{ 
           fontSize: '0.8rem', 
