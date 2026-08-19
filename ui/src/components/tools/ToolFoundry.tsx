@@ -4,13 +4,49 @@ import { api } from '../../services/api';
 
 export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onExpGain }) => {
   const [mode, setMode] = useState<'prompt' | 'code'>('prompt');
-  const [toolName, setToolName] = useState('');
-  const [promptText, setPromptText] = useState('');
-  const [sourceCode, setSourceCode] = useState(`@tool\ndef my_new_mcp_tool(x: int) -> int:\n    """Calculates square of input x."""\n    return x * x\n`);
+  const [toolName, setToolName] = useState('calculator');
+  const [promptText, setPromptText] = useState('Performs arithmetic calculations (addition, subtraction).');
+  const [sourceCode, setSourceCode] = useState(`from tools_sdk import tool\n\n@tool()\ndef add(a: int, b: int) -> int:\n    return a + b\n`);
+  const [requirementsStr, setRequirementsStr] = useState('');
+  const [overwrite, setOverwrite] = useState(false);
+  const [autoHeal, setAutoHeal] = useState(true);
   const [loading, setLoading] = useState(false);
   const [proposal, setProposal] = useState<any | null>(null);
   const [validationResult, setValidationResult] = useState<any | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const getRequirementsArray = () => {
+    return requirementsStr
+      .split(',')
+      .map(r => r.trim())
+      .filter(r => r.length > 0);
+  };
+
+  const buildSourceCode = () => {
+    if (mode === 'code') return sourceCode;
+    const safeName = (toolName.trim().replace(/\s+/g, '_') || 'custom_tool');
+    const safeDesc = promptText.replace(/"/g, '\\"');
+    return `from tools_sdk import tool\n\n@tool()\ndef ${safeName}(a: int = 1, b: int = 2) -> int:\n    """${safeDesc}"""\n    return a + b\n`;
+  };
+
+  const getPayload = () => {
+    return {
+      name: toolName.trim().replace(/\s+/g, '_') || 'calculator',
+      source: buildSourceCode(),
+      requirements: getRequirementsArray(),
+      overwrite,
+      auto_heal: autoHeal
+    };
+  };
+
+  const handleLoadSample = () => {
+    setMode('code');
+    setToolName('calculator');
+    setSourceCode(`from tools_sdk import tool\n\n@tool()\ndef add(a: int, b: int) -> int:\n    return a + b\n`);
+    setRequirementsStr('');
+    setOverwrite(false);
+    setAutoHeal(true);
+  };
 
   const handleOnboardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,23 +55,13 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
     setProposal(null);
 
     try {
-      const generatedSource = mode === 'code' 
-        ? sourceCode 
-        : `@tool\ndef ${toolName.trim().replace(/\s+/g, '_') || 'custom_tool'}() -> str:\n    """${promptText.replace(/"/g, '\\"')}"""\n    return "Tool executed: ${promptText.replace(/"/g, '\\"')}"\n`;
-
-      const payload = {
-        name: toolName.trim().replace(/\s+/g, '_'),
-        source: generatedSource,
-        requirements: [],
-        overwrite: false,
-        auto_heal: true
-      };
+      const payload = getPayload();
       const res = await api.onboardTool(payload);
       if (res.data?.status === 'pending') {
         setProposal(res.data);
         setStatusMsg({ type: 'success', text: 'Tool held in pending queue for approval.' });
       } else {
-        setStatusMsg({ type: 'success', text: `MCP Tool '${toolName}' successfully forged and loaded!` });
+        setStatusMsg({ type: 'success', text: `MCP Tool '${payload.name}' successfully forged and loaded!` });
         if (onExpGain) onExpGain(250);
       }
     } catch (err: any) {
@@ -50,8 +76,8 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
       setLoading(true);
       const payload = {
         name: toolName || 'validate_tool',
-        source: sourceCode,
-        requirements: []
+        source: buildSourceCode(),
+        requirements: getRequirementsArray()
       };
       const res = await api.validateSource(payload);
       setValidationResult(res.data);
@@ -68,8 +94,8 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
       setLoading(true);
       const payload = {
         name: proposal.name || toolName,
-        source: proposal.code || proposal.source_code || proposal.source || sourceCode,
-        requirements: proposal.requirements || [],
+        source: proposal.code || proposal.source_code || proposal.source || buildSourceCode(),
+        requirements: proposal.requirements || getRequirementsArray(),
         overwrite: true,
         auto_heal: true
       };
@@ -102,20 +128,28 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
           </div>
         </div>
 
-        {/* Mode Selector */}
-        <div className="font-mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#0f172a', padding: '0.25rem', borderRadius: '0.5rem', border: '1px solid #334155', fontSize: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button
-            onClick={() => setMode('prompt')}
-            style={{ padding: '0.375rem 0.75rem', borderRadius: '0.25rem', transition: 'all 0.2s', backgroundColor: mode === 'prompt' ? '#22d3ee' : 'transparent', color: mode === 'prompt' ? '#000000' : '#94a3b8', fontWeight: mode === 'prompt' ? 700 : 400, border: 'none', cursor: 'pointer' }}
+            onClick={handleLoadSample}
+            style={{ fontSize: '11px', color: '#34d399', fontFamily: 'var(--font-mono)', background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.3)', borderRadius: '0.25rem', padding: '0.35rem 0.65rem', cursor: 'pointer' }}
           >
-            PROMPT TO TOOL
+            ⚡ Load Sample Tool
           </button>
-          <button
-            onClick={() => setMode('code')}
-            style={{ padding: '0.375rem 0.75rem', borderRadius: '0.25rem', transition: 'all 0.2s', backgroundColor: mode === 'code' ? '#22d3ee' : 'transparent', color: mode === 'code' ? '#000000' : '#94a3b8', fontWeight: mode === 'code' ? 700 : 400, border: 'none', cursor: 'pointer' }}
-          >
-            RAW PYTHON CODE
-          </button>
+          {/* Mode Selector */}
+          <div className="font-mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#0f172a', padding: '0.25rem', borderRadius: '0.5rem', border: '1px solid #334155', fontSize: '0.75rem' }}>
+            <button
+              onClick={() => setMode('prompt')}
+              style={{ padding: '0.375rem 0.75rem', borderRadius: '0.25rem', transition: 'all 0.2s', backgroundColor: mode === 'prompt' ? '#22d3ee' : 'transparent', color: mode === 'prompt' ? '#000000' : '#94a3b8', fontWeight: mode === 'prompt' ? 700 : 400, border: 'none', cursor: 'pointer' }}
+            >
+              PROMPT TO TOOL
+            </button>
+            <button
+              onClick={() => setMode('code')}
+              style={{ padding: '0.375rem 0.75rem', borderRadius: '0.25rem', transition: 'all 0.2s', backgroundColor: mode === 'code' ? '#22d3ee' : 'transparent', color: mode === 'code' ? '#000000' : '#94a3b8', fontWeight: mode === 'code' ? 700 : 400, border: 'none', cursor: 'pointer' }}
+            >
+              RAW PYTHON CODE
+            </button>
+          </div>
         </div>
       </div>
 
@@ -127,7 +161,7 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
       )}
 
       {/* Onboarding Form */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
         <form onSubmit={handleOnboardSubmit} className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fbbf24', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
             1. ONBOARD NEW MCP TOOL SPELL
@@ -135,30 +169,67 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
 
           <div>
             <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
-              TOOL NAME (UNIQUE IDENTIFIER)
+              TOOL NAME ("name") <span style={{ color: '#fb7185' }}>*</span>
             </label>
             <input
               type="text"
               required
               value={toolName}
               onChange={e => setToolName(e.target.value)}
-              placeholder="e.g. calculate_crypto_yield"
+              placeholder="e.g. calculator"
               className="font-mono"
               style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem 0.75rem', fontSize: '0.75rem', color: '#ffffff', outline: 'none' }}
             />
           </div>
 
+          <div>
+            <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
+              REQUIREMENTS ("requirements") <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 400 }}>(comma-separated)</span>
+            </label>
+            <input
+              type="text"
+              value={requirementsStr}
+              onChange={e => setRequirementsStr(e.target.value)}
+              placeholder="e.g. requests, pydantic (optional)"
+              className="font-mono"
+              style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem 0.75rem', fontSize: '0.75rem', color: '#ffffff', outline: 'none' }}
+            />
+          </div>
+
+          {/* Options: Overwrite & Auto Heal */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+            <label className="font-mono" style={{ fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={overwrite}
+                onChange={e => setOverwrite(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <span>OVERWRITE ("overwrite")</span>
+            </label>
+
+            <label className="font-mono" style={{ fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={autoHeal}
+                onChange={e => setAutoHeal(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <span>AUTO HEAL ("auto_heal")</span>
+            </label>
+          </div>
+
           {mode === 'prompt' ? (
             <div>
               <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
-                AI TOOL PROMPT DESCRIPTION
+                TOOL DESCRIPTION PROMPT ("source")
               </label>
               <textarea
                 required
                 value={promptText}
                 onChange={e => setPromptText(e.target.value)}
-                rows={6}
-                placeholder="Describe what the tool should do (e.g., 'A tool that fetches stock prices and returns 7-day volatility analysis')..."
+                rows={5}
+                placeholder="Describe what the tool should do..."
                 className="font-mono"
                 style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#ffffff', outline: 'none' }}
               />
@@ -167,7 +238,7 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                 <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1' }}>
-                  PYTHON SOURCE CODE (@tool)
+                  PYTHON SOURCE CODE ("source") (@tool)
                 </label>
                 <button
                   type="button"
@@ -182,7 +253,7 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
                 required
                 value={sourceCode}
                 onChange={e => setSourceCode(e.target.value)}
-                rows={10}
+                rows={8}
                 className="font-mono"
                 style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', outline: 'none' }}
               />
@@ -205,24 +276,26 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
           </button>
         </form>
 
-        {/* AI Proposal Code Inspector & Accept Box */}
+        {/* Live Payload Preview & Proposal Inspector */}
         <div className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#22d3ee', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
-            2. AI GENERATED CODE PROPOSAL INSPECTOR
+            2. ONBOARD REQUEST PAYLOAD PREVIEW
           </h4>
 
-          {proposal ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PROPOSAL NAME:</span>
-                <p className="font-mono" style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{proposal.name || toolName}</p>
-              </div>
+          <div>
+            <div className="font-mono" style={{ fontSize: '0.7rem', color: '#94a3b8', marginBottom: '0.25rem' }}>
+              TARGET ENDPOINT: <span style={{ color: '#22d3ee' }}>POST /admin/tools/onboard</span>
+            </div>
+            <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.7rem', color: '#a7f3d0', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
+              {JSON.stringify(getPayload(), null, 2)}
+            </pre>
+          </div>
 
+          {proposal && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
               <div>
-                <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GENERATED PYTHON CODE:</span>
-                <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', overflow: 'auto', maxHeight: '16rem', marginTop: '0.25rem', margin: 0 }}>
-                  {proposal.code || proposal.source_code || JSON.stringify(proposal, null, 2)}
-                </pre>
+                <span className="font-mono" style={{ fontSize: '0.75rem', color: '#fbbf24' }}>PENDING PROPOSAL GENERATED:</span>
+                <p className="font-mono" style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{proposal.name || toolName}</p>
               </div>
 
               <button
@@ -233,11 +306,6 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
               >
                 ACCEPT & APPROVE PROPOSAL 🛡️ (+500 EXP)
               </button>
-            </div>
-          ) : (
-            <div className="font-mono" style={{ textAlign: 'center', padding: '5rem 0', color: '#64748b', fontSize: '0.75rem' }}>
-              <Sparkles style={{ width: '2.5rem', height: '2.5rem', color: '#334155', margin: '0 auto 0.75rem auto' }} />
-              Submit an AI prompt on the left to generate and inspect code proposals.
             </div>
           )}
         </div>
