@@ -6,7 +6,7 @@ interface StatCardProps {
   value: string | number;
   subtext?: string;
   icon: LucideIcon;
-  color?: 'cyan' | 'magenta' | 'gold' | 'green';
+  color?: 'cyan' | 'magenta' | 'gold' | 'green' | 'blue';
   trend?: string;
 }
 
@@ -15,87 +15,93 @@ export const StatCard: React.FC<StatCardProps> = ({
   value,
   subtext,
   icon: Icon,
-  color = 'cyan',
+  color = 'blue',
   trend
 }) => {
   const colorMap = {
     cyan: {
-      color: '#22d3ee',
-      backgroundColor: 'rgba(6, 182, 212, 0.1)',
-      borderColor: 'rgba(6, 182, 212, 0.3)',
-      boxShadow: '0 0 15px rgba(0,240,255,0.15)',
+      color: '#38bdf8',
+      background: 'linear-gradient(180deg, rgba(56, 189, 248, 0.15), rgba(3, 105, 161, 0.2))',
+      border: '2px solid #0284c7',
+      iconBg: 'linear-gradient(180deg, #38bdf8, #0284c7)',
+    },
+    blue: {
+      color: '#38bdf8',
+      background: 'linear-gradient(180deg, rgba(56, 189, 248, 0.15), rgba(3, 105, 161, 0.2))',
+      border: '2px solid #0284c7',
+      iconBg: 'linear-gradient(180deg, #38bdf8, #0284c7)',
     },
     magenta: {
-      color: '#fb7185',
-      backgroundColor: 'rgba(251, 113, 133, 0.1)',
-      borderColor: 'rgba(251, 113, 133, 0.3)',
-      boxShadow: '0 0 15px rgba(255,0,85,0.15)',
+      color: '#f472b6',
+      background: 'linear-gradient(180deg, rgba(244, 114, 182, 0.15), rgba(190, 24, 93, 0.2))',
+      border: '2px solid #db2777',
+      iconBg: 'linear-gradient(180deg, #f472b6, #db2777)',
     },
     gold: {
-      color: '#fbbf24',
-      backgroundColor: 'rgba(245, 158, 11, 0.1)',
-      borderColor: 'rgba(245, 158, 11, 0.3)',
-      boxShadow: '0 0 15px rgba(255,215,0,0.15)',
+      color: '#fde047',
+      background: 'linear-gradient(180deg, rgba(253, 224, 71, 0.15), rgba(202, 138, 4, 0.2))',
+      border: '2px solid #ca8a04',
+      iconBg: 'linear-gradient(180deg, #fde047, #ca8a04)',
     },
     green: {
-      color: '#34d399',
-      backgroundColor: 'rgba(16, 185, 129, 0.1)',
-      borderColor: 'rgba(16, 185, 129, 0.3)',
-      boxShadow: '0 0 15px rgba(0,255,102,0.15)',
+      color: '#4ade80',
+      background: 'linear-gradient(180deg, rgba(74, 222, 128, 0.15), rgba(22, 163, 74, 0.2))',
+      border: '2px solid #16a34a',
+      iconBg: 'linear-gradient(180deg, #4ade80, #16a34a)',
     },
   };
 
-  const theme = colorMap[color];
+  const theme = colorMap[color] || colorMap.blue;
 
   return (
-    <div className="hud-panel" style={{ padding: '1.25rem', boxShadow: theme.boxShadow }}>
+    <div className="hud-panel" style={{
+      padding: '1.25rem',
+      background: '#13223f',
+      border: '2px solid #2a3e66',
+      boxShadow: '0 6px 16px rgba(0, 0, 0, 0.5)'
+    }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ 
-          fontSize: '0.75rem', 
-          fontWeight: 700, 
-          letterSpacing: '0.1em', 
+        <span className="font-title" style={{ 
+          fontSize: '0.8rem', 
           color: '#94a3b8', 
-          textTransform: 'uppercase',
-          fontFamily: 'var(--font-mono)'
+          textTransform: 'uppercase'
         }}>
           {title}
         </span>
         <div style={{ 
-          padding: '0.5rem', 
+          padding: '0.45rem', 
           borderRadius: '0.5rem', 
-          backgroundColor: theme.backgroundColor, 
-          border: `1px solid ${theme.borderColor}`,
-          color: theme.color,
+          background: theme.iconBg, 
+          color: '#ffffff',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center'
+          justifyContent: 'center',
+          boxShadow: '0 2px 6px rgba(0, 0, 0, 0.4)'
         }}>
           <Icon style={{ width: '1.25rem', height: '1.25rem' }} />
         </div>
       </div>
 
-      <div style={{ marginTop: '0.75rem' }}>
-        <div style={{ 
-          fontSize: '1.5rem', 
-          fontWeight: 900, 
-          letterSpacing: '-0.025em', 
+      <div style={{ marginTop: '0.65rem' }}>
+        <div className="font-title" style={{ 
+          fontSize: '1.75rem', 
           color: theme.color,
-          fontFamily: 'var(--font-mono)'
+          letterSpacing: '0.02em'
         }}>
           {value}
         </div>
         {subtext && (
-          <p style={{ 
+          <p className="font-game" style={{ 
             fontSize: '0.75rem', 
             color: '#94a3b8', 
             marginTop: '0.25rem', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'space-between',
-            fontFamily: 'var(--font-mono)'
+            margin: 0
           }}>
             <span>{subtext}</span>
-            {trend && <span style={{ color: '#34d399', fontWeight: 700 }}>{trend}</span>}
+            {trend && <span className="font-title" style={{ color: '#4ade80', fontSize: '0.75rem' }}>{trend}</span>}
           </p>
         )}
       </div>

@@ -16,12 +16,14 @@ import { GuildCitadel } from './components/tenancy/GuildCitadel';
 import { ChaosArena } from './components/analytics/ChaosArena';
 import { PromptVault } from './components/prompts/PromptVault';
 
+import { sfx } from './services/soundEffects';
+
 export function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('mcp_token'));
   const [user, setUser] = useState<any | null>(null);
   const [userExp, setUserExp] = useState<number>(3450);
-  const [userLevel, setUserLevel] = useState<number>(4);
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [userLevel, setUserLevel] = useState<number>(12);
+  const [activeTab, setActiveTab] = useState<string>('spellbook');
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [sseConnected, setSseConnected] = useState<boolean>(false);
 
@@ -30,11 +32,7 @@ export function App() {
     if (token) {
       api.whoami()
         .then(res => setUser(res.data))
-        .catch(() => {
-          // Token invalid, clear
-          // localStorage.removeItem('mcp_token');
-          // setToken(null);
-        });
+        .catch(() => {});
 
       // Connect SSE stream
       sseManager.connect();
@@ -71,11 +69,12 @@ export function App() {
       const nextLevelThreshold = userLevel * 1000;
       if (updated >= nextLevelThreshold) {
         setUserLevel(lvl => lvl + 1);
+        sfx.playLevelUpSound();
         // Trigger Gamified Confetti Level-Up effect!
         try {
           confetti({
-            particleCount: 100,
-            spread: 70,
+            particleCount: 120,
+            spread: 80,
             origin: { y: 0.6 }
           });
         } catch (e) {}
@@ -98,11 +97,11 @@ export function App() {
   return (
     <div style={{
       minHeight: '100vh',
-      backgroundColor: '#07090e',
-      color: '#f1f5f9',
+      backgroundColor: '#070e1e',
+      color: '#f8fafc',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: 'var(--font-body)'
+      fontFamily: 'var(--font-game)'
     }}>
       {/* Top Navbar HUD */}
       <Navbar
@@ -125,37 +124,37 @@ export function App() {
           flex: 1,
           padding: '1.5rem',
           overflowY: 'auto',
-          maxWidth: '80rem',
+          maxWidth: '85rem',
           margin: '0 auto',
           width: '100%',
           display: 'flex',
           flexDirection: 'column',
-          gap: '1rem'
+          gap: '1.25rem'
         }}>
-          {/* Breadcrumb & Navigation Context Bar */}
+          {/* Arena Breadcrumb & Navigation Context Bar */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '0.5rem 1rem',
-            background: 'rgba(15, 23, 42, 0.5)',
-            border: '1px solid rgba(30, 41, 59, 0.8)',
-            borderRadius: '0.375rem',
-            fontSize: '0.75rem',
+            padding: '0.65rem 1.25rem',
+            background: '#13223f',
+            border: '2px solid #2a3e66',
+            borderRadius: '0.625rem',
+            fontSize: '0.85rem',
             color: '#94a3b8',
-            fontFamily: 'var(--font-mono)'
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ color: '#00f0ff', fontWeight: 700 }}>CITADEL OS</span>
+              <span className="font-title" style={{ color: '#fde047' }}>👑 ARENA 15</span>
               <span>/</span>
-              <span style={{ color: '#ff0055', textTransform: 'uppercase' }}>MODULE</span>
+              <span className="font-game" style={{ color: '#38bdf8', textTransform: 'uppercase', fontWeight: 700 }}>ROYAL CITADEL</span>
               <span>/</span>
-              <span style={{ color: '#ffffff', fontWeight: 700, textTransform: 'uppercase' }}>{activeTab}</span>
+              <span className="font-title" style={{ color: '#ffffff', textTransform: 'uppercase' }}>{activeTab}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: sseConnected ? '#34d399' : '#f43f5e' }}>
-                <span className={sseConnected ? 'animate-ping' : ''} style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: sseConnected ? '#34d399' : '#f43f5e' }} />
-                {sseConnected ? 'TELEMETRY ONLINE' : 'OFFLINE'}
+              <span className="font-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: sseConnected ? '#4ade80' : '#f87171', fontSize: '0.75rem' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: sseConnected ? '#22c55e' : '#ef4444', boxShadow: sseConnected ? '0 0 8px #22c55e' : 'none' }} />
+                {sseConnected ? 'TELEMETRY STREAM: READY' : 'TELEMETRY: OFFLINE'}
               </span>
             </div>
           </div>

@@ -219,10 +219,10 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
       <button
         type="submit"
         disabled={loading}
-        className="btn-neon-cyan"
-        style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.625rem 0', marginTop: '0.5rem', fontSize: '0.75rem', letterSpacing: '0.1em' }}
+        className="btn-cr btn-cr-gold"
+        style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', marginTop: '0.5rem', fontSize: '0.95rem' }}
       >
-        {loading ? 'CASTING SPELL (EXECUTING)...' : 'EXECUTE TOOL CALL ⚡'}
+        {loading ? '🔮 CASTING SPELL IN ARENA...' : '⚡ CAST SPELL (EXECUTE TOOL)'}
       </button>
     </form>
   );

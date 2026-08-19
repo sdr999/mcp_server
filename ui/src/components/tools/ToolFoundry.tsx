@@ -269,42 +269,42 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
           <button
             type="submit"
             disabled={loading}
-            className="btn-neon-cyan"
-            style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.75rem', letterSpacing: '0.1em' }}
+            className="btn-cr btn-cr-gold"
+            style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.9rem' }}
           >
-            {loading ? 'FORGING TOOL...' : 'FORGE & REGISTER TOOL ⚡ (+250 EXP)'}
+            {loading ? '🔨 FORGING TOOL IN WORKSHOP...' : '⚡ FORGE & DEPLOY CARD (+250 EXP)'}
           </button>
         </form>
 
         {/* Live Payload Preview & Proposal Inspector */}
         <div className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#22d3ee', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
+          <h4 className="font-title" style={{ fontSize: '0.9rem', color: '#fde047', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '2px solid #2a3e66', paddingBottom: '0.5rem', margin: 0 }}>
             2. ONBOARD REQUEST PAYLOAD PREVIEW
           </h4>
 
           <div>
-            <div className="font-mono" style={{ fontSize: '0.7rem', color: '#94a3b8', marginBottom: '0.25rem' }}>
-              TARGET ENDPOINT: <span style={{ color: '#22d3ee' }}>POST /admin/tools/onboard</span>
+            <div className="font-game" style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.25rem' }}>
+              TARGET ENDPOINT: <span style={{ color: '#38bdf8', fontWeight: 700 }}>POST /admin/tools/onboard</span>
             </div>
-            <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.7rem', color: '#a7f3d0', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
+            <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#070e1e', border: '1px solid #2a3e66', borderRadius: '0.5rem', padding: '0.75rem', fontSize: '0.75rem', color: '#86efac', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
               {JSON.stringify(getPayload(), null, 2)}
             </pre>
           </div>
 
           {proposal && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '1rem', borderTop: '2px solid #2a3e66' }}>
               <div>
-                <span className="font-mono" style={{ fontSize: '0.75rem', color: '#fbbf24' }}>PENDING PROPOSAL GENERATED:</span>
-                <p className="font-mono" style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{proposal.name || toolName}</p>
+                <span className="font-title" style={{ fontSize: '0.8rem', color: '#fde047' }}>PENDING PROPOSAL GENERATED:</span>
+                <p className="font-game" style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>{proposal.name || toolName}</p>
               </div>
 
               <button
                 onClick={handleAcceptProposal}
                 disabled={loading}
-                className="btn-neon-magenta"
-                style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.75rem', letterSpacing: '0.1em' }}
+                className="btn-cr btn-cr-green"
+                style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.85rem' }}
               >
-                ACCEPT & APPROVE PROPOSAL 🛡️ (+500 EXP)
+                ACCEPT & APPROVE CARD 🛡️ (+500 EXP)
               </button>
             </div>
           )}
