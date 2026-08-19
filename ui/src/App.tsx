@@ -131,23 +131,23 @@ export function App() {
           flexDirection: 'column',
           gap: '1.25rem'
         }}>
-          {/* Arena Breadcrumb & Navigation Context Bar */}
+          {/* Tactical Orbital Breadcrumb & Telemetry Bar */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '0.65rem 1.25rem',
-            background: '#13223f',
-            border: '2px solid #2a3e66',
-            borderRadius: '0.625rem',
-            fontSize: '0.85rem',
+            background: '#0d131f',
+            border: '1px solid #1e2c45',
+            borderRadius: '0.375rem',
+            fontSize: '0.8rem',
             color: '#94a3b8',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
+            boxShadow: '0 4px 14px rgba(0,0,0,0.5)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span className="font-title" style={{ color: '#fde047' }}>👑 ARENA 15</span>
+              <span className="font-title" style={{ color: '#00f0ff' }}>🛰️ ORBITAL COMMAND</span>
               <span>/</span>
-              <span className="font-game" style={{ color: '#38bdf8', textTransform: 'uppercase', fontWeight: 700 }}>ROYAL CITADEL</span>
+              <span className="font-mono" style={{ color: '#ff9f1c', textTransform: 'uppercase' }}>TACTICAL OPS</span>
               <span>/</span>
               <span className="font-title" style={{ color: '#ffffff', textTransform: 'uppercase' }}>{activeTab}</span>
             </div>

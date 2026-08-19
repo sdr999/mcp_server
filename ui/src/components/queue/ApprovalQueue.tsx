@@ -38,12 +38,12 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     try {
       setActionLoading(true);
       await api.approvePendingTool(name);
-      setStatusMsg(`Tool '${name}' has been APPROVED and added to the spellbook!`);
+      setStatusMsg(`Module '${name}' has been AUTHORIZED and deployed to active armory!`);
       setSelectedPending(null);
       fetchPending();
       if (onExpGain) onExpGain(300);
     } catch (err: any) {
-      setStatusMsg(`Failed to approve '${name}': ${err.response?.data?.detail || err.message}`);
+      setStatusMsg(`Failed to authorize '${name}': ${err.response?.data?.detail || err.message}`);
     } finally {
       setActionLoading(false);
     }
@@ -53,7 +53,7 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     try {
       setActionLoading(true);
       await api.rejectPendingTool(name);
-      setStatusMsg(`Tool '${name}' has been REJECTED.`);
+      setStatusMsg(`Module '${name}' has been REJECTED.`);
       setSelectedPending(null);
       fetchPending();
     } catch (err: any) {
@@ -68,15 +68,15 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
       {/* Header */}
       <div className="hud-panel" style={{ padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.3)', color: '#fb7185' }}>
+          <div style={{ padding: '0.5rem', borderRadius: '0.375rem', backgroundColor: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.3)', color: '#fb7185' }}>
             <Clock style={{ width: '1.25rem', height: '1.25rem' }} />
           </div>
           <div>
             <h3 className="font-title" style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.05em', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              GRAND COUNCIL REVIEW (PENDING APPROVAL QUEUE)
+              SECURITY REVIEW (PENDING APPROVAL QUEUE)
             </h3>
             <p className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.25rem' }}>
-              REVIEW & APPROVE UNVETTED TOOL PROPOSALS (/admin/tools/pending)
+              AUDIT & AUTHORIZE UNVETTED MODULE PROPOSALS (/admin/tools/pending)
             </p>
           </div>
         </div>
@@ -84,7 +84,7 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
         <button
           onClick={fetchPending}
           disabled={loading}
-          className="btn-neon-cyan font-mono"
+          className="btn-sc btn-sc-cyan font-mono"
           style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
           <RefreshCw style={{ width: '0.875rem', height: '0.875rem' }} />
@@ -109,7 +109,7 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
           ) : pendingTools.length === 0 ? (
             <div className="hud-panel font-mono" style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem' }}>
               <CheckCircle2 style={{ width: '2rem', height: '2rem', color: '#34d399', margin: '0 auto 0.5rem auto' }} />
-              Approval queue is empty. All proposed tools are reviewed!
+              Approval queue is clear. All proposed modules are reviewed.
             </div>
           ) : (
             pendingTools.map(t => {
@@ -124,9 +124,8 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                     padding: '1rem',
                     cursor: 'pointer',
                     transition: 'all 0.2s',
-                    border: isSelected ? '1px solid #fbbf24' : '1px solid transparent',
-                    backgroundColor: isSelected ? 'rgba(69, 26, 3, 0.3)' : undefined,
-                    boxShadow: isSelected ? '0 0 15px rgba(255,215,0,0.2)' : undefined
+                    border: isSelected ? '1px solid #fbbf24' : '1px solid #1e2c45',
+                    backgroundColor: isSelected ? 'rgba(245, 158, 11, 0.1)' : undefined
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
@@ -135,11 +134,11 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                       {t.name}
                     </h4>
                     <span className="font-mono" style={{ fontSize: '0.625rem', padding: '0.125rem 0.5rem', borderRadius: '0.25rem', backgroundColor: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
-                      PENDING REVIEW
+                      PENDING AUDIT
                     </span>
                   </div>
                   <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.25rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {t.description || 'AI Generated Tool Proposal awaiting council audit.'}
+                    {t.description || 'AI Synthesized Module Proposal awaiting security audit.'}
                   </p>
                 </div>
               );
@@ -151,7 +150,7 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
         <div className="hud-panel" style={{ gridColumn: 'span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {selectedPending ? (
             <>
-              <div style={{ borderBottom: '1px solid #1e293b', paddingBottom: '0.75rem' }}>
+              <div style={{ borderBottom: '1px solid #1e2c45', paddingBottom: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h3 className="font-mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                     <ShieldAlert style={{ width: '1.25rem', height: '1.25rem', color: '#fbbf24' }} />
@@ -162,13 +161,13 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                   </span>
                 </div>
                 <p style={{ fontSize: '0.75rem', color: '#cbd5e1', margin: 0, marginTop: '0.25rem' }}>
-                  {selectedPending.description || 'Review the generated source code for security compliance before approving.'}
+                  {selectedPending.description || 'Review the generated source code for security compliance before deploying.'}
                 </p>
               </div>
 
               <div>
                 <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '0.25rem' }}>SOURCE CODE INSPECTION:</span>
-                <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
+                <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#070a10', border: '1px solid #1e2c45', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
                   {selectedPending.code || selectedPending.source_code || JSON.stringify(selectedPending, null, 2)}
                 </pre>
               </div>
@@ -177,24 +176,24 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                 <button
                   onClick={() => handleApprove(selectedPending.name)}
                   disabled={actionLoading}
-                  className="btn-neon-cyan"
-                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem', letterSpacing: '0.05em' }}
+                  className="btn-sc btn-sc-emerald"
+                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem' }}
                 >
-                  <CheckCircle2 style={{ width: '1rem', height: '1rem' }} /> APPROVE & FORGE SPELL (+300 EXP)
+                  <CheckCircle2 style={{ width: '1rem', height: '1rem' }} /> AUTHORIZE & DEPLOY (+300 EXP)
                 </button>
                 <button
                   onClick={() => handleReject(selectedPending.name)}
                   disabled={actionLoading}
-                  className="btn-neon-magenta"
-                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem', letterSpacing: '0.05em' }}
+                  className="btn-sc btn-sc-crimson"
+                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem' }}
                 >
-                  <XCircle style={{ width: '1rem', height: '1rem' }} /> REJECT & DISCARD PROPOSAL
+                  <XCircle style={{ width: '1rem', height: '1rem' }} /> REJECT & DISCARD
                 </button>
               </div>
             </>
           ) : (
             <div className="font-mono" style={{ textAlign: 'center', padding: '5rem 0', color: '#64748b', fontSize: '0.75rem' }}>
-              Select a pending proposal from the left queue to inspect source code and vote.
+              Select a pending proposal from the left queue to inspect source code and authorize.
             </div>
           )}
         </div>

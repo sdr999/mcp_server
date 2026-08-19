@@ -164,10 +164,10 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
           <button
             type="submit"
             disabled={actionLoading}
-            className="btn-neon-cyan"
-            style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.75rem', letterSpacing: '0.1em' }}
+            className="btn-sc btn-sc-cyan"
+            style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.85rem' }}
           >
-            {actionLoading ? 'REGISTERING SPEC...' : 'REGISTER & AUTO-GENERATE SPELLS ⚡ (+200 EXP)'}
+            {actionLoading ? 'REGISTERING SPEC...' : 'REGISTER & DEPLOY MODULE PROTOCOLS ⚡ (+200 EXP)'}
           </button>
         </form>
 

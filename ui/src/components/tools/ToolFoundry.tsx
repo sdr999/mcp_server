@@ -160,12 +160,15 @@ export const ToolFoundry: React.FC<{ onExpGain?: (xp: number) => void }> = ({ on
         </div>
       )}
 
-      {/* Onboarding Form */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
-        <form onSubmit={handleOnboardSubmit} className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fbbf24', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
-            1. ONBOARD NEW MCP TOOL SPELL
-          </h4>
+        {/* Grid: AI Forge / Raw Code vs Proposal Inspector */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.5rem' }}>
+        {/* Left Column: Tool Authoring Form */}
+        <form onSubmit={handleOnboardSubmit} className="hud-panel" style={{ gridColumn: 'span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #1e2c45', paddingBottom: '0.5rem' }}>
+            <h4 className="font-title" style={{ fontSize: '0.85rem', color: '#00f0ff', letterSpacing: '0.05em', textTransform: 'uppercase', margin: 0 }}>
+              1. ONBOARD NEW TACTICAL MODULE
+            </h4>
+          </div>
 
           <div>
             <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
