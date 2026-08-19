@@ -14,8 +14,58 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
   const [rawJsonStr, setRawJsonStr] = useState('{}');
   const [jsonError, setJsonError] = useState<string | null>(null);
 
+  // Helper to generate sample arguments dictionary from schema
+  const generateSampleArgs = React.useCallback(() => {
+    const args: Record<string, any> = {};
+    Object.entries(properties).forEach(([key, prop]: [string, any]) => {
+      if (prop.default !== undefined) {
+        args[key] = prop.default;
+      } else if (prop.enum && prop.enum.length > 0) {
+        args[key] = prop.enum[0];
+      } else if (prop.type === 'number' || prop.type === 'integer') {
+        args[key] = key === 'a' ? 1 : key === 'b' ? 2 : 10;
+      } else if (prop.type === 'boolean') {
+        args[key] = true;
+      } else if (prop.type === 'array') {
+        args[key] = ["sample_item"];
+      } else {
+        args[key] = `sample_${key}`;
+      }
+    });
+    return args;
+  }, [schema]);
+
+  // Pre-fill form data and raw JSON on schema change
+  React.useEffect(() => {
+    const samples = generateSampleArgs();
+    setFormData(samples);
+    setRawJsonStr(JSON.stringify({ arguments: samples }, null, 2));
+  }, [schema, generateSampleArgs]);
+
   const handleChange = (key: string, value: any) => {
-    setFormData(prev => ({ ...prev, [key]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [key]: value };
+      setRawJsonStr(JSON.stringify({ arguments: updated }, null, 2));
+      return updated;
+    });
+  };
+
+  const handleRawJsonToggle = () => {
+    if (!rawJsonMode) {
+      // Switching to Raw JSON mode -> sync current formData into {"arguments": formData}
+      const currentArgs = Object.keys(formData).length > 0 ? formData : generateSampleArgs();
+      setRawJsonStr(JSON.stringify({ arguments: currentArgs }, null, 2));
+    } else {
+      // Switching back to Form Controls -> attempt parsing arguments from raw JSON
+      try {
+        const parsed = JSON.parse(rawJsonStr);
+        const args = parsed.arguments || parsed;
+        if (typeof args === 'object' && args !== null) {
+          setFormData(args);
+        }
+      } catch (e) {}
+    }
+    setRawJsonMode(!rawJsonMode);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -24,7 +74,11 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
       try {
         const parsed = JSON.parse(rawJsonStr);
         setJsonError(null);
-        onSubmit(parsed);
+        // Extract arguments if wrapped in {"arguments": ...}
+        const finalArgs = (parsed && typeof parsed === 'object' && 'arguments' in parsed)
+          ? parsed.arguments
+          : parsed;
+        onSubmit(finalArgs);
       } catch (err: any) {
         setJsonError('Invalid JSON format: ' + err.message);
       }
@@ -52,30 +106,15 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid #1e293b' }}>
         <h4 style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.05em', color: '#22d3ee', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', margin: 0 }}>
-          TOOL PARAMETER INPUTS
+          TOOL PARAMETER INPUTS {rawJsonMode ? '(RAW JSON PAYLOAD)' : '(FORM CONTROLS)'}
         </h4>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button
             type="button"
             onClick={() => {
-              const sample: Record<string, any> = {};
-              Object.entries(properties).forEach(([key, prop]: [string, any]) => {
-                if (prop.default !== undefined) {
-                  sample[key] = prop.default;
-                } else if (prop.enum && prop.enum.length > 0) {
-                  sample[key] = prop.enum[0];
-                } else if (prop.type === 'number' || prop.type === 'integer') {
-                  sample[key] = key === 'a' ? 1 : key === 'b' ? 2 : 10;
-                } else if (prop.type === 'boolean') {
-                  sample[key] = true;
-                } else if (prop.type === 'array') {
-                  sample[key] = ["sample_item"];
-                } else {
-                  sample[key] = `sample_${key}`;
-                }
-              });
-              setFormData(sample);
-              setRawJsonStr(JSON.stringify(sample, null, 2));
+              const samples = generateSampleArgs();
+              setFormData(samples);
+              setRawJsonStr(JSON.stringify({ arguments: samples }, null, 2));
             }}
             style={{ fontSize: '11px', color: '#34d399', textDecoration: 'none', fontFamily: 'var(--font-mono)', background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.3)', borderRadius: '0.25rem', padding: '0.15rem 0.5rem', cursor: 'pointer' }}
           >
@@ -83,7 +122,7 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
           </button>
           <button
             type="button"
-            onClick={() => setRawJsonMode(!rawJsonMode)}
+            onClick={handleRawJsonToggle}
             style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'underline', fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >
             {rawJsonMode ? 'Switch to Form Controls' : 'Switch to Raw JSON'}
@@ -93,12 +132,15 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
 
       {rawJsonMode ? (
         <div>
+          <div className="font-mono" style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: '0.25rem' }}>
+            Auto-formatted POST body: <code style={{ color: '#00f0ff' }}>{'{ "arguments": { ... } }'}</code>
+          </div>
           <textarea
             value={rawJsonStr}
             onChange={e => setRawJsonStr(e.target.value)}
             rows={8}
             style={{ ...inputStyle, minHeight: '8rem', color: '#34d399' }}
-            placeholder="{ 'param1': 'value' }"
+            placeholder='{\n  "arguments": {\n    "param1": "value"\n  }\n}'
           />
           {jsonError && <p style={{ fontSize: '0.75rem', color: '#fb7185', marginTop: '0.25rem', fontFamily: 'var(--font-mono)', margin: '0.25rem 0 0 0' }}>{jsonError}</p>}
         </div>
