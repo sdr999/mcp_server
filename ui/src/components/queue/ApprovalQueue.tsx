@@ -64,18 +64,18 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
   };
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
-      <div className="hud-panel p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400">
-            <Clock className="w-5 h-5 animate-pulse" />
+      <div className="hud-panel" style={{ padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.3)', color: '#fb7185' }}>
+            <Clock style={{ width: '1.25rem', height: '1.25rem' }} />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white tracking-wider flex items-center gap-2">
+            <h3 className="font-title" style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.05em', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               GRAND COUNCIL REVIEW (PENDING APPROVAL QUEUE)
             </h3>
-            <p className="text-xs text-slate-400 font-mono">
+            <p className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.25rem' }}>
               REVIEW & APPROVE UNVETTED TOOL PROPOSALS (/admin/tools/pending)
             </p>
           </div>
@@ -84,30 +84,31 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
         <button
           onClick={fetchPending}
           disabled={loading}
-          className="btn-neon-cyan text-xs py-1.5 px-3 flex items-center gap-2"
+          className="btn-neon-cyan font-mono"
+          style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw style={{ width: '0.875rem', height: '0.875rem' }} />
           <span>REFRESH QUEUE</span>
         </button>
       </div>
 
       {statusMsg && (
-        <div className="p-3 rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
+        <div className="font-mono" style={{ padding: '0.75rem', borderRadius: '0.25rem', backgroundColor: 'rgba(8, 51, 68, 0.6)', border: '1px solid rgba(6, 182, 212, 0.4)', color: '#67e8f9', fontSize: '0.75rem' }}>
           {statusMsg}
         </div>
       )}
 
       {/* Grid: Pending List vs Detail Review */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1.5rem' }}>
         {/* Left Column: Pending Tool Cards */}
-        <div className="lg:col-span-5 space-y-3 max-h-[600px] overflow-y-auto">
+        <div style={{ gridColumn: 'span 5', display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '600px', overflowY: 'auto' }}>
           {loading ? (
-            <div className="text-center py-12 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.75rem' }}>
               Fetching pending approvals...
             </div>
           ) : pendingTools.length === 0 ? (
-            <div className="hud-panel p-8 text-center text-slate-400 font-mono text-xs">
-              <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+            <div className="hud-panel font-mono" style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem' }}>
+              <CheckCircle2 style={{ width: '2rem', height: '2rem', color: '#34d399', margin: '0 auto 0.5rem auto' }} />
               Approval queue is empty. All proposed tools are reviewed!
             </div>
           ) : (
@@ -118,22 +119,26 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                 <div
                   key={t.name}
                   onClick={() => setSelectedPending(t)}
-                  className={`hud-panel p-4 cursor-pointer transition-all ${
-                    isSelected
-                      ? 'border-amber-400 bg-amber-950/30 shadow-[0_0_15px_rgba(255,215,0,0.2)]'
-                      : 'hover:border-slate-700'
-                  }`}
+                  className="hud-panel"
+                  style={{
+                    padding: '1rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    border: isSelected ? '1px solid #fbbf24' : '1px solid transparent',
+                    backgroundColor: isSelected ? 'rgba(69, 26, 3, 0.3)' : undefined,
+                    boxShadow: isSelected ? '0 0 15px rgba(255,215,0,0.2)' : undefined
+                  }}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <h4 className="text-sm font-bold text-white font-mono flex items-center gap-2">
-                      <Code className="w-4 h-4 text-amber-400" />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                    <h4 className="font-mono" style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                      <Code style={{ width: '1rem', height: '1rem', color: '#fbbf24' }} />
                       {t.name}
                     </h4>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    <span className="font-mono" style={{ fontSize: '0.625rem', padding: '0.125rem 0.5rem', borderRadius: '0.25rem', backgroundColor: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
                       PENDING REVIEW
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 line-clamp-2">
+                  <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.25rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                     {t.description || 'AI Generated Tool Proposal awaiting council audit.'}
                   </p>
                 </div>
@@ -143,50 +148,52 @@ export const ApprovalQueue: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
         </div>
 
         {/* Right Column: Code Review & Approve/Reject Decision Box */}
-        <div className="lg:col-span-7 hud-panel p-6 space-y-5">
+        <div className="hud-panel" style={{ gridColumn: 'span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {selectedPending ? (
             <>
-              <div className="border-b border-slate-800 pb-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-white font-mono flex items-center gap-2">
-                    <ShieldAlert className="w-5 h-5 text-amber-400" />
+              <div style={{ borderBottom: '1px solid #1e293b', paddingBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <h3 className="font-mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                    <ShieldAlert style={{ width: '1.25rem', height: '1.25rem', color: '#fbbf24' }} />
                     {selectedPending.name}
                   </h3>
-                  <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 px-2 py-1 rounded">
+                  <span className="font-mono" style={{ fontSize: '0.75rem', color: '#22d3ee', backgroundColor: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.3)', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
                     AUTHOR: {selectedPending.author || 'AI Generator'}
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 mt-1">
+                <p style={{ fontSize: '0.75rem', color: '#cbd5e1', margin: 0, marginTop: '0.25rem' }}>
                   {selectedPending.description || 'Review the generated source code for security compliance before approving.'}
                 </p>
               </div>
 
               <div>
-                <span className="text-xs font-mono text-slate-400 block mb-1">SOURCE CODE INSPECTION:</span>
-                <pre className="w-full bg-slate-950 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-400 overflow-auto max-h-64">
+                <span className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '0.25rem' }}>SOURCE CODE INSPECTION:</span>
+                <pre className="font-mono" style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', overflow: 'auto', maxHeight: '16rem', margin: 0 }}>
                   {selectedPending.code || selectedPending.source_code || JSON.stringify(selectedPending, null, 2)}
                 </pre>
               </div>
 
-              <div className="flex items-center gap-4 pt-2">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', paddingTop: '0.5rem' }}>
                 <button
                   onClick={() => handleApprove(selectedPending.name)}
                   disabled={actionLoading}
-                  className="flex-1 btn-neon-cyan justify-center py-2.5 text-xs tracking-wider"
+                  className="btn-neon-cyan"
+                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem', letterSpacing: '0.05em' }}
                 >
-                  <CheckCircle2 className="w-4 h-4" /> APPROVE & FORGE SPELL (+300 EXP)
+                  <CheckCircle2 style={{ width: '1rem', height: '1rem' }} /> APPROVE & FORGE SPELL (+300 EXP)
                 </button>
                 <button
                   onClick={() => handleReject(selectedPending.name)}
                   disabled={actionLoading}
-                  className="flex-1 btn-neon-magenta justify-center py-2.5 text-xs tracking-wider"
+                  className="btn-neon-magenta"
+                  style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 0', fontSize: '0.75rem', letterSpacing: '0.05em' }}
                 >
-                  <XCircle className="w-4 h-4" /> REJECT & DISCARD PROPOSAL
+                  <XCircle style={{ width: '1rem', height: '1rem' }} /> REJECT & DISCARD PROPOSAL
                 </button>
               </div>
             </>
           ) : (
-            <div className="text-center py-20 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{ textAlign: 'center', padding: '5rem 0', color: '#64748b', fontSize: '0.75rem' }}>
               Select a pending proposal from the left queue to inspect source code and vote.
             </div>
           )}

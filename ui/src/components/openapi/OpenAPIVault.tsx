@@ -74,18 +74,18 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
   };
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
-      <div className="hud-panel p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-            <ScrollText className="w-5 h-5" />
+      <div className="hud-panel" style={{ padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.3)', color: '#22d3ee' }}>
+            <ScrollText style={{ width: '1.25rem', height: '1.25rem' }} />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white tracking-wider">
+            <h3 className="font-title" style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.05em', margin: 0 }}>
               OPENAPI SPECIFICATIONS VAULT
             </h3>
-            <p className="text-xs text-slate-400 font-mono">
+            <p className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0, marginTop: '0.25rem' }}>
               INGEST OPENAPI / SWAGGER SPECS & AUTO-GENERATE MCP TOOLS (/admin/openapi/*)
             </p>
           </div>
@@ -94,33 +94,30 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
         <button
           onClick={fetchSpecs}
           disabled={loading}
-          className="btn-neon-cyan text-xs py-1.5 px-3 flex items-center gap-2"
+          className="btn-neon-cyan font-mono"
+          style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw style={{ width: '0.875rem', height: '0.875rem' }} />
           <span>REFRESH SPECS</span>
         </button>
       </div>
 
       {statusMsg && (
-        <div className={`p-4 rounded-lg border text-xs font-mono flex items-center gap-2 ${
-          statusMsg.type === 'success'
-            ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
-            : 'bg-rose-500/10 border-rose-500/40 text-rose-400'
-        }`}>
-          {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+        <div className="font-mono" style={{ padding: '1rem', borderRadius: '0.5rem', border: '1px solid', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: statusMsg.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', borderColor: statusMsg.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)', color: statusMsg.type === 'success' ? '#34d399' : '#fb7185' }}>
+          {statusMsg.type === 'success' ? <CheckCircle2 style={{ width: '1rem', height: '1rem' }} /> : <AlertTriangle style={{ width: '1rem', height: '1rem' }} />}
           <span>{statusMsg.text}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
         {/* Register Form */}
-        <form onSubmit={handleRegister} className="hud-panel p-6 space-y-4">
-          <h4 className="text-xs font-mono font-bold text-cyan-400 tracking-wider uppercase border-b border-slate-800 pb-2">
+        <form onSubmit={handleRegister} className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#22d3ee', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
             REGISTER NEW OPENAPI SPECIFICATION
           </h4>
 
           <div>
-            <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+            <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
               COLLECTION ID
             </label>
             <input
@@ -129,12 +126,13 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
               value={collectionId}
               onChange={e => setCollectionId(e.target.value)}
               placeholder="e.g. petstore_api"
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+              className="font-mono"
+              style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem 0.75rem', fontSize: '0.75rem', color: '#ffffff', outline: 'none' }}
             />
           </div>
 
           <div>
-            <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+            <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
               OPENAPI SPEC URL (OPTION 1)
             </label>
             <input
@@ -142,12 +140,13 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
               value={specUrl}
               onChange={e => setSpecUrl(e.target.value)}
               placeholder="https://petstore.swagger.io/v2/swagger.json"
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+              className="font-mono"
+              style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.5rem 0.75rem', fontSize: '0.75rem', color: '#ffffff', outline: 'none' }}
             />
           </div>
 
           <div>
-            <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+            <label className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '0.25rem' }}>
               RAW OPENAPI JSON PAYLOAD (OPTION 2)
             </label>
             <textarea
@@ -155,53 +154,55 @@ export const OpenAPIVault: React.FC<{ onExpGain?: (xp: number) => void }> = ({ o
               onChange={e => setSpecContent(e.target.value)}
               rows={6}
               placeholder="{ 'openapi': '3.0.0', 'info': { ... } }"
-              className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-xs text-emerald-400 font-mono focus:outline-none focus:border-cyan-400"
+              className="font-mono"
+              style={{ width: '100%', boxSizing: 'border-box', backgroundColor: '#020617', border: '1px solid #334155', borderRadius: '0.25rem', padding: '0.75rem', fontSize: '0.75rem', color: '#34d399', outline: 'none' }}
             />
           </div>
 
           <button
             type="submit"
             disabled={actionLoading}
-            className="w-full btn-neon-cyan justify-center py-3 text-xs tracking-widest"
+            className="btn-neon-cyan"
+            style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.75rem 0', fontSize: '0.75rem', letterSpacing: '0.1em' }}
           >
             {actionLoading ? 'REGISTERING SPEC...' : 'REGISTER & AUTO-GENERATE SPELLS ⚡ (+200 EXP)'}
           </button>
         </form>
 
         {/* Active Collections List */}
-        <div className="hud-panel p-6 space-y-4">
-          <h4 className="text-xs font-mono font-bold text-emerald-400 tracking-wider uppercase border-b border-slate-800 pb-2">
+        <div className="hud-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <h4 className="font-mono" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#34d399', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem', margin: 0 }}>
             ACTIVE OPENAPI COLLECTIONS ({specs.length})
           </h4>
 
           {loading ? (
-            <div className="text-center py-12 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.75rem' }}>
               Loading collections...
             </div>
           ) : specs.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{ textAlign: 'center', padding: '3rem 0', color: '#64748b', fontSize: '0.75rem' }}>
               No registered OpenAPI spec collections.
             </div>
           ) : (
-            <div className="space-y-3 max-h-[500px] overflow-y-auto">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '500px', overflowY: 'auto' }}>
               {specs.map(spec => (
-                <div key={spec.collection_id || spec.id} className="p-4 rounded bg-slate-900 border border-slate-800 flex items-center justify-between">
+                <div key={spec.collection_id || spec.id} style={{ padding: '1rem', borderRadius: '0.25rem', backgroundColor: '#0f172a', border: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div>
-                    <div className="text-sm font-bold text-white font-mono flex items-center gap-2">
-                      <FileCode className="w-4 h-4 text-cyan-400" />
+                    <div className="font-mono" style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                      <FileCode style={{ width: '1rem', height: '1rem', color: '#22d3ee' }} />
                       {spec.collection_id || spec.id}
                     </div>
-                    <div className="text-xs text-slate-400 font-mono mt-0.5">
+                    <div className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.125rem' }}>
                       Endpoints: {spec.endpoints_count || spec.tools_count || 'Auto-generated'}
                     </div>
                   </div>
 
                   <button
                     onClick={() => handleRemove(spec.collection_id || spec.id)}
-                    className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition-all"
+                    style={{ padding: '0.5rem', borderRadius: '0.25rem', backgroundColor: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.3)', color: '#fb7185', cursor: 'pointer', transition: 'all 0.2s' }}
                     title="Remove Collection"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 style={{ width: '1rem', height: '1rem' }} />
                   </button>
                 </div>
               ))}

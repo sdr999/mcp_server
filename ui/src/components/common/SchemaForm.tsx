@@ -35,16 +35,29 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
 
   const propertyKeys = Object.keys(properties);
 
+  const inputStyle = {
+    width: '100%',
+    backgroundColor: '#0f172a',
+    border: '1px solid #334155',
+    borderRadius: '0.25rem',
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.75rem',
+    color: '#ffffff',
+    outline: 'none',
+    fontFamily: 'var(--font-mono)',
+    boxSizing: 'border-box' as const
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-        <h4 className="text-xs font-mono font-bold tracking-wider text-cyan-400 uppercase">
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid #1e293b' }}>
+        <h4 style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.05em', color: '#22d3ee', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', margin: 0 }}>
           TOOL PARAMETER INPUTS
         </h4>
         <button
           type="button"
           onClick={() => setRawJsonMode(!rawJsonMode)}
-          className="text-[11px] font-mono text-slate-400 hover:text-cyan-400 underline"
+          style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'underline', fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
         >
           {rawJsonMode ? 'Switch to Form Controls' : 'Switch to Raw JSON'}
         </button>
@@ -56,40 +69,40 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
             value={rawJsonStr}
             onChange={e => setRawJsonStr(e.target.value)}
             rows={8}
-            className="w-full bg-slate-950 border border-slate-700 rounded p-3 font-mono text-xs text-emerald-400 focus:outline-none focus:border-cyan-400"
+            style={{ ...inputStyle, minHeight: '8rem', color: '#34d399' }}
             placeholder="{ 'param1': 'value' }"
           />
-          {jsonError && <p className="text-xs text-rose-400 font-mono mt-1">{jsonError}</p>}
+          {jsonError && <p style={{ fontSize: '0.75rem', color: '#fb7185', marginTop: '0.25rem', fontFamily: 'var(--font-mono)', margin: '0.25rem 0 0 0' }}>{jsonError}</p>}
         </div>
       ) : propertyKeys.length === 0 ? (
-        <div className="text-xs text-slate-400 font-mono italic py-2">
+        <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '0.5rem 0', fontFamily: 'var(--font-mono)' }}>
           No parameters required for this tool.
         </div>
       ) : (
-        <div className="space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {propertyKeys.map(key => {
             const prop = properties[key];
             const isRequired = requiredFields.includes(key);
             const propType = prop.type || 'string';
 
             return (
-              <div key={key} className="space-y-1">
-                <label className="text-xs font-mono font-bold text-slate-300 flex items-center justify-between">
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'var(--font-mono)' }}>
                   <span>
-                    {key} {isRequired && <span className="text-rose-400">*</span>}
+                    {key} {isRequired && <span style={{ color: '#fb7185' }}>*</span>}
                   </span>
-                  <span className="text-[10px] text-slate-500 font-normal">({propType})</span>
+                  <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 400 }}>({propType})</span>
                 </label>
 
                 {prop.description && (
-                  <p className="text-[11px] text-slate-400">{prop.description}</p>
+                  <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0 }}>{prop.description}</p>
                 )}
 
                 {propType === 'boolean' ? (
                   <select
                     value={formData[key] ? 'true' : 'false'}
                     onChange={e => handleChange(key, e.target.value === 'true')}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                    style={inputStyle}
                   >
                     <option value="false">false</option>
                     <option value="true">true</option>
@@ -100,14 +113,14 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
                     value={formData[key] ?? ''}
                     onChange={e => handleChange(key, parseFloat(e.target.value))}
                     required={isRequired}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                    style={inputStyle}
                   />
                 ) : prop.enum ? (
                   <select
                     value={formData[key] || ''}
                     onChange={e => handleChange(key, e.target.value)}
                     required={isRequired}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                    style={inputStyle}
                   >
                     <option value="">Select an option...</option>
                     {prop.enum.map((opt: string) => (
@@ -123,7 +136,7 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
                     onChange={e => handleChange(key, e.target.value)}
                     required={isRequired}
                     placeholder={`Enter ${key}...`}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                    style={inputStyle}
                   />
                 )}
               </div>
@@ -135,7 +148,8 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
       <button
         type="submit"
         disabled={loading}
-        className="w-full btn-neon-cyan justify-center py-2.5 mt-2 text-xs tracking-widest"
+        className="btn-neon-cyan"
+        style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '0.625rem 0', marginTop: '0.5rem', fontSize: '0.75rem', letterSpacing: '0.1em' }}
       >
         {loading ? 'CASTING SPELL (EXECUTING)...' : 'EXECUTE TOOL CALL ⚡'}
       </button>

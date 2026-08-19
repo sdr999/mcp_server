@@ -84,18 +84,18 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
   };
 
   return (
-    <div className="space-y-6">
+    <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
       {/* Header */}
-      <div className="hud-panel p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-            <Globe2 className="w-5 h-5" />
+      <div className="hud-panel" style={{padding: '1.0rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
+        <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+          <div style={{padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid #1e293b', borderColor: 'rgba(16, 185, 129, 0.3)', color: '#34d399'}}>
+            <Globe2 style={{width: '1.25rem', height: '1.25rem'}} />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white tracking-wider">
+            <h3 style={{fontSize: '1rem', fontWeight: '700', color: '#ffffff', letterSpacing: '0.05em'}}>
               REALM GATEWAYS (FEDERATED MCP SERVERS)
             </h3>
-            <p className="text-xs text-slate-400 font-mono">
+            <p className="font-mono" style={{fontSize: '0.75rem', color: '#94a3b8'}}>
               FEDERATED REMOTE UPSTREAM NODES & PROXY CALL PIPELINES (/mcp/upstreams*)
             </p>
           </div>
@@ -104,7 +104,7 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
         <button
           onClick={fetchUpstreams}
           disabled={loading}
-          className="btn-neon-cyan text-xs py-1.5 px-3 flex items-center gap-2"
+          className="btn-neon-cyan" style={{fontSize: '0.75rem', paddingTop: '0.375rem', paddingBottom: '0.375rem', paddingLeft: '0.75rem', paddingRight: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           <span>REFRESH GATEWAYS</span>
@@ -112,22 +112,22 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
       </div>
 
       {statusMsg && (
-        <div className="p-3 rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
+        <div className="font-mono" style={{padding: '0.75rem', borderRadius: '0.25rem', backgroundColor: 'rgba(8, 51, 68, 0.6)', border: '1px solid #1e293b', borderColor: 'rgba(6, 182, 212, 0.4)', color: '#67e8f9', fontSize: '0.75rem'}}>
           {statusMsg}
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div style={{display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: '1.5rem'}}>
         {/* Left Column: Register Form & Node List */}
-        <div className="lg:col-span-5 space-y-6">
+        <div style={{gridColumn: 'span 5 / span 5', display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
           {/* Form */}
-          <form onSubmit={handleAddUpstream} className="hud-panel p-5 space-y-3">
-            <h4 className="text-xs font-mono font-bold text-emerald-400 tracking-wider uppercase border-b border-slate-800 pb-2">
+          <form onSubmit={handleAddUpstream} className="hud-panel" style={{padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
+            <h4 className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#34d399', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.5rem'}}>
               JOIN REMOTE MCP SERVER NODE
             </h4>
 
             <div>
-              <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+              <label className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', display: 'block', marginBottom: '0.25rem'}}>
                 NODE NAME
               </label>
               <input
@@ -136,12 +136,12 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
                 value={serverName}
                 onChange={e => setServerName(e.target.value)}
                 placeholder="e.g. calculator_upstream"
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                className="font-mono" style={{width: '100%', backgroundColor: '#020617', border: '1px solid #1e293b', borderColor: '#334155', borderRadius: '0.25rem', paddingLeft: '0.75rem', paddingRight: '0.75rem', paddingTop: '0.5rem', paddingBottom: '0.5rem', fontSize: '0.75rem', color: '#ffffff'}}
               />
             </div>
 
             <div>
-              <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+              <label className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', display: 'block', marginBottom: '0.25rem'}}>
                 REMOTE SSE / HTTP URL
               </label>
               <input
@@ -150,31 +150,31 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
                 value={serverUrl}
                 onChange={e => setServerUrl(e.target.value)}
                 placeholder="http://remote-mcp.internal:8000/sse"
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                className="font-mono" style={{width: '100%', backgroundColor: '#020617', border: '1px solid #1e293b', borderColor: '#334155', borderRadius: '0.25rem', paddingLeft: '0.75rem', paddingRight: '0.75rem', paddingTop: '0.5rem', paddingBottom: '0.5rem', fontSize: '0.75rem', color: '#ffffff'}}
               />
             </div>
 
             <button
               type="submit"
               disabled={actionLoading}
-              className="w-full btn-neon-cyan justify-center py-2.5 text-xs tracking-widest"
+              className="btn-neon-cyan" style={{width: '100%', justifyContent: 'center', paddingTop: '0.625rem', paddingBottom: '0.625rem', fontSize: '0.75rem', letterSpacing: '0.1em'}}
             >
               {actionLoading ? 'CONNECTING NODE...' : 'JOIN FEDERATION GATEWAY ⚡ (+250 EXP)'}
             </button>
           </form>
 
           {/* Node List */}
-          <div className="hud-panel p-5 space-y-3">
-            <h4 className="text-xs font-mono font-bold text-cyan-400 tracking-wider uppercase border-b border-slate-800 pb-2">
+          <div className="hud-panel" style={{padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
+            <h4 className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#22d3ee', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.5rem'}}>
               ACTIVE FEDERATION NODES ({upstreams.length})
             </h4>
 
             {loading ? (
-              <div className="text-center py-8 text-slate-500 font-mono text-xs">
+              <div className="font-mono" style={{textAlign: 'center', paddingTop: '2.0rem', paddingBottom: '2.0rem', color: '#64748b', fontSize: '0.75rem'}}>
                 Loading upstream gateways...
               </div>
             ) : upstreams.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 font-mono text-xs">
+              <div className="font-mono" style={{textAlign: 'center', paddingTop: '2.0rem', paddingBottom: '2.0rem', color: '#64748b', fontSize: '0.75rem'}}>
                 No active upstream nodes connected.
               </div>
             ) : (
@@ -193,11 +193,11 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
                     }`}
                   >
                     <div>
-                      <div className="text-xs font-bold text-white font-mono flex items-center gap-2">
-                        <Server className="w-3.5 h-3.5 text-emerald-400" />
+                      <div className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                        <Server style={{width: '0.875rem', height: '0.875rem', color: '#34d399'}} />
                         {name}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                      <div className="font-mono" style={{fontSize: '10px', color: '#94a3b8', marginTop: '0.125rem'}}>
                         {up.url || 'http://localhost:8000/sse'}
                       </div>
                     </div>
@@ -207,9 +207,9 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
                         e.stopPropagation();
                         handleRemoveUpstream(name);
                       }}
-                      className="p-1.5 rounded text-slate-500 hover:text-rose-400"
+                      style={{padding: '0.375rem', borderRadius: '0.25rem', color: '#64748b'}}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 style={{width: '1rem', height: '1rem'}} />
                     </button>
                   </div>
                 );
@@ -219,31 +219,31 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
         </div>
 
         {/* Right Column: Node Details & Remote Tool Inspection */}
-        <div className="lg:col-span-7 hud-panel p-6 space-y-4">
-          <h4 className="text-xs font-mono font-bold text-emerald-400 tracking-wider uppercase border-b border-slate-800 pb-2">
+        <div className="hud-panel" style={{gridColumn: 'span 7 / span 7', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+          <h4 className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#34d399', letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.5rem'}}>
             REMOTE NODE TOOL CATALOG & PROXY EXECUTOR
           </h4>
 
           {selectedServer ? (
-            <div className="space-y-4">
+            <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
               <div>
-                <span className="text-xs font-mono text-slate-400">FEDERATED NODE NAME:</span>
-                <p className="text-base font-black text-white font-mono">{selectedServer.name || selectedServer.server_name}</p>
+                <span className="font-mono" style={{fontSize: '0.75rem', color: '#94a3b8'}}>FEDERATED NODE NAME:</span>
+                <p className="font-mono" style={{fontSize: '1rem', fontWeight: '900', color: '#ffffff'}}>{selectedServer.name || selectedServer.server_name}</p>
               </div>
 
               <div>
-                <span className="text-xs font-mono text-slate-400">REMOTE TOOLS EXPOSED:</span>
+                <span className="font-mono" style={{fontSize: '0.75rem', color: '#94a3b8'}}>REMOTE TOOLS EXPOSED:</span>
                 {serverTools.length === 0 ? (
-                  <p className="text-xs text-slate-500 font-mono italic mt-1">No tools reported by remote node.</p>
+                  <p className="font-mono" style={{fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic', marginTop: '0.25rem'}}>No tools reported by remote node.</p>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(1, minmax(0, 1fr))', gap: '0.5rem', marginTop: '0.5rem'}}>
                     {serverTools.map(t => (
-                      <div key={t.name} className="p-3 rounded bg-slate-900 border border-slate-800">
-                        <div className="text-xs font-bold text-cyan-400 font-mono flex items-center gap-1.5">
-                          <Cpu className="w-3.5 h-3.5" />
+                      <div key={t.name} style={{padding: '0.75rem', borderRadius: '0.25rem', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderColor: '#1e293b'}}>
+                        <div className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#22d3ee', display: 'flex', alignItems: 'center', gap: '0.375rem'}}>
+                          <Cpu style={{width: '0.875rem', height: '0.875rem'}} />
                           {t.name}
                         </div>
-                        <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
+                        <div style={{fontSize: '11px', color: '#94a3b8', WebkitLineClamp: '1', display: '-webkit-box', WebkitBoxOrient: 'vertical', overflow: 'hidden', marginTop: '0.125rem'}}>
                           {t.description || 'Remote proxied tool.'}
                         </div>
                       </div>
@@ -253,7 +253,7 @@ export const FederationGateways: React.FC<{ onExpGain?: (xp: number) => void }> 
               </div>
             </div>
           ) : (
-            <div className="text-center py-20 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{textAlign: 'center', paddingTop: '5.0rem', paddingBottom: '5.0rem', color: '#64748b', fontSize: '0.75rem'}}>
               Select a federated gateway node on the left to inspect proxied tools.
             </div>
           )}

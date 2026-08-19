@@ -96,7 +96,14 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#07090e] text-slate-100 flex flex-col font-rajdhani">
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#07090e',
+      color: '#f1f5f9',
+      display: 'flex',
+      flexDirection: 'column',
+      fontFamily: 'var(--font-body)'
+    }}>
       {/* Top Navbar HUD */}
       <Navbar
         user={user}
@@ -107,14 +114,21 @@ export function App() {
       />
 
       {/* Main Layout: Sidebar + Main Content */}
-      <div className="flex-1 flex">
+      <div style={{ flex: 1, display: 'flex' }}>
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           pendingCount={pendingCount}
         />
 
-        <main className="flex-1 p-6 overflow-y-auto max-w-7xl mx-auto w-full">
+        <main style={{
+          flex: 1,
+          padding: '1.5rem',
+          overflowY: 'auto',
+          maxWidth: '80rem',
+          margin: '0 auto',
+          width: '100%'
+        }}>
           {activeTab === 'dashboard' && <SystemHUD />}
           {activeTab === 'firehose' && <NeuralFirehose />}
           {activeTab === 'spellbook' && <ToolSpellbook onExpGain={handleExpGain} />}

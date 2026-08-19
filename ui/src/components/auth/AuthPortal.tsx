@@ -44,80 +44,184 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#07090e] flex items-center justify-center p-4 relative overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-950/30 via-slate-950 to-black">
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: 'var(--bg-obsidian)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      position: 'relative',
+      overflow: 'hidden',
+      background: 'radial-gradient(ellipse at top, rgba(8,51,68,0.3), rgba(2,6,23,1), black)'
+    }}>
       {/* Background Neon Grid Accent */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#00f0ff08_1px,transparent_1px),linear-gradient(to_bottom,#00f0ff08_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none" />
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(to right, rgba(0,240,255,0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,240,255,0.05) 1px, transparent 1px)',
+        backgroundSize: '4rem 4rem',
+        pointerEvents: 'none'
+      }} />
 
-      <div className="w-full max-w-md hud-panel p-8 relative z-10 shadow-[0_0_50px_rgba(0,240,255,0.15)] border-cyan-500/40">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-cyan-950/60 border border-cyan-500/50 mb-4 shadow-[0_0_20px_rgba(0,240,255,0.4)]">
-            <Zap className="w-8 h-8 text-cyan-400 animate-pulse" />
+      <div className="hud-panel" style={{
+        width: '100%',
+        maxWidth: '28rem',
+        padding: '2rem',
+        position: 'relative',
+        zIndex: 10,
+        boxShadow: '0 0 50px rgba(0,240,255,0.15)',
+        borderColor: 'rgba(6,182,212,0.4)'
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '4rem',
+            height: '4rem',
+            borderRadius: '1rem',
+            backgroundColor: 'rgba(8,51,68,0.6)',
+            border: '1px solid rgba(6,182,212,0.5)',
+            marginBottom: '1rem',
+            boxShadow: '0 0 20px rgba(0,240,255,0.4)'
+          }}>
+            <Zap className="animate-pulse" style={{ width: '2rem', height: '2rem', color: '#22d3ee' }} />
           </div>
-          <h2 className="text-2xl font-black text-white tracking-widest uppercase">
+          <h2 className="font-title" style={{
+            fontSize: '1.5rem',
+            fontWeight: 900,
+            color: 'white',
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase'
+          }}>
             CITADEL ACCESS PORTAL
           </h2>
-          <p className="text-xs text-cyan-400 font-mono mt-1">
+          <p className="font-mono" style={{
+            fontSize: '0.75rem',
+            color: '#22d3ee',
+            marginTop: '0.25rem'
+          }}>
             SECURITY LEVEL 5 - BIOMETRIC AUTHENTICATION REQUIRED
           </p>
         </div>
 
         {error && (
-          <div className="mb-6 p-3 rounded bg-rose-500/10 border border-rose-500/40 text-rose-400 text-xs font-mono flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
+          <div className="font-mono" style={{
+            marginBottom: '1.5rem',
+            padding: '0.75rem',
+            borderRadius: '0.25rem',
+            backgroundColor: 'rgba(244,63,94,0.1)',
+            border: '1px solid rgba(244,63,94,0.4)',
+            color: '#fb7185',
+            fontSize: '0.75rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <AlertCircle style={{ width: '1rem', height: '1rem', flexShrink: 0 }} />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div>
-            <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+            <label className="font-mono" style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              color: '#cbd5e1',
+              display: 'block',
+              marginBottom: '0.25rem'
+            }}>
               COMMANDER USERNAME
             </label>
-            <div className="relative">
-              <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+            <div style={{ position: 'relative' }}>
+              <User style={{ width: '1rem', height: '1rem', color: '#64748b', position: 'absolute', left: '0.75rem', top: '0.75rem' }} />
               <input
                 type="text"
                 required
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="Enter username..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-400 font-mono"
+                className="font-mono"
+                style={{
+                  width: '100%',
+                  backgroundColor: '#020617',
+                  border: '1px solid #334155',
+                  borderRadius: '0.5rem',
+                  padding: '0.625rem 0.75rem 0.625rem 2.25rem',
+                  fontSize: '0.875rem',
+                  color: 'white',
+                  outline: 'none',
+                }}
               />
             </div>
           </div>
 
           {mode === 'signup' && (
             <div>
-              <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+              <label className="font-mono" style={{
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                color: '#cbd5e1',
+                display: 'block',
+                marginBottom: '0.25rem'
+              }}>
                 GUILD EMAIL ADDRESS
               </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+              <div style={{ position: 'relative' }}>
+                <Mail style={{ width: '1rem', height: '1rem', color: '#64748b', position: 'absolute', left: '0.75rem', top: '0.75rem' }} />
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="Enter email..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-400 font-mono"
+                  className="font-mono"
+                  style={{
+                    width: '100%',
+                    backgroundColor: '#020617',
+                    border: '1px solid #334155',
+                    borderRadius: '0.5rem',
+                    padding: '0.625rem 0.75rem 0.625rem 2.25rem',
+                    fontSize: '0.875rem',
+                    color: 'white',
+                    outline: 'none',
+                  }}
                 />
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-xs font-mono font-bold text-slate-300 block mb-1">
+            <label className="font-mono" style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              color: '#cbd5e1',
+              display: 'block',
+              marginBottom: '0.25rem'
+            }}>
               SECURITY KEY (PASSWORD)
             </label>
-            <div className="relative">
-              <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+            <div style={{ position: 'relative' }}>
+              <Lock style={{ width: '1rem', height: '1rem', color: '#64748b', position: 'absolute', left: '0.75rem', top: '0.75rem' }} />
               <input
                 type="password"
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••••••"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-400 font-mono"
+                className="font-mono"
+                style={{
+                  width: '100%',
+                  backgroundColor: '#020617',
+                  border: '1px solid #334155',
+                  borderRadius: '0.5rem',
+                  padding: '0.625rem 0.75rem 0.625rem 2.25rem',
+                  fontSize: '0.875rem',
+                  color: 'white',
+                  outline: 'none',
+                }}
               />
             </div>
           </div>
@@ -125,20 +229,37 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onLoginSuccess }) => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full btn-neon-cyan justify-center py-3 text-sm tracking-widest mt-2"
+            className="btn-neon-cyan font-title"
+            style={{
+              width: '100%',
+              justifyContent: 'center',
+              paddingTop: '0.75rem',
+              paddingBottom: '0.75rem',
+              fontSize: '0.875rem',
+              letterSpacing: '0.1em',
+              marginTop: '0.5rem'
+            }}
           >
             {loading ? 'AUTHENTICATING...' : mode === 'signin' ? 'ENTER CITADEL ⚡' : 'CREATE GUILD PROFILE 🛡️'}
           </button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
+        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #1e293b', textAlign: 'center' }}>
           <button
             type="button"
             onClick={() => {
               setMode(mode === 'signin' ? 'signup' : 'signin');
               setError(null);
             }}
-            className="text-xs font-mono text-cyan-400 hover:underline"
+            className="font-mono"
+            style={{
+              fontSize: '0.75rem',
+              color: '#22d3ee',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline'
+            }}
           >
             {mode === 'signin'
               ? "Don't have a Citadel clearance? Register new profile"

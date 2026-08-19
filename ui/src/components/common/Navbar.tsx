@@ -20,71 +20,172 @@ export const Navbar: React.FC<NavbarProps> = ({
   const expProgress = Math.min(Math.floor((userExp / nextLevelExp) * 100), 100);
 
   return (
-    <header className="hud-panel border-b border-cyan-500/30 px-6 py-3 flex items-center justify-between sticky top-0 z-50 bg-[#07090e]/90 backdrop-blur-md">
+    <header className="hud-panel" style={{
+      borderBottom: '1px solid rgba(0,240,255,0.3)',
+      padding: '0.75rem 1.5rem',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      position: 'sticky',
+      top: 0,
+      zIndex: 50,
+      backgroundColor: 'rgba(7,9,14,0.9)',
+      backdropFilter: 'blur(12px)'
+    }}>
       {/* Brand & Reactor Status */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-950/50 border border-cyan-500/50 shadow-[0_0_15px_rgba(0,240,255,0.3)]">
-          <Zap className="w-6 h-6 text-cyan-400 animate-pulse" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '2.5rem',
+          height: '2.5rem',
+          borderRadius: '0.5rem',
+          backgroundColor: 'rgba(8,51,68,0.5)',
+          border: '1px solid rgba(6,182,212,0.5)',
+          boxShadow: '0 0 15px rgba(0,240,255,0.3)'
+        }}>
+          <Zap className="animate-pulse" style={{ width: '1.5rem', height: '1.5rem', color: '#22d3ee' }} />
         </div>
         <div>
-          <h1 className="text-xl font-bold tracking-wider text-white flex items-center gap-2">
-            MCP CITADEL <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/40">v2.0</span>
+          <h1 className="font-title" style={{
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            color: 'white',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            MCP CITADEL 
+            <span style={{
+              fontSize: '0.75rem',
+              padding: '0.125rem 0.5rem',
+              borderRadius: '0.25rem',
+              backgroundColor: 'rgba(6,182,212,0.2)',
+              color: '#22d3ee',
+              border: '1px solid rgba(6,182,212,0.4)'
+            }}>v2.0</span>
           </h1>
-          <p className="text-xs text-slate-400 flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
+          <p style={{
+            fontSize: '0.75rem',
+            color: '#94a3b8',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <span className={sseConnected ? 'animate-ping' : ''} style={{
+              width: '0.5rem',
+              height: '0.5rem',
+              borderRadius: '9999px',
+              backgroundColor: sseConnected ? '#34d399' : '#f43f5e'
+            }} />
             {sseConnected ? 'NEURAL STREAM ACTIVE' : 'STREAM RECONNECTING'}
           </p>
         </div>
       </div>
 
       {/* Gamified Level & EXP Gauge */}
-      <div className="hidden md:flex items-center gap-6 bg-slate-900/60 px-5 py-2 rounded-lg border border-slate-800">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400">
-            <Flame className="w-5 h-5 animate-bounce" />
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '1.5rem',
+        backgroundColor: 'rgba(15,23,42,0.6)',
+        padding: '0.5rem 1.25rem',
+        borderRadius: '0.5rem',
+        border: '1px solid #1e293b'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{
+            padding: '0.375rem',
+            borderRadius: '0.25rem',
+            backgroundColor: 'rgba(245,158,11,0.1)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            color: '#fbbf24'
+          }}>
+            <Flame className="animate-bounce" style={{ width: '1.25rem', height: '1.25rem' }} />
           </div>
           <div>
-            <div className="text-xs text-slate-400 font-mono">COMMANDER LEVEL</div>
-            <div className="text-base font-black text-amber-400 font-mono tracking-wider">
-              LVL {userLevel} <span className="text-xs font-normal text-slate-400">({userExp} / {nextLevelExp} XP)</span>
+            <div className="font-mono" style={{ fontSize: '0.75rem', color: '#94a3b8' }}>COMMANDER LEVEL</div>
+            <div className="font-mono" style={{
+              fontSize: '1rem',
+              fontWeight: 900,
+              color: '#fbbf24',
+              letterSpacing: '0.05em'
+            }}>
+              LVL {userLevel} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#94a3b8' }}>({userExp} / {nextLevelExp} XP)</span>
             </div>
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="w-36">
+        <div style={{ width: '9rem' }}>
           <div className="xp-bar-outer">
             <div className="xp-bar-inner" style={{ width: `${expProgress}%` }} />
           </div>
-          <div className="text-[10px] text-cyan-400 font-mono text-right mt-0.5">{expProgress}% NEXT RANK</div>
+          <div className="font-mono" style={{
+            fontSize: '10px',
+            color: '#22d3ee',
+            textAlign: 'right',
+            marginTop: '0.125rem'
+          }}>{expProgress}% NEXT RANK</div>
         </div>
 
         {/* Fuel / API Rate Gauge */}
-        <div className="flex items-center gap-2 pl-4 border-l border-slate-800">
-          <Cpu className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs text-slate-300 font-mono">MANA: <strong className="text-emerald-400">100%</strong></span>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          paddingLeft: '1rem',
+          borderLeft: '1px solid #1e293b'
+        }}>
+          <Cpu style={{ width: '1rem', height: '1rem', color: '#22d3ee' }} />
+          <span className="font-mono" style={{ fontSize: '0.75rem', color: '#cbd5e1' }}>
+            MANA: <strong style={{ color: '#34d399' }}>100%</strong>
+          </span>
         </div>
       </div>
 
       {/* User Profile & Actions */}
-      <div className="flex items-center gap-4">
-        <div className="text-right hidden sm:block">
-          <div className="text-sm font-bold text-white flex items-center gap-1 justify-end">
-            <Shield className="w-3.5 h-3.5 text-amber-400" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{
+            fontSize: '0.875rem',
+            fontWeight: 700,
+            color: 'white',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.25rem',
+            justifyContent: 'flex-end'
+          }}>
+            <Shield style={{ width: '0.875rem', height: '0.875rem', color: '#fbbf24' }} />
             {user?.sub || user?.username || 'Commander'}
           </div>
-          <div className="text-xs text-cyan-400 font-mono uppercase tracking-wider">
+          <div className="font-mono" style={{
+            fontSize: '0.75rem',
+            color: '#22d3ee',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>
             {user?.roles?.[0] || 'GUILD MASTER'}
           </div>
         </div>
 
         <button
           onClick={onLogout}
-          className="btn-neon-magenta text-xs py-1.5 px-3 flex items-center gap-1.5"
+          className="btn-neon-magenta"
+          style={{
+            fontSize: '0.75rem',
+            padding: '0.375rem 0.75rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.375rem'
+          }}
           title="Sign out of Citadel"
         >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline">EXIT</span>
+          <LogOut style={{ width: '1rem', height: '1rem' }} />
+          <span>EXIT</span>
         </button>
       </div>
     </header>

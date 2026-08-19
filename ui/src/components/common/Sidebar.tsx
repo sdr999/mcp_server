@@ -33,12 +33,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, pendi
   ];
 
   return (
-    <aside className="w-64 hud-panel h-[calc(100vh-65px)] sticky top-[65px] p-4 flex flex-col justify-between rounded-none border-t-0 border-l-0 border-b-0">
-      <div className="space-y-1">
-        <div className="px-3 py-2 text-[11px] font-mono font-bold tracking-widest text-slate-500 uppercase">
+    <aside className="hud-panel" style={{
+      width: '16rem',
+      height: 'calc(100vh - 65px)',
+      position: 'sticky',
+      top: '65px',
+      padding: '1rem',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      borderRadius: 0,
+      borderTop: 0,
+      borderLeft: 0,
+      borderBottom: 0
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        <div className="font-mono" style={{
+          padding: '0.5rem 0.75rem',
+          fontSize: '11px',
+          fontWeight: 700,
+          letterSpacing: '0.1em',
+          color: '#64748b',
+          textTransform: 'uppercase'
+        }}>
           COMMAND MODULES
         </div>
-        <nav className="space-y-1">
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           {navItems.map(item => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -47,25 +67,51 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, pendi
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-semibold tracking-wide transition-all ${
-                  isActive
-                    ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/40 shadow-[0_0_12px_rgba(0,240,255,0.2)] font-bold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.625rem 0.875rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  fontWeight: isActive ? 700 : 600,
+                  letterSpacing: '0.025em',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: isActive ? 'rgba(6,182,212,0.15)' : 'transparent',
+                  color: isActive ? '#22d3ee' : '#94a3b8',
+                  border: isActive ? '1px solid rgba(6,182,212,0.4)' : '1px solid transparent',
+                  boxShadow: isActive ? '0 0 12px rgba(0,240,255,0.2)' : 'none',
+                  cursor: 'pointer'
+                }}
               >
-                <div className="flex items-center gap-3">
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <Icon style={{ width: '1rem', height: '1rem', color: isActive ? '#22d3ee' : '#64748b' }} />
                   <span>{item.label}</span>
                 </div>
 
                 {item.badge && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <span className="font-mono" style={{
+                    fontSize: '10px',
+                    padding: '0.125rem 0.375rem',
+                    borderRadius: '0.25rem',
+                    backgroundColor: 'rgba(16,185,129,0.2)',
+                    color: '#34d399',
+                    border: '1px solid rgba(16,185,129,0.3)'
+                  }}>
                     {item.badge}
                   </span>
                 )}
 
                 {item.count !== undefined && item.count > 0 && (
-                  <span className="text-xs font-mono font-black px-2 py-0.5 rounded-full bg-rose-500 text-white animate-pulse">
+                  <span className="font-mono animate-pulse" style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 900,
+                    padding: '0.125rem 0.5rem',
+                    borderRadius: '9999px',
+                    backgroundColor: '#f43f5e',
+                    color: 'white'
+                  }}>
                     {item.count}
                   </span>
                 )}
@@ -75,11 +121,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, pendi
         </nav>
       </div>
 
-      <div className="pt-4 border-t border-slate-800 text-center">
-        <div className="text-[11px] text-slate-500 font-mono">
+      <div style={{
+        paddingTop: '1rem',
+        borderTop: '1px solid #1e293b',
+        textAlign: 'center'
+      }}>
+        <div className="font-mono" style={{ fontSize: '11px', color: '#64748b' }}>
           MCP CITADEL OS v2.0
         </div>
-        <div className="text-[10px] text-cyan-500/70 font-mono mt-0.5">
+        <div className="font-mono" style={{
+          fontSize: '10px',
+          color: 'rgba(6,182,212,0.7)',
+          marginTop: '0.125rem'
+        }}>
           ALL SYSTEMS OPERATIONAL
         </div>
       </div>

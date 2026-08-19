@@ -82,40 +82,40 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
   };
 
   return (
-    <div className="space-y-6">
+    <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
       {/* Header */}
-      <div className="hud-panel p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400">
-            <Swords className="w-5 h-5 animate-pulse" />
+      <div className="hud-panel" style={{padding: '1.0rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
+        <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+          <div style={{padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: 'rgba(244, 63, 94, 0.1)', border: '1px solid #1e293b', borderColor: 'rgba(244, 63, 94, 0.3)', color: '#fb7185'}}>
+            <Swords style={{width: '1.25rem', height: '1.25rem'}} />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white tracking-wider">
+            <h3 style={{fontSize: '1rem', fontWeight: '700', color: '#ffffff', letterSpacing: '0.05em'}}>
               BATTLE & CHAOS ARENA
             </h3>
-            <p className="text-xs text-slate-400 font-mono">
+            <p className="font-mono" style={{fontSize: '0.75rem', color: '#94a3b8'}}>
               ANALYTICAL LEADERBOARDS & CHAOS INJECTION TESTING (/admin/analytics/*, /admin/chaos*)
             </p>
           </div>
         </div>
 
-        <button onClick={fetchArenaData} className="btn-neon-cyan text-xs py-1.5 px-3">
+        <button onClick={fetchArenaData} className="btn-neon-cyan" style={{fontSize: '0.75rem', paddingTop: '0.375rem', paddingBottom: '0.375rem', paddingLeft: '0.75rem', paddingRight: '0.75rem'}}>
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
       {statusMsg && (
-        <div className="p-3 rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
+        <div className="font-mono" style={{padding: '0.75rem', borderRadius: '0.25rem', backgroundColor: 'rgba(8, 51, 68, 0.6)', border: '1px solid #1e293b', borderColor: 'rgba(6, 182, 212, 0.4)', color: '#67e8f9', fontSize: '0.75rem'}}>
           {statusMsg}
         </div>
       )}
 
       {/* Timeseries Graph */}
-      <div className="hud-panel p-5">
-        <h4 className="text-xs font-mono font-bold text-cyan-400 uppercase border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-          <BarChart2 className="w-4 h-4" /> LIVE TOOL CALL LATENCY & THROUGHPUT TIMESERIES
+      <div className="hud-panel" style={{padding: '1.25rem'}}>
+        <h4 className="font-mono" style={{fontSize: '0.75rem', fontWeight: '700', color: '#22d3ee', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.5rem', marginBottom: '1.0rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+          <BarChart2 style={{width: '1rem', height: '1rem'}} /> LIVE TOOL CALL LATENCY & THROUGHPUT TIMESERIES
         </h4>
-        <div className="h-64 w-full">
+        <div style={{height: '16rem', width: '100%'}}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={mockTimeseriesData}>
               <defs>
@@ -134,12 +134,12 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
       </div>
 
       {/* Grid: Chaos Injection vs Tool Leaderboard */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1.5rem'}}>
         {/* Chaos Injection Panel */}
-        <div className="hud-panel p-6 space-y-5 border-rose-500/40">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h4 className="text-sm font-bold text-rose-400 font-mono flex items-center gap-2">
-              <Zap className="w-4 h-4" /> CHAOS ENGINEERING EXPERIMENTAL CONTROLS
+        <div className="hud-panel" style={{padding: '1.5rem', borderColor: 'rgba(244, 63, 94, 0.4)'}}>
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.75rem'}}>
+            <h4 className="font-mono" style={{fontSize: '0.875rem', fontWeight: '700', color: '#fb7185', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+              <Zap style={{width: '1rem', height: '1rem'}} /> CHAOS ENGINEERING EXPERIMENTAL CONTROLS
             </h4>
 
             <button
@@ -150,9 +150,9 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
             </button>
           </div>
 
-          <form onSubmit={handleSaveChaosRules} className="space-y-4 font-mono text-xs">
+          <form onSubmit={handleSaveChaosRules} className="font-mono" style={{display: 'flex', flexDirection: 'column', gap: '1rem', fontSize: '0.75rem'}}>
             <div>
-              <label className="text-slate-300 block mb-1">LATENCY INJECTION: {latencyMs} ms</label>
+              <label style={{color: '#cbd5e1', display: 'block', marginBottom: '0.25rem'}}>LATENCY INJECTION: {latencyMs} ms</label>
               <input
                 type="range"
                 min="0"
@@ -160,12 +160,12 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
                 step="50"
                 value={latencyMs}
                 onChange={e => setLatencyMs(parseInt(e.target.value))}
-                className="w-full accent-rose-500"
+                style={{width: '100%'}}
               />
             </div>
 
             <div>
-              <label className="text-slate-300 block mb-1">SIMULATED ERROR RATE: {(errorRate * 100).toFixed(0)}%</label>
+              <label style={{color: '#cbd5e1', display: 'block', marginBottom: '0.25rem'}}>SIMULATED ERROR RATE: {(errorRate * 100).toFixed(0)}%</label>
               <input
                 type="range"
                 min="0"
@@ -173,12 +173,12 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
                 step="0.05"
                 value={errorRate}
                 onChange={e => setErrorRate(parseFloat(e.target.value))}
-                className="w-full accent-rose-500"
+                style={{width: '100%'}}
               />
             </div>
 
             <div>
-              <label className="text-slate-300 block mb-1">PACKET DROP RATE: {(dropRate * 100).toFixed(0)}%</label>
+              <label style={{color: '#cbd5e1', display: 'block', marginBottom: '0.25rem'}}>PACKET DROP RATE: {(dropRate * 100).toFixed(0)}%</label>
               <input
                 type="range"
                 min="0"
@@ -186,39 +186,39 @@ export const ChaosArena: React.FC<{ onExpGain?: (xp: number) => void }> = ({ onE
                 step="0.01"
                 value={dropRate}
                 onChange={e => setDropRate(parseFloat(e.target.value))}
-                className="w-full accent-rose-500"
+                style={{width: '100%'}}
               />
             </div>
 
-            <button type="submit" className="w-full btn-neon-magenta justify-center py-2.5 text-xs">
+            <button type="submit" className="btn-neon-magenta" style={{width: '100%', justifyContent: 'center', paddingTop: '0.625rem', paddingBottom: '0.625rem', fontSize: '0.75rem'}}>
               APPLY CHAOS RULES
             </button>
           </form>
         </div>
 
         {/* Leaderboard */}
-        <div className="hud-panel p-6 space-y-4">
-          <h4 className="text-sm font-bold text-amber-400 font-mono border-b border-slate-800 pb-3 flex items-center gap-2">
-            <Flame className="w-4 h-4 text-amber-400" /> MOST USED TOOLS LEADERBOARD
+        <div className="hud-panel" style={{padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+          <h4 className="font-mono" style={{fontSize: '0.875rem', fontWeight: '700', color: '#fbbf24', borderBottom: '1px solid #1e293b', borderColor: '#1e293b', paddingBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+            <Flame style={{width: '1rem', height: '1rem', color: '#fbbf24'}} /> MOST USED TOOLS LEADERBOARD
           </h4>
 
           {leaderboard.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 font-mono text-xs">
+            <div className="font-mono" style={{textAlign: 'center', paddingTop: '3.0rem', paddingBottom: '3.0rem', color: '#64748b', fontSize: '0.75rem'}}>
               No tool executions recorded yet.
             </div>
           ) : (
-            <div className="space-y-2">
+            <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
               {leaderboard.map((item, idx) => (
-                <div key={idx} className="p-3 rounded bg-slate-900 border border-slate-800 flex items-center justify-between font-mono text-xs">
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold flex items-center justify-center text-xs">
+                <div key={idx} className="font-mono" style={{padding: '0.75rem', borderRadius: '0.25rem', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderColor: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+                    <span style={{width: '1.5rem', height: '1.5rem', borderRadius: '9999px', backgroundColor: 'rgba(245, 158, 11, 0.2)', border: '1px solid #1e293b', borderColor: 'rgba(245, 158, 11, 0.4)', color: '#fbbf24', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem'}}>
                       #{idx + 1}
                     </span>
-                    <span className="text-white font-bold">{item.tool_name || item.name}</span>
+                    <span style={{color: '#ffffff', fontWeight: '700'}}>{item.tool_name || item.name}</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-cyan-400 font-bold">{item.calls_count || item.total_calls || 12} calls</span>
-                    <div className="text-[10px] text-slate-400">{item.avg_latency || '45'} ms avg</div>
+                  <div style={{textAlign: 'right'}}>
+                    <span style={{color: '#22d3ee', fontWeight: '700'}}>{item.calls_count || item.total_calls || 12} calls</span>
+                    <div style={{fontSize: '10px', color: '#94a3b8'}}>{item.avg_latency || '45'} ms avg</div>
                   </div>
                 </div>
               ))}

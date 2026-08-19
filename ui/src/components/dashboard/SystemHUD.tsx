@@ -45,29 +45,31 @@ export const SystemHUD: React.FC = () => {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header & Refresh */}
-      <div className="flex items-center justify-between">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <h2 className="text-xl font-black text-white tracking-wider flex items-center gap-2">
-            REACTOR HUD & TELEMETRY <Activity className="w-5 h-5 text-cyan-400 animate-pulse" />
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffffff', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+            REACTOR HUD & TELEMETRY 
+            <Activity style={{ width: '1.25rem', height: '1.25rem', color: '#22d3ee' }} />
           </h2>
-          <p className="text-xs text-slate-400 font-mono">
+          <p style={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'var(--font-mono)', margin: '0.25rem 0 0 0' }}>
             REAL-TIME COMMAND CENTER REACTOR & SYSTEM METRICS
           </p>
         </div>
         <button
           onClick={fetchHUDData}
           disabled={loading}
-          className="btn-neon-cyan text-xs py-2 px-3 flex items-center gap-2"
+          className="btn-neon-cyan"
+          style={{ fontSize: '0.75rem', padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw style={{ width: '0.875rem', height: '0.875rem' }} />
           <span>REFRESH HUD</span>
         </button>
       </div>
 
       {/* Top Stat HUD Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
         <StatCard
           title="REACTOR HEALTH"
           value={healthStatus}
@@ -100,36 +102,36 @@ export const SystemHUD: React.FC = () => {
       </div>
 
       {/* Metrics & System Logs Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1.5rem' }}>
         {/* Raw Prometheus / System Metrics Panel */}
-        <div className="hud-panel p-5">
-          <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
-            <h3 className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase flex items-center gap-2">
-              <Activity className="w-4 h-4" /> PROMETHEUS TELEMETRY METRICS
+        <div className="hud-panel" style={{ padding: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem' }}>
+            <h3 style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.1em', color: '#22d3ee', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+              <Activity style={{ width: '1rem', height: '1rem' }} /> PROMETHEUS TELEMETRY METRICS
             </h3>
-            <span className="text-[10px] font-mono text-slate-500">ENDPOINT /metrics</span>
+            <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: '#64748b' }}>ENDPOINT /metrics</span>
           </div>
-          <pre className="w-full h-64 bg-slate-950/80 border border-slate-800 rounded p-3 font-mono text-[11px] text-cyan-300 overflow-auto">
+          <pre style={{ width: '100%', height: '16rem', backgroundColor: 'rgba(2,6,23,0.8)', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#67e8f9', overflow: 'auto', margin: 0, boxSizing: 'border-box' }}>
             {metricsText || '# Loading metrics stream...'}
           </pre>
         </div>
 
         {/* Live System Log Stream Panel */}
-        <div className="hud-panel p-5">
-          <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
-            <h3 className="text-xs font-mono font-bold tracking-widest text-emerald-400 uppercase flex items-center gap-2">
-              <Terminal className="w-4 h-4" /> RECENT SYSTEM LOGS
+        <div className="hud-panel" style={{ padding: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.5rem' }}>
+            <h3 style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.1em', color: '#34d399', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+              <Terminal style={{ width: '1rem', height: '1rem' }} /> RECENT SYSTEM LOGS
             </h3>
-            <span className="text-[10px] font-mono text-slate-500">ENDPOINT /admin/logs</span>
+            <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: '#64748b' }}>ENDPOINT /admin/logs</span>
           </div>
-          <div className="w-full h-64 bg-slate-950/80 border border-slate-800 rounded p-3 font-mono text-[11px] text-slate-300 overflow-auto space-y-1">
+          <div style={{ width: '100%', height: '16rem', backgroundColor: 'rgba(2,6,23,0.8)', border: '1px solid #1e293b', borderRadius: '0.25rem', padding: '0.75rem', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#cbd5e1', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.25rem', boxSizing: 'border-box' }}>
             {logsList.length === 0 ? (
-              <p className="text-slate-500 italic">No log entries reported.</p>
+              <p style={{ color: '#64748b', fontStyle: 'italic', margin: 0 }}>No log entries reported.</p>
             ) : (
               logsList.map((logItem, idx) => (
-                <div key={idx} className="border-b border-slate-900 pb-1">
-                  <span className="text-slate-500 font-mono">[{new Date().toLocaleTimeString()}]</span>{' '}
-                  <span className="text-slate-200">{typeof logItem === 'string' ? logItem : JSON.stringify(logItem)}</span>
+                <div key={idx} style={{ borderBottom: '1px solid #0f172a', paddingBottom: '0.25rem' }}>
+                  <span style={{ color: '#64748b', fontFamily: 'var(--font-mono)' }}>[{new Date().toLocaleTimeString()}]</span>{' '}
+                  <span style={{ color: '#e2e8f0' }}>{typeof logItem === 'string' ? logItem : JSON.stringify(logItem)}</span>
                 </div>
               ))
             )}
