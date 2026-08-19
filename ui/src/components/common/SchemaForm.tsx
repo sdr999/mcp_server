@@ -7,8 +7,8 @@ interface SchemaFormProps {
 }
 
 export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loading }) => {
-  const properties = schema?.properties || {};
-  const requiredFields: string[] = schema?.required || [];
+  const properties = schema?.properties || schema?.parameters?.properties || schema?.inputSchema?.properties || {};
+  const requiredFields: string[] = schema?.required || schema?.parameters?.required || schema?.inputSchema?.required || [];
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [rawJsonMode, setRawJsonMode] = useState(false);
   const [rawJsonStr, setRawJsonStr] = useState('{}');
@@ -16,8 +16,9 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
 
   // Helper to generate sample arguments dictionary from schema
   const generateSampleArgs = React.useCallback(() => {
+    const props = schema?.properties || schema?.parameters?.properties || schema?.inputSchema?.properties || {};
     const args: Record<string, any> = {};
-    Object.entries(properties).forEach(([key, prop]: [string, any]) => {
+    Object.entries(props).forEach(([key, prop]: [string, any]) => {
       if (prop.default !== undefined) {
         args[key] = prop.default;
       } else if (prop.enum && prop.enum.length > 0) {

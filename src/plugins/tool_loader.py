@@ -435,11 +435,18 @@ class ToolLoader:
                 self._provider().add_tool(tool_obj)
                 self._name_owner[name] = module_name
                 self._tools[name] = tool_obj            # keep a ref for direct calls
+                params = getattr(tool_obj, "parameters", None)
+                if params is None and hasattr(tool_obj, "args_model"):
+                    try:
+                        params = tool_obj.args_model.model_json_schema()
+                    except Exception:
+                        params = None
                 self._tool_info[name] = {
                     "name": name,
                     "module": module_name,
                     "description": getattr(tool_obj, "description", None),
                     "tags": sorted(getattr(tool_obj, "tags", None) or []),
+                    "parameters": params or {},
                 }
                 registered.append(name)
                 self._changed = True
@@ -515,11 +522,18 @@ class ToolLoader:
 
         self._name_owner[name] = module_name
         self._tools[name] = tool_obj
+        params = getattr(tool_obj, "parameters", None)
+        if params is None and hasattr(tool_obj, "args_model"):
+            try:
+                params = tool_obj.args_model.model_json_schema()
+            except Exception:
+                params = None
         self._tool_info[name] = {
             "name": name,
             "module": module_name,
             "description": getattr(tool_obj, "description", None) or description,
             "tags": sorted(tags or ["openapi"]),
+            "parameters": params or {},
         }
         if module_name not in self._module_tools:
             self._module_tools[module_name] = []
