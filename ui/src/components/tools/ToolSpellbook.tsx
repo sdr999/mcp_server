@@ -75,16 +75,43 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
     t.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getCurlCommand = () => {
-    if (!selectedTool) return '';
+  const generateSampleArgs = (tool: any) => {
+    const props = tool?.parameters?.properties || tool?.inputSchema?.properties || {};
+    const sample: Record<string, any> = {};
+    Object.entries(props).forEach(([k, p]: [string, any]) => {
+      if (p.default !== undefined) sample[k] = p.default;
+      else if (p.enum && p.enum.length > 0) sample[k] = p.enum[0];
+      else if (p.type === 'number' || p.type === 'integer') sample[k] = k === 'a' ? 1 : k === 'b' ? 2 : 10;
+      else if (p.type === 'boolean') sample[k] = true;
+      else if (p.type === 'array') sample[k] = ["sample_item"];
+      else sample[k] = `sample_${k}`;
+    });
+    return sample;
+  };
+
+  const getSampleCode = (tool: any, lang: 'curl' | 'python' | 'javascript') => {
+    if (!tool) return '';
     const token = localStorage.getItem('mcp_token') || 'mysecretadmin';
     const baseUrl = window.location.origin;
-    const bodyStr = JSON.stringify({ arguments: lastSubmittedArgs || {} }, null, 2);
-    return `curl -X 'POST' \\\n  '${baseUrl}/tools/${selectedTool.name}/call' \\\n  -H 'accept: application/json' \\\n  -H 'Authorization: Bearer ${token}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${bodyStr}'`;
+    const args = (lastSubmittedArgs && Object.keys(lastSubmittedArgs).length > 0)
+      ? lastSubmittedArgs
+      : generateSampleArgs(tool);
+    const jsonBody = JSON.stringify({ arguments: args }, null, 2);
+
+    if (lang === 'curl') {
+      return `curl -X 'POST' \\\n  '${baseUrl}/tools/${tool.name}/call' \\\n  -H 'accept: application/json' \\\n  -H 'Authorization: Bearer ${token}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${jsonBody}'`;
+    }
+    if (lang === 'python') {
+      return `import requests\n\nurl = "${baseUrl}/tools/${tool.name}/call"\nheaders = {\n    "Authorization": "Bearer ${token}",\n    "Content-Type": "application/json"\n}\npayload = {\n    "arguments": ${JSON.stringify(args, null, 4).replace(/true/g, 'True').replace(/false/g, 'False')}\n}\n\nresponse = requests.post(url, json=payload, headers=headers)\nprint(response.json())`;
+    }
+    if (lang === 'javascript') {
+      return `const response = await fetch("${baseUrl}/tools/${tool.name}/call", {\n  method: "POST",\n  headers: {\n    "Authorization": "Bearer ${token}",\n    "Content-Type": "application/json"\n  },\n  body: JSON.stringify({\n    arguments: ${JSON.stringify(args, null, 4)}\n  })\n});\nconst result = await response.json();\nconsole.log(result);`;
+    }
+    return '';
   };
 
   const copyCurl = () => {
-    navigator.clipboard.writeText(getCurlCommand());
+    navigator.clipboard.writeText(getSampleCode(selectedTool, 'curl'));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -190,6 +217,82 @@ export const ToolSpellbook: React.FC<{ onExpGain?: (xp: number) => void }> = ({ 
                 <p style={{ fontSize: '0.75rem', color: '#cbd5e1', margin: 0, marginTop: '0.25rem' }}>
                   {selectedTool.description}
                 </p>
+              </div>
+
+              {/* Sample Execution Reference */}
+              <div style={{
+                background: 'rgba(15, 23, 42, 0.7)',
+                border: '1px solid rgba(0, 240, 255, 0.25)',
+                borderRadius: '0.375rem',
+                padding: '0.75rem 1rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.5rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span className="font-mono" style={{ fontSize: '0.7rem', color: '#00f0ff', textTransform: 'uppercase', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Terminal style={{ width: '0.85rem', height: '0.85rem' }} />
+                    SAMPLE EXECUTION REFERENCE
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    {(['curl', 'python', 'javascript'] as const).map(lang => (
+                      <button
+                        key={lang}
+                        onClick={() => setActiveViewMode(lang as any)}
+                        style={{
+                          background: activeViewMode === lang ? 'rgba(0, 240, 255, 0.25)' : 'transparent',
+                          border: activeViewMode === lang ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid transparent',
+                          color: activeViewMode === lang ? '#00f0ff' : '#64748b',
+                          fontSize: '10px',
+                          fontFamily: 'var(--font-mono)',
+                          padding: '0.15rem 0.4rem',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          textTransform: 'uppercase'
+                        }}
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => {
+                      const code = (activeViewMode === 'python' || activeViewMode === 'javascript')
+                        ? getSampleCode(selectedTool, activeViewMode)
+                        : getSampleCode(selectedTool, 'curl');
+                      navigator.clipboard.writeText(code);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: '0.35rem',
+                      right: '0.35rem',
+                      background: 'rgba(0, 240, 255, 0.15)',
+                      border: '1px solid rgba(0, 240, 255, 0.3)',
+                      color: '#00f0ff',
+                      padding: '0.2rem 0.4rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '10px',
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                  >
+                    {copied ? <Check style={{ width: '0.65rem', height: '0.65rem', color: '#34d399' }} /> : <Copy style={{ width: '0.65rem', height: '0.65rem' }} />}
+                    {copied ? 'COPIED' : 'COPY'}
+                  </button>
+                  <pre className="font-mono" style={{ margin: 0, padding: '0.5rem 0.75rem', paddingRight: '5rem', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '0.25rem', fontSize: '0.7rem', color: '#a7f3d0', overflowX: 'auto', maxHeight: '7rem' }}>
+                    {(activeViewMode === 'python' || activeViewMode === 'javascript')
+                      ? getSampleCode(selectedTool, activeViewMode)
+                      : getSampleCode(selectedTool, 'curl')}
+                  </pre>
+                </div>
               </div>
 
               {/* Dynamic Parameter Form */}

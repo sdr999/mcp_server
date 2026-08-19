@@ -54,13 +54,41 @@ export const SchemaForm: React.FC<SchemaFormProps> = ({ schema, onSubmit, loadin
         <h4 style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.05em', color: '#22d3ee', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', margin: 0 }}>
           TOOL PARAMETER INPUTS
         </h4>
-        <button
-          type="button"
-          onClick={() => setRawJsonMode(!rawJsonMode)}
-          style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'underline', fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-        >
-          {rawJsonMode ? 'Switch to Form Controls' : 'Switch to Raw JSON'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            type="button"
+            onClick={() => {
+              const sample: Record<string, any> = {};
+              Object.entries(properties).forEach(([key, prop]: [string, any]) => {
+                if (prop.default !== undefined) {
+                  sample[key] = prop.default;
+                } else if (prop.enum && prop.enum.length > 0) {
+                  sample[key] = prop.enum[0];
+                } else if (prop.type === 'number' || prop.type === 'integer') {
+                  sample[key] = key === 'a' ? 1 : key === 'b' ? 2 : 10;
+                } else if (prop.type === 'boolean') {
+                  sample[key] = true;
+                } else if (prop.type === 'array') {
+                  sample[key] = ["sample_item"];
+                } else {
+                  sample[key] = `sample_${key}`;
+                }
+              });
+              setFormData(sample);
+              setRawJsonStr(JSON.stringify(sample, null, 2));
+            }}
+            style={{ fontSize: '11px', color: '#34d399', textDecoration: 'none', fontFamily: 'var(--font-mono)', background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.3)', borderRadius: '0.25rem', padding: '0.15rem 0.5rem', cursor: 'pointer' }}
+          >
+            ⚡ Load Sample Values
+          </button>
+          <button
+            type="button"
+            onClick={() => setRawJsonMode(!rawJsonMode)}
+            style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'underline', fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            {rawJsonMode ? 'Switch to Form Controls' : 'Switch to Raw JSON'}
+          </button>
+        </div>
       </div>
 
       {rawJsonMode ? (
